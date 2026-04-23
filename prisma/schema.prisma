@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMINISTRADORA
+  SINDICO
+  MORADOR
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CANCELED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Administrator {
+  id           String        @id @default(cuid())
+  name         String
+  cnpj         String?       @unique
+  email        String?
+  phone        String?
+  status       Status        @default(ACTIVE)
+  condominiums Condominium[]
+  users        User[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Condominium {
+  id              String        @id @default(cuid())
+  administratorId String
+  name            String
+  cnpj            String?       @unique
+  email           String?
+  phone           String?
+  cep             String?
+  address         String?
+  number          String?
+  complement      String?
+  district        String?
+  city            String?
+  state           String?
+  status          Status        @default(ACTIVE)
+  administrator   Administrator @relation(fields: [administratorId], references: [id])
+  units           Unit[]
+  residents       Resident[]
+  users           User[]
+  tickets         Ticket[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Unit {
+  id            String      @id @default(cuid())
+  condominiumId String
+  block         String?
+  unitNumber    String
+  unitType      String?
+  status        Status      @default(ACTIVE)
+  condominium   Condominium @relation(fields: [condominiumId], references: [id])
+  residents     Resident[]
+  tickets       Ticket[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([condominiumId, block, unitNumber])
+}
+
+model Resident {
+  id            String      @id @default(cuid())
+  condominiumId String
+  unitId        String
+  name          String
+  cpf           String?     @unique
+  email         String?
+  phone         String?
+  residentType  String?
+  status        Status      @default(ACTIVE)
+  condominium   Condominium @relation(fields: [condominiumId], references: [id])
+  unit          Unit        @relation(fields: [unitId], references: [id])
+  user          User?
+  tickets       Ticket[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model User {
+  id              String         @id @default(cuid())
+  name            String
+  email           String         @unique
+  passwordHash    String
+  role            Role
+  administratorId String?
+  condominiumId   String?
+  residentId      String?        @unique
+  isActive        Boolean        @default(true)
+  administrator   Administrator? @relation(fields: [administratorId], references: [id])
+  condominium     Condominium?   @relation(fields: [condominiumId], references: [id])
+  resident        Resident?      @relation(fields: [residentId], references: [id])
+  createdTickets  Ticket[]       @relation("CreatedTickets")
+  assignedTickets Ticket[]       @relation("AssignedTickets")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Ticket {
+  id               String         @id @default(cuid())
+  condominiumId    String
+  unitId           String
+  residentId       String?
+  title            String
+  description      String
+  category         String?
+  priority         TicketPriority @default(MEDIUM)
+  status           TicketStatus   @default(OPEN)
+  createdByUserId  String
+  assignedToUserId String?
+  closedAt         DateTime?
+  condominium      Condominium    @relation(fields: [condominiumId], references: [id])
+  unit             Unit           @relation(fields: [unitId], references: [id])
+  resident         Resident?      @relation(fields: [residentId], references: [id])
+  createdByUser    User           @relation("CreatedTickets", fields: [createdByUserId], references: [id])
+  assignedToUser   User?          @relation("AssignedTickets", fields: [assignedToUserId], references: [id])
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
