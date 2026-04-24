@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-8">
@@ -6,9 +8,16 @@ export default function Home() {
         <p className="text-slate-300 mb-2">
           Base inicial da plataforma condominial em funcionamento.
         </p>
-        <p className="text-slate-400">
+        <p className="text-slate-400 mb-6">
           Próximos passos: autenticação, dashboard e cadastros principais.
         </p>
+
+        <Link
+          href="/login"
+          className="inline-flex rounded-xl bg-white text-slate-950 font-semibold px-5 py-3 hover:opacity-90 transition"
+        >
+          Ir para login
+        </Link>
       </div>
     </main>
   );
