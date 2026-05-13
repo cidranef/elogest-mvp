@@ -1,19 +1,32 @@
 import { db } from "@/lib/db";
 import { NextResponse } from "next/server";
 
+// 🔒 Simulação de helper de auth (vamos padronizar depois)
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+
 export async function GET() {
   try {
-    const administradoras = await db.administrator.findMany({
-      orderBy: {
-        name: "asc",
+    const session = await getServerSession(authOptions);
+
+    if (!session || !session.user?.administratorId) {
+      return NextResponse.json(
+        { error: "Não autorizado." },
+        { status: 401 }
+      );
+    }
+
+    const administradora = await db.administrator.findUnique({
+      where: {
+        id: session.user.administratorId,
       },
     });
 
-    return NextResponse.json(administradoras);
+    return NextResponse.json(administradora);
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Erro ao listar administradoras." },
+      { error: "Erro ao listar administradora." },
       { status: 500 }
     );
   }
@@ -21,6 +34,15 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+
+    if (!session || !session.user?.administratorId) {
+      return NextResponse.json(
+        { error: "Não autorizado." },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
 
     if (!body.name) {
@@ -30,20 +52,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const administradora = await db.administrator.create({
-      data: {
-        name: body.name,
-        email: body.email || null,
-        cnpj: body.cnpj || null,
-        phone: body.phone || null,
-      },
-    });
+    // 🔒 Aqui você decide a regra de negócio:
+    // Normalmente NÃO se cria administradora via API logada
+    // Mas se quiser permitir atualização, melhor usar PUT
 
-    return NextResponse.json(administradora);
+    return NextResponse.json(
+      { error: "Operação não permitida." },
+      { status: 403 }
+    );
+
   } catch (error) {
     console.error(error);
     return NextResponse.json(
-      { error: "Erro ao criar administradora." },
+      { error: "Erro ao processar requisição." },
       { status: 500 }
     );
   }

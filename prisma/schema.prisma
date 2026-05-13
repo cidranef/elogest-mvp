@@ -37,6 +37,114 @@ enum TicketPriority {
   URGENT
 }
 
+// =========================================================
+// ETAPA 40.7.2 - ALVO DA AVALIAÇÃO DO ATENDIMENTO
+//
+// Define quem está sendo avaliado em uma avaliação.
+//
+// ADMINISTRADORA:
+// - avaliação feita por síndico;
+// - avaliação feita por morador/proprietário quando o chamado
+//   estiver atribuído à administradora ou sem responsável.
+//
+// SINDICO:
+// - avaliação feita por morador/proprietário quando o chamado
+//   estiver atribuído ao síndico.
+//
+// ELOGEST:
+// - avaliação futura feita pela administradora sobre a plataforma.
+//
+// FORNECEDOR:
+// - avaliação futura de prestador/fornecedor.
+// =========================================================
+
+enum TicketRatingTargetType {
+  ADMINISTRADORA
+  SINDICO
+  ELOGEST
+  FORNECEDOR
+}
+
+// =========================================================
+// ETAPA 27.1 - PAPEL DO VÍNCULO DO USUÁRIO
+//
+// IMPORTANTE:
+//
+// O enum Role continua existindo para manter compatibilidade
+// com o sistema atual.
+//
+// O novo enum AccessRole representa o papel do usuário dentro
+// de um vínculo específico.
+//
+// Exemplo:
+// Um mesmo User pode ter:
+// - AccessRole MORADOR no Condomínio Alpha / Apto 101;
+// - AccessRole PROPRIETARIO no Condomínio Beta / Apto 305;
+// - AccessRole SINDICO no Condomínio Gama.
+// =========================================================
+
+enum AccessRole {
+  SUPER_ADMIN
+  ADMINISTRADORA
+  SINDICO
+  MORADOR
+  PROPRIETARIO
+  CONSELHEIRO
+}
+
+// =========================================================
+// ETAPA 11.1 - ESCOPO DO CHAMADO
+//
+// UNIT:
+// Chamado vinculado a uma unidade/apartamento.
+//
+// CONDOMINIUM:
+// Chamado geral do condomínio / área comum.
+// =========================================================
+
+enum TicketScope {
+  UNIT
+  CONDOMINIUM
+}
+
+// =========================================================
+// ETAPA 22 - CENTRAL DE NOTIFICAÇÕES INTERNAS
+//
+// SYSTEM:
+// Notificação interna exibida dentro da plataforma.
+//
+// EMAIL:
+// Reservado para a próxima etapa de envio por e-mail.
+//
+// WHATSAPP:
+// Reservado para etapa futura de WhatsApp.
+// =========================================================
+
+enum NotificationChannel {
+  SYSTEM
+  EMAIL
+  WHATSAPP
+}
+
+// =========================================================
+// ETAPA 22 - STATUS DA NOTIFICAÇÃO
+//
+// UNREAD:
+// Notificação ainda não lida.
+//
+// READ:
+// Notificação lida pelo usuário.
+//
+// ARCHIVED:
+// Notificação arquivada/ocultada da lista principal.
+// =========================================================
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ARCHIVED
+}
+
 model Administrator {
   id           String        @id @default(cuid())
   name         String
@@ -46,15 +154,31 @@ model Administrator {
   status       Status        @default(ACTIVE)
   condominiums Condominium[]
   users        User[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+
+  // =========================================================
+  // ETAPA 27.1 - VÍNCULOS DE ACESSO
+  //
+  // Permite que usuários sejam vinculados a esta administradora
+  // por meio da nova tabela UserAccess.
+  // =========================================================
+  accesses UserAccess[]
+
+  // =========================================================
+  // ETAPA 40.7.2 - AVALIAÇÕES RECEBIDAS
+  //
+  // Avaliações direcionadas à administradora no contexto dos chamados.
+  // =========================================================
+  ratingsReceived TicketRating[] @relation("RatingsReceivedByAdministrator")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Condominium {
-  id              String        @id @default(cuid())
+  id              String  @id @default(cuid())
   administratorId String
   name            String
-  cnpj            String?       @unique
+  cnpj            String? @unique
   email           String?
   phone           String?
   cep             String?
@@ -64,87 +188,688 @@ model Condominium {
   district        String?
   city            String?
   state           String?
-  status          Status        @default(ACTIVE)
-  administrator   Administrator @relation(fields: [administratorId], references: [id])
-  units           Unit[]
-  residents       Resident[]
-  users           User[]
-  tickets         Ticket[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  status          Status  @default(ACTIVE)
+
+  administrator Administrator @relation(fields: [administratorId], references: [id])
+  units         Unit[]
+  residents     Resident[]
+  users         User[]
+  tickets       Ticket[]
+
+  // =========================================================
+  // ETAPA 27.1 - VÍNCULOS DE ACESSO
+  //
+  // Permite vincular um usuário a este condomínio com papéis
+  // diferentes, como SINDICO, MORADOR, PROPRIETARIO etc.
+  // =========================================================
+  accesses UserAccess[]
+
+  // =========================================================
+  // ETAPA 40.7.2 - CONTEXTO DAS AVALIAÇÕES
+  //
+  // Guarda avaliações relacionadas a este condomínio como contexto.
+  // =========================================================
+  ratingsByContext TicketRating[] @relation("RatingsByCondominiumContext")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Unit {
-  id            String      @id @default(cuid())
+  id            String  @id @default(cuid())
   condominiumId String
   block         String?
   unitNumber    String
   unitType      String?
-  status        Status      @default(ACTIVE)
-  condominium   Condominium @relation(fields: [condominiumId], references: [id])
-  residents     Resident[]
-  tickets       Ticket[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  status        Status  @default(ACTIVE)
+
+  condominium Condominium @relation(fields: [condominiumId], references: [id])
+  residents   Resident[]
+  tickets     Ticket[]
+
+  // =========================================================
+  // ETAPA 27.1 - VÍNCULOS DE ACESSO
+  //
+  // Permite que uma mesma pessoa tenha vínculo com uma ou mais
+  // unidades, inclusive em condomínios diferentes.
+  // =========================================================
+  accesses UserAccess[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([condominiumId, block, unitNumber])
 }
 
 model Resident {
-  id            String      @id @default(cuid())
+  id            String  @id @default(cuid())
   condominiumId String
   unitId        String
   name          String
-  cpf           String?     @unique
-  email         String?
-  phone         String?
-  residentType  String?
-  status        Status      @default(ACTIVE)
-  condominium   Condominium @relation(fields: [condominiumId], references: [id])
-  unit          Unit        @relation(fields: [unitId], references: [id])
-  user          User?
-  tickets       Ticket[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  cpf           String? @unique
+
+  // =========================================================
+  // ETAPA 27.1 - E-MAIL DO MORADOR
+  //
+  // Mantemos email sem @unique porque, no novo modelo correto,
+  // o e-mail único pertence ao User.
+  //
+  // O Resident representa o vínculo condominial.
+  // O User representa a pessoa/acesso.
+  //
+  // Assim, uma mesma pessoa pode ter vários vínculos sem criar
+  // usuários duplicados.
+  // =========================================================
+  email String?
+
+  phone        String?
+  residentType String?
+  status       Status  @default(ACTIVE)
+
+  condominium Condominium @relation(fields: [condominiumId], references: [id])
+  unit        Unit        @relation(fields: [unitId], references: [id])
+
+  // =========================================================
+  // LEGADO / COMPATIBILIDADE
+  //
+  // Relação antiga 1 User -> 1 Resident.
+  // Será mantida temporariamente para não quebrar o sistema atual.
+  // Em etapas futuras, o sistema passará a usar UserAccess.
+  // =========================================================
+  user User?
+
+  tickets Ticket[]
+
+  // =========================================================
+  // ETAPA 27.1 - NOVOS VÍNCULOS DE ACESSO
+  //
+  // Um Resident pode estar associado a um ou mais acessos.
+  // Exemplo:
+  // - proprietário;
+  // - morador;
+  // - responsável pela unidade.
+  // =========================================================
+  accesses UserAccess[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model User {
-  id              String         @id @default(cuid())
-  name            String
-  email           String         @unique
-  passwordHash    String
+  id           String @id @default(cuid())
+  name         String
+  email        String @unique
+  passwordHash String
+
+  // =========================================================
+  // ETAPA 41.3 - RECUPERAÇÃO DE SENHA
+  //
+  // passwordResetToken:
+  // guarda o hash do token de recuperação.
+  //
+  // passwordResetTokenExpires:
+  // guarda a validade do token.
+  //
+  // passwordResetRequestedAt:
+  // guarda quando a recuperação foi solicitada.
+  //
+  // Observação:
+  // O token real nunca é salvo no banco. Salvamos apenas o hash.
+  // =========================================================
+  passwordResetToken        String?   @unique
+  passwordResetTokenExpires DateTime?
+  passwordResetRequestedAt  DateTime?
+
+  // =========================================================
+  // LEGADO / COMPATIBILIDADE
+  //
+  // Estes campos continuam existindo nesta fase para não quebrar
+  // as rotas já implementadas.
+  //
+  // A partir da ETAPA 27, o modelo correto será:
+  // User -> UserAccess -> contexto ativo.
+  // =========================================================
   role            Role
   administratorId String?
   condominiumId   String?
-  residentId      String?        @unique
-  isActive        Boolean        @default(true)
-  administrator   Administrator? @relation(fields: [administratorId], references: [id])
-  condominium     Condominium?   @relation(fields: [condominiumId], references: [id])
-  resident        Resident?      @relation(fields: [residentId], references: [id])
-  createdTickets  Ticket[]       @relation("CreatedTickets")
-  assignedTickets Ticket[]       @relation("AssignedTickets")
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  residentId      String? @unique
+
+  isActive Boolean @default(true)
+
+  administrator Administrator? @relation(fields: [administratorId], references: [id])
+  condominium   Condominium?   @relation(fields: [condominiumId], references: [id])
+  resident      Resident?      @relation(fields: [residentId], references: [id])
+
+  // =========================================================
+  // ETAPA 27.1 - MÚLTIPLOS VÍNCULOS POR USUÁRIO
+  //
+  // Esta é a nova relação principal para permitir:
+  // - pessoa com mais de uma unidade;
+  // - pessoa em mais de um condomínio;
+  // - síndico profissional em vários condomínios;
+  // - usuário com múltiplos papéis.
+  // =========================================================
+  accesses UserAccess[]
+
+  createdTickets  Ticket[]    @relation("CreatedTickets")
+  assignedTickets Ticket[]    @relation("AssignedTickets")
+  ticketLogs      TicketLog[]
+
+  uploadedTicketAttachments TicketAttachment[]
+
+  // =========================================================
+  // ETAPA 20 / 40.7.2 - AVALIAÇÕES DO ATENDIMENTO
+  //
+  // ratingsGiven:
+  // avaliações registradas por este usuário.
+  //
+  // ratingsReceived:
+  // avaliações recebidas por este usuário quando ele for o alvo,
+  // por exemplo um SÍNDICO avaliado por morador/proprietário.
+  // =========================================================
+  ratingsGiven    TicketRating[] @relation("RatingsGivenByUser")
+  ratingsReceived TicketRating[] @relation("RatingsReceivedByUser")
+
+  // =========================================================
+  // ETAPA 22 - CENTRAL DE NOTIFICAÇÕES INTERNAS
+  //
+  // Notificações destinadas a este usuário.
+  // Cada notificação fica vinculada diretamente ao usuário
+  // que deverá visualizá-la.
+  // =========================================================
+  notifications Notification[]
+
+  // =========================================================
+  // ETAPA 25.3 - PREFERÊNCIAS DE NOTIFICAÇÃO
+  //
+  // Define quais canais o usuário deseja receber para cada
+  // tipo de evento.
+  //
+  // Nesta etapa:
+  // - SYSTEM fica ativo por padrão;
+  // - EMAIL fica preparado, mas desativado;
+  // - WHATSAPP fica preparado, mas desativado.
+  // =========================================================
+  notificationPreferences NotificationPreference[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =========================================================
+// ETAPA 27.1 - USER ACCESS / VÍNCULOS DO USUÁRIO
+//
+// Esta tabela representa o contexto de acesso de uma pessoa.
+//
+// O User representa a pessoa/login.
+// O UserAccess representa onde e como essa pessoa atua.
+//
+// Exemplos:
+//
+// 1) Pessoa com 3 apartamentos:
+// - User: carlos@email.com
+// - UserAccess 1: PROPRIETARIO / Condomínio Alpha / Apto 101
+// - UserAccess 2: PROPRIETARIO / Condomínio Alpha / Apto 202
+// - UserAccess 3: MORADOR / Condomínio Beta / Apto 305
+//
+// 2) Síndico profissional:
+// - User: maria@sindica.com
+// - UserAccess 1: SINDICO / Condomínio Alpha
+// - UserAccess 2: SINDICO / Condomínio Beta
+// - UserAccess 3: SINDICO / Condomínio Gama
+//
+// 3) Usuário da administradora:
+// - User: atendimento@adm.com
+// - UserAccess: ADMINISTRADORA / Administradora Demo
+//
+// Nesta primeira etapa, esta tabela será criada sem remover
+// os campos antigos do User.
+// =========================================================
+
+model UserAccess {
+  id String @id @default(cuid())
+
+  userId          String
+  administratorId String?
+  condominiumId   String?
+  unitId          String?
+  residentId      String?
+
+  role  AccessRole
+  label String?
+
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  administrator Administrator? @relation(fields: [administratorId], references: [id])
+  condominium   Condominium?   @relation(fields: [condominiumId], references: [id])
+  unit          Unit?          @relation(fields: [unitId], references: [id])
+  resident      Resident?      @relation(fields: [residentId], references: [id])
+
+  // =========================================================
+  // ETAPA 27.1 - CONTEXTO DOS CHAMADOS
+  //
+  // Estes campos permitirão saber em qual vínculo o usuário
+  // criou um chamado, comentou ou recebeu uma notificação.
+  // =========================================================
+  createdTickets Ticket[]       @relation("CreatedTicketsByAccess")
+  ticketLogs     TicketLog[]
+  notifications  Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, role, administratorId, condominiumId, unitId, residentId])
+  @@index([userId])
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([role])
+  @@index([isActive])
+  @@index([isDefault])
 }
 
 model Ticket {
-  id               String         @id @default(cuid())
-  condominiumId    String
-  unitId           String
-  residentId       String?
-  title            String
-  description      String
-  category         String?
-  priority         TicketPriority @default(MEDIUM)
-  status           TicketStatus   @default(OPEN)
+  id            String @id @default(cuid())
+  condominiumId String
+
+  // =========================================================
+  // ETAPA 11.1 - ESCOPO DO CHAMADO
+  //
+  // UNIT:
+  // Exige unitId.
+  //
+  // CONDOMINIUM:
+  // Não exige unitId.
+  // =========================================================
+  scope TicketScope @default(UNIT)
+
+  // =========================================================
+  // ETAPA 11.1 - UNIT AGORA É OPCIONAL
+  //
+  // Antes:
+  // unitId String
+  // unit   Unit
+  //
+  // Agora:
+  // unitId String?
+  // unit   Unit?
+  //
+  // Isso permite chamados gerais do condomínio.
+  // =========================================================
+  unitId String?
+
+  residentId  String?
+  title       String
+  description String
+  category    String?
+  priority    TicketPriority @default(MEDIUM)
+  status      TicketStatus   @default(OPEN)
+
+  openedAt        DateTime  @default(now())
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+
   createdByUserId  String
   assignedToUserId String?
-  closedAt         DateTime?
-  condominium      Condominium    @relation(fields: [condominiumId], references: [id])
-  unit             Unit           @relation(fields: [unitId], references: [id])
-  resident         Resident?      @relation(fields: [residentId], references: [id])
-  createdByUser    User           @relation("CreatedTickets", fields: [createdByUserId], references: [id])
-  assignedToUser   User?          @relation("AssignedTickets", fields: [assignedToUserId], references: [id])
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+
+  // =========================================================
+  // ETAPA 27.1 - CONTEXTO DE CRIAÇÃO DO CHAMADO
+  //
+  // Campo opcional nesta fase.
+  //
+  // Ele permitirá registrar em qual vínculo o chamado foi criado.
+  //
+  // Exemplo:
+  // - Carlos criou como PROPRIETARIO do Apto 101;
+  // - Maria criou como SINDICO do Condomínio Alpha.
+  //
+  // Por enquanto, manteremos createdByUserId para compatibilidade.
+  // =========================================================
+  createdByAccessId String?
+
+  condominium    Condominium @relation(fields: [condominiumId], references: [id])
+  unit           Unit?       @relation(fields: [unitId], references: [id])
+  resident       Resident?   @relation(fields: [residentId], references: [id])
+  createdByUser  User        @relation("CreatedTickets", fields: [createdByUserId], references: [id])
+  assignedToUser User?       @relation("AssignedTickets", fields: [assignedToUserId], references: [id])
+
+  createdByAccess UserAccess? @relation("CreatedTicketsByAccess", fields: [createdByAccessId], references: [id])
+
+  logs        TicketLog[]
+  attachments TicketAttachment[]
+
+  // =========================================================
+  // ETAPA 20 - AVALIAÇÃO DO ATENDIMENTO
+  //
+  // Cada chamado pode ter no máximo uma avaliação.
+  // A restrição de unicidade fica em TicketRating.ticketId.
+  // =========================================================
+  rating TicketRating?
+
+  // =========================================================
+  // ETAPA 22 - CENTRAL DE NOTIFICAÇÕES INTERNAS
+  //
+  // Notificações relacionadas a este chamado.
+  // Exemplo:
+  // - novo chamado aberto;
+  // - chamado atribuído;
+  // - resposta ao morador;
+  // - chamado resolvido;
+  // - chamado avaliado.
+  // =========================================================
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([scope])
+  @@index([status])
+  @@index([createdByAccessId])
+}
+
+model TicketLog {
+  id       String @id @default(cuid())
+  ticketId String
+  userId   String
+
+  // =========================================================
+  // ETAPA 27.1 - CONTEXTO DO AUTOR DO LOG
+  //
+  // accessId:
+  // Identifica qual vínculo o usuário estava usando quando
+  // gerou o log/comentário.
+  //
+  // actorRole:
+  // Guarda o papel usado no momento do registro.
+  // Exemplo: MORADOR, SINDICO, ADMINISTRADORA.
+  //
+  // actorLabel:
+  // Guarda uma descrição amigável para exibir na timeline.
+  // Exemplo:
+  // - "Morador - Apto 101"
+  // - "Síndico"
+  // - "Administradora"
+  //
+  // Estes campos resolvem o problema de identificação de quem
+  // está falando na linha do tempo.
+  // =========================================================
+  accessId   String?
+  actorRole  String?
+  actorLabel String?
+
+  // =========================================================
+  // ETAPA 18.1 - COMUNICAÇÃO DO CHAMADO
+  //
+  // A partir desta etapa, o campo action será usado também
+  // para diferenciar comentários internos e respostas públicas.
+  //
+  // COMMENT_INTERNAL:
+  // Comentário interno da administradora/síndico/equipe.
+  // Não deve aparecer no portal do morador.
+  //
+  // COMMENT_PUBLIC:
+  // Resposta visível ao morador no portal.
+  //
+  // Outros valores que o sistema já pode usar:
+  // CREATED
+  // STATUS_CHANGED
+  // ASSIGNED
+  // =========================================================
+  action String
+
+  fromValue String?
+  toValue   String?
+  comment   String?
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  access UserAccess? @relation(fields: [accessId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([userId])
+  @@index([accessId])
+
+  // =========================================================
+  // ETAPA 18.1 - ÍNDICE PARA FILTRAR COMUNICAÇÕES
+  //
+  // Esse índice ajuda nas consultas da timeline do chamado,
+  // principalmente quando precisarmos buscar:
+  //
+  // - todos os logs de um chamado;
+  // - apenas COMMENT_INTERNAL no painel administrativo;
+  // - apenas COMMENT_PUBLIC no portal do morador.
+  // =========================================================
+  @@index([ticketId, action])
+}
+
+// =========================================================
+// ANEXOS DO CHAMADO
+//
+// Esta tabela armazena os arquivos anexados aos chamados.
+// O arquivo físico fica em /public/uploads/chamados/[ticketId]/
+// e o banco guarda os dados para exibição e controle.
+// =========================================================
+
+model TicketAttachment {
+  id               String @id @default(cuid())
+  ticketId         String
+  uploadedByUserId String
+
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int
+  url          String
+
+  ticket         Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  uploadedByUser User   @relation(fields: [uploadedByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([uploadedByUserId])
+}
+
+// =========================================================
+// ETAPA 20 - AVALIAÇÃO DO ATENDIMENTO PELO MORADOR
+//
+// Esta tabela registra a avaliação feita após o chamado
+// ser resolvido.
+//
+// Regras previstas:
+// - somente chamado RESOLVED pode ser avaliado;
+// - cada chamado pode ter no máximo uma avaliação;
+// - rating deve ser validado na API entre 1 e 5;
+// - comment é opcional;
+// - userId identifica quem avaliou.
+// =========================================================
+
+model TicketRating {
+  id       String @id @default(cuid())
+  ticketId String @unique
+  userId   String
+
+  rating  Int
+  comment String?
+
+  // =========================================================
+  // ETAPA 40.7.2 - ALVO DA AVALIAÇÃO
+  //
+  // ratedTargetType define quem está sendo avaliado:
+  // - ADMINISTRADORA
+  // - SINDICO
+  // - ELOGEST
+  // - FORNECEDOR
+  //
+  // ratedLabel guarda o texto amigável exibido na tela:
+  // Ex:
+  // - "Síndico João"
+  // - "Administradora Demo"
+  // - "EloGest"
+  //
+  // ratedUserId:
+  // usado quando o avaliado for um usuário específico,
+  // como SÍNDICO.
+  //
+  // ratedAdministratorId:
+  // usado quando o avaliado for a administradora.
+  //
+  // ratedCondominiumId:
+  // guarda o condomínio de contexto da avaliação.
+  //
+  // ratedProviderId:
+  // reservado para módulo futuro de fornecedores.
+  //
+  // ratedMetadata:
+  // campo flexível para guardar contexto adicional sem nova
+  // migration a cada evolução.
+  // =========================================================
+  ratedTargetType      TicketRatingTargetType @default(ADMINISTRADORA)
+  ratedUserId          String?
+  ratedAdministratorId String?
+  ratedCondominiumId   String?
+  ratedProviderId      String?
+  ratedLabel           String?
+  ratedMetadata        Json?
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  user User @relation("RatingsGivenByUser", fields: [userId], references: [id])
+
+  ratedUser User? @relation("RatingsReceivedByUser", fields: [ratedUserId], references: [id])
+
+  ratedAdministrator Administrator? @relation("RatingsReceivedByAdministrator", fields: [ratedAdministratorId], references: [id])
+
+  ratedCondominium Condominium? @relation("RatingsByCondominiumContext", fields: [ratedCondominiumId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([rating])
+  @@index([ratedTargetType])
+  @@index([ratedUserId])
+  @@index([ratedAdministratorId])
+  @@index([ratedCondominiumId])
+}
+
+// =========================================================
+// ETAPA 22 - CENTRAL DE NOTIFICAÇÕES INTERNAS
+//
+// Esta tabela registra notificações direcionadas aos usuários
+// dentro da plataforma.
+//
+// Nesta etapa, o foco é o canal SYSTEM.
+// Os canais EMAIL e WHATSAPP ficam preparados para as próximas
+// etapas, mas ainda não serão disparados automaticamente.
+//
+// Exemplos de eventos:
+// - novo chamado aberto;
+// - chamado atribuído;
+// - resposta pública enviada;
+// - chamado resolvido;
+// - chamado avaliado;
+// - comentário interno criado.
+// =========================================================
+
+model Notification {
+  id       String  @id @default(cuid())
+  userId   String
+  ticketId String?
+
+  // =========================================================
+  // ETAPA 27.1 - CONTEXTO DA NOTIFICAÇÃO
+  //
+  // accessId permite identificar em qual vínculo/contexto
+  // a notificação foi gerada ou deve ser exibida.
+  //
+  // Nesta fase é opcional para manter compatibilidade.
+  // =========================================================
+  accessId String?
+
+  channel NotificationChannel @default(SYSTEM)
+  status  NotificationStatus  @default(UNREAD)
+
+  type    String
+  title   String
+  message String
+  href    String?
+
+  metadata Json?
+
+  readAt DateTime?
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket Ticket?     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  access UserAccess? @relation(fields: [accessId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([ticketId])
+  @@index([accessId])
+  @@index([channel])
+  @@index([status])
+  @@index([type])
+  @@index([userId, status])
+}
+
+// =========================================================
+// ETAPA 25.3 - PREFERÊNCIAS DE NOTIFICAÇÃO POR USUÁRIO
+//
+// Esta tabela prepara o sistema para permitir que cada usuário
+// configure como deseja receber notificações por tipo de evento.
+//
+// Exemplo de eventType:
+// - TICKET_CREATED
+// - TICKET_ASSIGNED
+// - TICKET_PUBLIC_COMMENT
+// - TICKET_INTERNAL_COMMENT
+// - TICKET_STATUS_CHANGED
+// - TICKET_RESOLVED
+// - TICKET_RATED
+//
+// Nesta etapa, ainda não enviaremos EMAIL nem WHATSAPP reais.
+// Apenas deixaremos a estrutura preparada.
+//
+// Regras:
+// - cada usuário terá no máximo uma preferência por eventType;
+// - SYSTEM começa ativo por padrão;
+// - EMAIL começa desativado;
+// - WHATSAPP começa desativado;
+// - futuramente a tela de preferências poderá editar esses campos.
+// =========================================================
+
+model NotificationPreference {
+  id     String @id @default(cuid())
+  userId String
+
+  eventType String
+
+  systemEnabled   Boolean @default(true)
+  emailEnabled    Boolean @default(false)
+  whatsappEnabled Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, eventType])
+  @@index([userId])
+  @@index([eventType])
+  @@index([systemEnabled])
+  @@index([emailEnabled])
+  @@index([whatsappEnabled])
 }
