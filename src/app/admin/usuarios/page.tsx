@@ -56,6 +56,12 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    - Dados secundários agrupados em Mais Informações.
    - Métricas mais neutras, seguindo Condomínios, Unidades e Moradores.
    - Mantida toda a lógica funcional existente.
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Removida senha padrão fraca na criação de usuários.
+   - Formulário passa a exibir checklist de senha forte.
+   - Front bloqueia senha fraca antes de chamar a API.
+   - API continua sendo a autoridade final da política.
    ========================================================= */
 
 
@@ -147,7 +153,7 @@ interface UserFormState {
 const emptyCreateForm: UserFormState = {
   name: "",
   email: "",
-  password: "123456",
+  password: "",
   role: "MORADOR",
   administratorId: "",
   condominiumId: "",
@@ -186,6 +192,78 @@ function isValidEmail(email: string) {
 
 function normalizeEmail(email: string) {
   return String(email || "").trim().toLowerCase();
+}
+
+
+
+function getPasswordChecks(password: string) {
+  return [
+    {
+      label: "Mínimo de 8 caracteres",
+      passed: password.length >= 8,
+    },
+    {
+      label: "Uma letra maiúscula",
+      passed: /[A-ZÀ-Ý]/.test(password),
+    },
+    {
+      label: "Uma letra minúscula",
+      passed: /[a-zà-ÿ]/.test(password),
+    },
+    {
+      label: "Um número",
+      passed: /\d/.test(password),
+    },
+    {
+      label: "Um caractere especial",
+      passed: /[^A-Za-zÀ-ÿ0-9]/.test(password),
+    },
+  ];
+}
+
+
+
+function isBlockedPassword(password: string) {
+  const blockedPasswords = new Set([
+    "12345678",
+    "123456789",
+    "1234567890",
+    "senha123",
+    "senha1234",
+    "password",
+    "password123",
+    "admin123",
+    "admin1234",
+    "elogest123",
+    "elogest1234",
+    "heloisa100%",
+    "qwerty123",
+    "abc12345",
+  ]);
+
+  return blockedPasswords.has(String(password || "").trim().toLowerCase());
+}
+
+
+
+function validatePasswordForForm(password: string, editing = false) {
+  const value = String(password || "");
+
+  if (editing && !value.trim()) {
+    return "";
+  }
+
+  const checks = getPasswordChecks(value);
+
+  if (checks.some((check) => !check.passed)) {
+    return "A senha deve ter pelo menos 8 caracteres, incluindo letra maiúscula, letra minúscula, número e caractere especial.";
+  }
+
+  if (isBlockedPassword(value)) {
+    return "Esta senha é muito previsível. Escolha uma combinação diferente.";
+  }
+
+  return "";
 }
 
 
@@ -673,7 +751,7 @@ export default function UsuariosPage() {
       setForm({
         name: selectedResident.name || "",
         email: selectedResident.email || "",
-        password: "123456",
+        password: "",
         role: "MORADOR",
         administratorId: "",
         condominiumId: selectedResident.condominiumId || "",
@@ -875,12 +953,10 @@ export default function UsuariosPage() {
       return "Informe um e-mail válido.";
     }
 
-    if (!editing && (!source.password || source.password.length < 6)) {
-      return "A senha inicial deve ter pelo menos 6 caracteres.";
-    }
+    const passwordError = validatePasswordForForm(source.password, editing);
 
-    if (editing && source.password && source.password.length < 6) {
-      return "A nova senha deve ter pelo menos 6 caracteres.";
+    if (passwordError) {
+      return passwordError;
     }
 
     if (source.role === "ADMINISTRADORA" && !source.administratorId) {
@@ -1151,7 +1227,7 @@ export default function UsuariosPage() {
             onSubmit={createUsuario}
             saving={creating}
             submitLabel="Criar usuário"
-            passwordHint="Senha provisória obrigatória para novo usuário."
+            passwordHint="Senha obrigatória para novo usuário. Use uma senha forte com letra maiúscula, minúscula, número e caractere especial."
             isEditing={false}
           />
         )}
@@ -1176,7 +1252,7 @@ export default function UsuariosPage() {
             onSubmit={updateUsuario}
             saving={updating}
             submitLabel="Salvar alterações"
-            passwordHint="Preencha somente se desejar alterar a senha."
+            passwordHint="Preencha somente se desejar alterar a senha. Se preencher, a nova senha deverá seguir a política de segurança."
             isEditing={true}
           />
         )}
@@ -1430,9 +1506,10 @@ function UserModal({
 }) {
   const emailInvalid = !!form.email && !isValidEmail(form.email);
 
-  const passwordInvalid =
-    (!isEditing && !!form.password && form.password.length < 6) ||
-    (isEditing && !!form.password && form.password.length < 6);
+  const passwordError = validatePasswordForForm(form.password, isEditing);
+  const passwordInvalid = !!passwordError;
+  const passwordChecks = getPasswordChecks(form.password);
+  const showPasswordChecklist = !isEditing || !!form.password.trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#17211B]/65 p-4 backdrop-blur-sm">
@@ -1674,7 +1751,9 @@ function UserModal({
               }
               className="form-input"
               placeholder={
-                isEditing ? "Deixe em branco para manter" : "Mínimo 6 caracteres"
+                isEditing
+                  ? "Deixe em branco para manter a senha atual"
+                  : "Crie uma senha forte"
               }
             />
 
@@ -1682,10 +1761,51 @@ function UserModal({
               {passwordHint}
             </p>
 
-            {passwordInvalid && (
-              <p className="mt-1 text-xs text-yellow-700">
-                A senha deve conter pelo menos 6 caracteres.
-              </p>
+            {showPasswordChecklist && (
+              <div className="mt-3 rounded-2xl border border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3">
+                <p className="mb-2 text-xs font-semibold text-[#17211B]">
+                  A senha precisa conter:
+                </p>
+
+                <div className="grid gap-1.5">
+                  {passwordChecks.map((check) => (
+                    <div
+                      key={check.label}
+                      className="flex items-center gap-2 text-xs leading-5"
+                    >
+                      <span
+                        className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                          check.passed
+                            ? "bg-[#256D3C] text-white"
+                            : "bg-white text-[#9AA7A0] ring-1 ring-[#DDE5DF]"
+                        }`}
+                      >
+                        {check.passed ? "✓" : "•"}
+                      </span>
+
+                      <span
+                        className={
+                          check.passed ? "text-[#256D3C]" : "text-[#64736A]"
+                        }
+                      >
+                        {check.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {form.password && isBlockedPassword(form.password) && (
+                  <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                    Esta senha é muito previsível. Escolha uma combinação diferente.
+                  </p>
+                )}
+
+                {passwordInvalid && (
+                  <p className="mt-3 text-xs leading-5 text-yellow-700">
+                    {passwordError}
+                  </p>
+                )}
+              </div>
             )}
           </FormField>
 
