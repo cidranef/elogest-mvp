@@ -5,31 +5,31 @@ import nodemailer from "nodemailer";
 /* =========================================================
    MAIL SERVICE - ELOGEST
 
-   ETAPA 42.3 — NOTIFICAÇÕES POR E-MAIL
+   ETAPA 42.5 — SMTP REAL VIA RESEND / RAILWAY
 
    Objetivo:
    - Centralizar o envio de e-mails da plataforma.
-   - Funcionar em modo desenvolvimento mesmo sem SMTP.
-   - Permitir ativação futura em produção apenas configurando .env.
-   - Não derrubar rotinas críticas se o envio falhar.
+   - Usar SMTP real quando configurado no Railway.
+   - Continuar permitindo preview em desenvolvimento.
+   - Não expor senhas/API keys nos logs.
+   - Suportar tanto SMTP_FROM quanto MAIL_FROM_NAME/MAIL_FROM_EMAIL.
 
-   Variáveis suportadas no .env:
+   Variáveis suportadas:
 
-   SMTP_HOST=
-   SMTP_PORT=587
-   SMTP_SECURE=false
-   SMTP_USER=
-   SMTP_PASS=
+   SMTP_HOST=smtp.resend.com
+   SMTP_PORT=465
+   SMTP_SECURE=true
+   SMTP_USER=resend
+   SMTP_PASS=API_KEY_DA_RESEND
+   SMTP_FROM=EloGest <nao-responda@elogest.com.br>
 
+   Alternativas antigas ainda suportadas:
    MAIL_FROM_NAME=EloGest
-   MAIL_FROM_EMAIL=no-reply@elogest.com.br
-
-   NEXT_PUBLIC_APP_URL=http://localhost:3000
+   MAIL_FROM_EMAIL=nao-responda@elogest.com.br
 
    Comportamento:
-   - Se SMTP estiver incompleto:
-     em desenvolvimento: loga o e-mail no console e retorna skipped.
-     em produção: retorna erro controlado, sem quebrar a aplicação.
+   - Em desenvolvimento sem SMTP: mostra preview no console.
+   - Em produção sem SMTP: retorna erro controlado e registra log seguro.
    ========================================================= */
 
 
@@ -53,21 +53,45 @@ export type SendMailResult = {
 
 
 function getMailFrom() {
+  /*
+    Prioridade:
+    1. SMTP_FROM — padrão usado agora no Railway/Resend.
+    2. MAIL_FROM_NAME + MAIL_FROM_EMAIL — compatibilidade.
+    3. Fallback seguro do EloGest.
+  */
+  const smtpFrom = process.env.SMTP_FROM;
+
+  if (smtpFrom && smtpFrom.trim()) {
+    return smtpFrom.trim();
+  }
+
   const fromName = process.env.MAIL_FROM_NAME || "EloGest";
-  const fromEmail = process.env.MAIL_FROM_EMAIL || "no-reply@elogest.com.br";
+  const fromEmail =
+    process.env.MAIL_FROM_EMAIL || "nao-responda@elogest.com.br";
 
   return `"${fromName}" <${fromEmail}>`;
 }
 
 
 
+function getMissingSmtpConfig() {
+  const required = [
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USER",
+    "SMTP_PASS",
+  ];
+
+  return required.filter((key) => {
+    const value = process.env[key];
+    return !value || !String(value).trim();
+  });
+}
+
+
+
 function hasSmtpConfig() {
-  return Boolean(
-    process.env.SMTP_HOST &&
-      process.env.SMTP_PORT &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS
-  );
+  return getMissingSmtpConfig().length === 0;
 }
 
 
@@ -119,21 +143,43 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
   /* =========================================================
      MODO SEM SMTP
 
-     Mantém o MVP funcional enquanto ainda não configuramos
-     provedor real de e-mail.
+     Em desenvolvimento:
+     - Mantém preview em console.
+
+     Em produção:
+     - Retorna erro controlado.
+     - Não derruba a aplicação.
+     - Permite identificar nos logs do Railway que o SMTP
+       não foi chamado.
      ========================================================= */
 
   if (!hasSmtpConfig()) {
+    const missing = getMissingSmtpConfig();
+
     console.log("");
     console.log("=========================================================");
-    console.log("[EloGest Mail] SMTP não configurado.");
-    console.log("[EloGest Mail] E-mail não enviado. Preview abaixo:");
+    console.log("[EloGest Mail] SMTP não configurado completamente.");
+    console.log("[EloGest Mail] Variáveis ausentes:", missing.join(", "));
+    console.log("[EloGest Mail] Remetente configurado:", getMailFrom());
     console.log("---------------------------------------------------------");
     console.log("Para:", to);
     console.log("Assunto:", subject);
-    console.log("Texto:", text);
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Texto:", text);
+      console.log("[EloGest Mail] Preview exibido apenas em desenvolvimento.");
+    }
+
     console.log("=========================================================");
     console.log("");
+
+    if (process.env.NODE_ENV === "production") {
+      return {
+        ok: false,
+        skipped: true,
+        error: `SMTP incompleto: ${missing.join(", ")}`,
+      };
+    }
 
     return {
       ok: true,
@@ -151,12 +197,27 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
   try {
     const transporter = getSmtpTransporter();
 
+    console.log("[EloGest Mail] Enviando e-mail via SMTP:", {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      secure: process.env.SMTP_SECURE,
+      user: process.env.SMTP_USER,
+      from: getMailFrom(),
+      to,
+      subject,
+    });
+
     const result = await transporter.sendMail({
       from: getMailFrom(),
       to,
       subject,
       html,
       text,
+    });
+
+    console.log("[EloGest Mail] E-mail enviado com sucesso:", {
+      to,
+      messageId: result.messageId,
     });
 
     return {
