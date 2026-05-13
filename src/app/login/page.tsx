@@ -73,7 +73,6 @@ import { useState } from "react";
    - Limpeza de erro ao alterar campos.
    - Campos marcados como obrigatórios.
    - Ajuste de autocomplete/capitalização no e-mail.
-   - Bloco de usuários demo condicionado por variável pública.
 
    ETAPA 40.2 — LOGIN EXTERNO PREMIUM / LIMPO
 
@@ -83,7 +82,6 @@ import { useState } from "react";
    - Removida a duplicidade visual do logo na área do formulário.
    - Card de login ficou mais calmo, direto e premium.
    - Bloco de perfil de acesso ficou mais discreto.
-   - Usuários demo continuam recolhidos em details.
    - Toda a lógica funcional de autenticação foi preservada.
 
    ETAPA 40.2.2 — AJUSTE FINO PREMIUM
@@ -103,8 +101,15 @@ import { useState } from "react";
    - SINDICO, MORADOR e PROPRIETARIO permanecem em /portal/dashboard.
    - E-mail do login passa a ser normalizado com trim + lowercase.
    - Redirecionamento por UserAccess e fallback por sessão usam a mesma regra.
-   - Usuários demo atualizados conforme base demo realista.
    - Mantida toda a identidade visual aprovada.
+
+   ETAPA 42.9 — LIMPEZA FINAL DE SEGURANÇA / AMBIENTE DEMO
+
+   Ajustes desta revisão:
+   - Removido bloco visível de "Usuários demo" da tela de login.
+   - Removidas credenciais/senhas de demonstração da interface pública.
+   - Removida dependência da variável NEXT_PUBLIC_SHOW_DEMO_USERS nesta página.
+   - Mantida toda a lógica de autenticação, recuperação de senha e redirecionamento.
    ========================================================= */
 
 
@@ -121,19 +126,6 @@ interface UserAccessSummary {
   isActive?: boolean;
   source?: string | null;
 }
-
-
-
-/* =========================================================
-   CONFIGURAÇÃO DE AMBIENTE
-
-   Por padrão, mantemos os usuários demo visíveis durante o MVP.
-
-   Para ocultar em produção, adicione no .env:
-   NEXT_PUBLIC_SHOW_DEMO_USERS=false
-   ========================================================= */
-
-const SHOW_DEMO_USERS = process.env.NEXT_PUBLIC_SHOW_DEMO_USERS !== "false";
 
 
 
@@ -635,6 +627,9 @@ export default function LoginPage() {
 
            ETAPA 40.2:
            Card de acesso mais limpo e elegante.
+
+           ETAPA 42.9:
+           Bloco de usuários demo removido da interface pública.
            ===================================================== */}
 
         <section className="relative flex min-h-screen items-center justify-center px-6 py-10 sm:px-10 lg:px-14">
@@ -767,64 +762,6 @@ export default function LoginPage() {
                   </p>
                 </div>
               </div>
-
-
-
-              {/* =================================================
-                 USUÁRIOS DEMO
-                 ================================================= */}
-
-              {SHOW_DEMO_USERS && (
-                <details className="mt-4 rounded-2xl border border-[#DDE5DF] bg-[#F6F8F7] px-4 py-3">
-                  <summary className="cursor-pointer list-none text-sm font-semibold text-[#17211B]">
-                    Usuários demo
-                  </summary>
-
-                  <div className="mt-3 space-y-2 text-xs leading-5 text-[#5E6B63]">
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Super admin:
-                      </span>{" "}
-                      cidranef@gmail.com / Heloisa100%
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Administradora:
-                      </span>{" "}
-                      admin@prismagestao.com.br / Heloisa100%
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Atendimento:
-                      </span>{" "}
-                      atendimento@prismagestao.com.br / Heloisa100%
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Síndico:
-                      </span>{" "}
-                      sindico.skorpios@demo.com / Heloisa100%
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Morador:
-                      </span>{" "}
-                      morador.skorpios@demo.com / Heloisa100%
-                    </p>
-
-                    <p>
-                      <span className="font-semibold text-[#17211B]">
-                        Proprietário:
-                      </span>{" "}
-                      proprietario.skorpios@demo.com / Heloisa100%
-                    </p>
-                  </div>
-                </details>
-              )}
             </section>
 
             <p className="mt-6 text-center text-xs leading-5 text-[#7A877F]">
