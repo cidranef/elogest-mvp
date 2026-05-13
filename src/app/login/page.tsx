@@ -607,15 +607,25 @@ export default function LoginPage() {
                 de acompanhamento, atendimento e resolução.
               </p>
 
-              <div className="hidden rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-right backdrop-blur xl:block">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#8ED08E]">
-                  Plataforma
-                </p>
+              <div className="hidden xl:flex xl:items-center xl:gap-4">
+  <div className="relative flex h-14 w-14 items-center justify-center rounded-[22px] border border-[#8ED08E]/25 bg-[#8ED08E]/10 text-[#8ED08E] shadow-[0_18px_55px_rgba(142,208,142,0.14)] backdrop-blur">
+    <span className="absolute inset-0 rounded-[22px] border border-[#8ED08E]/20 animate-ping opacity-20" />
 
-                <p className="mt-1 text-sm font-semibold text-white">
-                  segura e rastreável
-                </p>
-              </div>
+    <span className="absolute -right-1 -top-1 h-3.5 w-3.5 rounded-full border-2 border-[#17211B] bg-[#8ED08E] shadow-[0_0_22px_rgba(142,208,142,0.75)]" />
+
+    <InstitutionalIcon type="shield" className="relative h-7 w-7" />
+  </div>
+
+  <div className="text-left">
+    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#8ED08E]">
+      Ambiente protegido
+    </p>
+
+    <p className="mt-1 text-sm font-semibold text-white">
+      Acesso seguro e rastreável
+    </p>
+  </div>
+</div>
             </div>
           </div>
         </section>
