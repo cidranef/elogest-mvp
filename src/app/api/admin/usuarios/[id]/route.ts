@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
 import { Role, Status } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { validateStrongPassword } from "@/lib/password-policy";
 
 
 
@@ -21,10 +22,14 @@ import bcrypt from "bcryptjs";
    - ADMINISTRADORA só pode editar usuários da própria carteira
    - ADMINISTRADORA não pode editar/criar vínculo SUPER_ADMIN
    - E-mail é validado e único
-   - Senha é opcional na edição, mas se informada deve ter 6+ caracteres
    - MORADOR só pode ser vinculado a morador ativo
    - SÍNDICO só pode ser vinculado a condomínio ativo
    - residentId não pode estar vinculado a outro usuário
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Senha continua opcional na edição.
+   - Se enviada, passa a usar a política central de senha forte.
+   - Bloqueia senha fraca, óbvia ou contendo parte do e-mail/nome.
    ========================================================= */
 
 
@@ -671,7 +676,7 @@ export async function PATCH(req: Request, context: RouteContext) {
 
        Na edição:
        - se senha vier vazia, mantém a senha atual;
-       - se senha vier preenchida, exige mínimo de 6 caracteres.
+       - se senha vier preenchida, aplica política central de senha forte.
        ========================================================= */
 
     let passwordHash = usuarioAtual.passwordHash;
@@ -681,12 +686,20 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (body.password && String(body.password).trim()) {
       const password = String(body.password);
 
+      const passwordValidation = validateStrongPassword(password, {
+        email,
+        name,
+      });
 
-
-      if (password.length < 6) {
+      if (!passwordValidation.valid) {
         return NextResponse.json(
-          { error: "A nova senha deve ter pelo menos 6 caracteres." },
-          { status: 400 }
+          {
+            error: passwordValidation.errors.join(" "),
+            errors: passwordValidation.errors,
+          },
+          {
+            status: 400,
+          }
         );
       }
 

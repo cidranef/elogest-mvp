@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { AccessRole, Role } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import { validateStrongPassword } from "@/lib/password-policy";
 
 
 
@@ -20,6 +21,10 @@ import { getAuthUser } from "@/lib/auth-guard";
    - Criar novo usuário administrativo.
    - Criar UserAccess ADMINISTRADORA.
    - Manter endpoint exclusivo para SUPER_ADMIN.
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Senha inicial passa a usar a política central de senha forte.
+   - Bloqueia senha fraca, previsível ou contendo parte do e-mail/nome.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
@@ -228,7 +233,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const name = normalizeText(body?.name);
     const email = normalizeText(body?.email).toLowerCase();
-    const password = normalizeText(body?.password);
+    const password = String(body?.password || "");
     const isActive = body?.isActive !== false;
 
     if (!name) {
@@ -253,10 +258,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    if (!password || password.length < 8) {
+    const passwordValidation = validateStrongPassword(password, {
+      email,
+      name,
+    });
+
+    if (!passwordValidation.valid) {
       return NextResponse.json(
         {
-          error: "A senha inicial deve ter pelo menos 8 caracteres.",
+          error: passwordValidation.errors.join(" "),
+          errors: passwordValidation.errors,
         },
         {
           status: 400,

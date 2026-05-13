@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
 import { Role, Status } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { validateStrongPassword } from "@/lib/password-policy";
 
 
 
@@ -29,7 +30,17 @@ import bcrypt from "bcryptjs";
    - MORADOR só pode ser criado para morador ativo
    - ADMINISTRADORA só pode criar acessos dentro da própria carteira
    - E-mail é normalizado e validado
-   - Senha inicial obrigatória com mínimo de 6 caracteres
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Senha inicial passa a usar a política central de senha forte.
+   - Exige:
+     mínimo de 8 caracteres,
+     letra maiúscula,
+     letra minúscula,
+     número,
+     caractere especial.
+   - Bloqueia senhas óbvias/previsíveis.
+   - Bloqueia senha contendo parte do e-mail ou nome do usuário.
    ========================================================= */
 
 
@@ -300,10 +311,20 @@ export async function POST(req: Request) {
 
 
 
-    if (!password || password.length < 6) {
+    const passwordValidation = validateStrongPassword(password, {
+      email,
+      name,
+    });
+
+    if (!passwordValidation.valid) {
       return NextResponse.json(
-        { error: "A senha inicial deve ter pelo menos 6 caracteres." },
-        { status: 400 }
+        {
+          error: passwordValidation.errors.join(" "),
+          errors: passwordValidation.errors,
+        },
+        {
+          status: 400,
+        }
       );
     }
 
