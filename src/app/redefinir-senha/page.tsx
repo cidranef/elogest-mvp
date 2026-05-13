@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 
@@ -25,6 +25,11 @@ import { useSearchParams } from "next/navigation";
    - Mantido card central premium e objetivo.
    - Fundo recebeu textura sutil.
    - Toda a lógica funcional foi preservada.
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Front passa a orientar e validar os requisitos mínimos.
+   - API continua sendo a autoridade final da regra.
+   - Mensagens ficam mais claras para o usuário.
    ========================================================= */
 
 
@@ -91,6 +96,102 @@ function EloGestLogo() {
 
 
 
+function getPasswordChecks(password: string) {
+  return [
+    {
+      label: "Mínimo de 8 caracteres",
+      passed: password.length >= 8,
+    },
+    {
+      label: "Uma letra maiúscula",
+      passed: /[A-ZÀ-Ý]/.test(password),
+    },
+    {
+      label: "Uma letra minúscula",
+      passed: /[a-zà-ÿ]/.test(password),
+    },
+    {
+      label: "Um número",
+      passed: /\d/.test(password),
+    },
+    {
+      label: "Um caractere especial",
+      passed: /[^A-Za-zÀ-ÿ0-9]/.test(password),
+    },
+  ];
+}
+
+
+
+function isBlockedPassword(password: string) {
+  const blockedPasswords = new Set([
+    "12345678",
+    "123456789",
+    "1234567890",
+    "senha123",
+    "senha1234",
+    "password",
+    "password123",
+    "admin123",
+    "admin1234",
+    "elogest123",
+    "elogest1234",
+    "heloisa100%",
+    "qwerty123",
+    "abc12345",
+  ]);
+
+  return blockedPasswords.has(String(password || "").trim().toLowerCase());
+}
+
+
+
+function PasswordChecklist({ password }: { password: string }) {
+  const checks = getPasswordChecks(password);
+  const hasPassword = password.length > 0;
+
+  return (
+    <div className="mt-3 rounded-2xl border border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3">
+      <p className="mb-2 text-xs font-semibold text-[#17211B]">
+        Sua senha precisa conter:
+      </p>
+
+      <div className="grid gap-1.5">
+        {checks.map((check) => (
+          <div
+            key={check.label}
+            className="flex items-center gap-2 text-xs leading-5"
+          >
+            <span
+              className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                check.passed
+                  ? "bg-[#256D3C] text-white"
+                  : "bg-white text-[#9AA7A0] ring-1 ring-[#DDE5DF]"
+              }`}
+            >
+              {check.passed ? "✓" : "•"}
+            </span>
+
+            <span
+              className={check.passed ? "text-[#256D3C]" : "text-[#64736A]"}
+            >
+              {check.label}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {hasPassword && isBlockedPassword(password) && (
+        <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+          Esta senha é muito previsível. Escolha uma combinação diferente.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
+
 function RedefinirSenhaContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token") || "";
@@ -103,6 +204,17 @@ function RedefinirSenhaContent() {
 
 
 
+  const passwordChecks = useMemo(() => getPasswordChecks(senha), [senha]);
+
+  const isPasswordStrong = useMemo(() => {
+    return (
+      passwordChecks.every((check) => check.passed) &&
+      !isBlockedPassword(senha)
+    );
+  }, [passwordChecks, senha]);
+
+
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -111,8 +223,10 @@ function RedefinirSenhaContent() {
       return;
     }
 
-    if (!senha || senha.length < 8) {
-      setError("A nova senha deve ter pelo menos 8 caracteres.");
+    if (!isPasswordStrong) {
+      setError(
+        "A senha deve ter pelo menos 8 caracteres, incluindo letra maiúscula, letra minúscula, número e caractere especial."
+      );
       return;
     }
 
@@ -189,7 +303,7 @@ function RedefinirSenhaContent() {
             </h1>
 
             <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[#64736A]">
-              Informe uma nova senha para recuperar o acesso à plataforma.
+              Informe uma nova senha segura para recuperar o acesso à plataforma.
             </p>
           </div>
 
@@ -258,6 +372,8 @@ function RedefinirSenhaContent() {
                     autoComplete="new-password"
                     required
                   />
+
+                  <PasswordChecklist password={senha} />
                 </div>
 
                 <div>
@@ -281,6 +397,18 @@ function RedefinirSenhaContent() {
                     autoComplete="new-password"
                     required
                   />
+
+                  {confirmarSenha && senha !== confirmarSenha && (
+                    <p className="mt-2 text-xs leading-5 text-red-700">
+                      As senhas informadas ainda não conferem.
+                    </p>
+                  )}
+
+                  {confirmarSenha && senha === confirmarSenha && (
+                    <p className="mt-2 text-xs leading-5 text-[#256D3C]">
+                      As senhas conferem.
+                    </p>
+                  )}
                 </div>
 
                 <button
@@ -302,8 +430,9 @@ function RedefinirSenhaContent() {
             {!success && (
               <div className="mt-5 rounded-2xl border border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3">
                 <p className="text-xs leading-5 text-[#64736A]">
-                  Use uma senha com pelo menos 8 caracteres. Após a redefinição,
-                  o link de recuperação não poderá ser reutilizado.
+                  Após a redefinição, o link de recuperação não poderá ser
+                  reutilizado. Para sua segurança, evite usar senhas previsíveis
+                  ou compartilhadas com outros serviços.
                 </p>
               </div>
             )}

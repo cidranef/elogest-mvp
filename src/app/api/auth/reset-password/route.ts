@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
+import { validateStrongPassword } from "@/lib/password-policy";
 
 
 
@@ -17,6 +18,17 @@ import { db } from "@/lib/db";
    - Confere validade.
    - Atualiza passwordHash.
    - Remove token para impedir reutilização.
+
+   ETAPA 42.8 — SEGURANÇA DE SENHA
+   - Aplica política central de senha forte.
+   - Exige:
+     mínimo de 8 caracteres,
+     letra maiúscula,
+     letra minúscula,
+     número,
+     caractere especial.
+   - Bloqueia senhas óbvias/previsíveis.
+   - Bloqueia senha contendo parte do e-mail ou nome do usuário.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
@@ -47,17 +59,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!password || password.length < 8) {
-      return NextResponse.json(
-        {
-          error: "A nova senha deve ter pelo menos 8 caracteres.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
     const tokenHash = hashToken(token);
 
     const user = await db.user.findFirst({
@@ -70,6 +71,8 @@ export async function POST(request: NextRequest) {
       },
       select: {
         id: true,
+        email: true,
+        name: true,
       },
     });
 
@@ -77,6 +80,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: "Link de recuperação inválido ou expirado.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+
+
+    /* =======================================================
+       VALIDAÇÃO DE SENHA FORTE
+
+       A validação ocorre depois da validação do token para que
+       possamos comparar a senha com e-mail/nome do usuário.
+       ======================================================= */
+
+    const passwordValidation = validateStrongPassword(password, {
+      email: user.email,
+      name: user.name,
+    });
+
+    if (!passwordValidation.valid) {
+      return NextResponse.json(
+        {
+          error: passwordValidation.errors.join(" "),
+          errors: passwordValidation.errors,
         },
         {
           status: 400,
