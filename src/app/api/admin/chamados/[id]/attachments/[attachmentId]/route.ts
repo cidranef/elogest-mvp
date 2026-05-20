@@ -3,11 +3,13 @@ import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
 import { unlink } from "fs/promises";
 import path from "path";
-import { Role, Status } from "@prisma/client";
+import { Status } from "@prisma/client";
+import { canDeleteAttachment } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
 
@@ -42,22 +44,36 @@ type RouteContext = {
 
 
 /* =========================================================
+   HELPERS
+   ========================================================= */
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+
+
+function getDatabaseAccessId(access: ActiveUserAccess | null) {
+  if (!access) {
+    return null;
+  }
+
+  return access.source === "USER_ACCESS" ? access.accessId : null;
+}
+
+
+
+/* =========================================================
    FILTRO DE ACESSO AO CHAMADO
 
-   SUPER_ADMIN:
-   - pode acessar qualquer chamado apenas quando estiver
-     em contexto SUPER_ADMIN.
+   ETAPA 43:
+   /admin é área operacional da ADMINISTRADORA.
 
-   ADMINISTRADORA:
-   - acessa chamados da administradora vinculada ao contexto ativo.
-
-   SÍNDICO:
-   - não acessa esta rota administrativa.
-   - deve usar a rota do portal.
-
-   MORADOR / PROPRIETÁRIO:
-   - não acessam esta rota administrativa.
-   - usam as rotas do portal.
+   Portanto:
+   - ADMINISTRADORA acessa apenas chamados da sua carteira ativa;
+   - SUPER_ADMIN não opera por esta rota;
+   - SÍNDICO / MORADOR / PROPRIETÁRIO / CONSELHEIRO usam portal
+     ou rotas próprias de suas áreas.
    ========================================================= */
 
 function getAttachmentTicketWhere({
@@ -67,23 +83,17 @@ function getAttachmentTicketWhere({
   access: ActiveUserAccess;
   ticketId: string;
 }) {
-  if (access.role === Role.SUPER_ADMIN) {
-    return {
-      id: ticketId,
-    };
-  }
-
-  if (access.role === Role.ADMINISTRADORA) {
+  if (isAdministradoraAccess(access) && access.administratorId) {
     return {
       id: ticketId,
       condominium: {
-        administratorId: access.administratorId || undefined,
+        administratorId: access.administratorId,
       },
     };
   }
 
   return {
-    id: "__blocked__",
+    id: "__NO_ACCESS__",
   };
 }
 
@@ -92,43 +102,19 @@ function getAttachmentTicketWhere({
 /* =========================================================
    VALIDA ACESSO ADMINISTRATIVO
 
-   Permitidos nesta rota:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
+   Permitido nesta rota:
+   - ADMINISTRADORA com administratorId no perfil ativo.
 
    Bloqueados:
-   - SINDICO
-   - MORADOR
-   - PROPRIETARIO
-   - CONSELHEIRO
+   - SUPER_ADMIN por /admin;
+   - SINDICO;
+   - MORADOR;
+   - PROPRIETARIO;
+   - CONSELHEIRO.
 
    Observação importante:
-   Isso valida acesso ao chamado. A exclusão do anexo tem uma
+   Isso valida acesso ao chamado. A exclusão do anexo mantém uma
    segunda regra mais restrita: somente quem enviou pode excluir.
-   ========================================================= */
-
-function canUseAdminAttachmentRoute(access: ActiveUserAccess | null) {
-  if (!access) return false;
-
-  return access.role === Role.SUPER_ADMIN || access.role === Role.ADMINISTRADORA;
-}
-
-
-
-/* =========================================================
-   VALIDA CONTEXTO ATIVO
-
-   ADMINISTRADORA:
-   - precisa ter administratorId no contexto ativo.
-
-   SUPER_ADMIN:
-   - pode seguir sem administratorId.
-
-   SÍNDICO / MORADOR / PROPRIETÁRIO:
-   - devem usar as rotas do portal.
-
-   Essa validação evita que um contexto incompleto gere filtro
-   fraco com undefined.
    ========================================================= */
 
 function validateAdminAttachmentContext(access: ActiveUserAccess | null) {
@@ -140,20 +126,28 @@ function validateAdminAttachmentContext(access: ActiveUserAccess | null) {
     };
   }
 
-  if (!canUseAdminAttachmentRoute(access)) {
+  if (!isAdministradoraAccess(access)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso à rota administrativa de remoção de anexos. Use o portal.",
+        "Este contexto não possui acesso à rota administrativa de remoção de anexos. Use o portal ou a área EloGest.",
     };
   }
 
-  if (access.role === Role.ADMINISTRADORA && !access.administratorId) {
+  if (!access.administratorId) {
     return {
       ok: false,
       status: 403,
       message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canDeleteAttachment(access)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para remover anexos.",
     };
   }
 
@@ -173,9 +167,9 @@ function validateAdminAttachmentContext(access: ActiveUserAccess | null) {
 
    - Somente quem enviou o anexo pode excluir.
    - Administradora não remove anexo enviado pelo síndico/morador.
-   - Super Admin também não remove anexo de outro usuário por esta rota.
    - Chamados resolvidos/cancelados não permitem remoção.
    - Condomínio/administradora inativos não permitem nova remoção operacional.
+   - Log grava accessId apenas quando o perfil ativo for UserAccess real.
 
    Motivo:
    Preservar evidências e evitar apagamento indevido de documentos,
@@ -184,8 +178,11 @@ function validateAdminAttachmentContext(access: ActiveUserAccess | null) {
 
 export async function DELETE(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAuthUser();
+    const user = await getAuthUser();
     const { id, attachmentId } = await context.params;
+
+    const ticketId = cleanText(id);
+    const safeAttachmentId = cleanText(attachmentId);
 
 
 
@@ -206,14 +203,14 @@ export async function DELETE(req: Request, context: RouteContext) {
        VALIDAÇÃO DOS PARAMS
        ========================================================= */
 
-    if (!id) {
+    if (!ticketId) {
       return NextResponse.json(
         { error: "ID do chamado não informado." },
         { status: 400 }
       );
     }
 
-    if (!attachmentId) {
+    if (!safeAttachmentId) {
       return NextResponse.json(
         { error: "ID do anexo não informado." },
         { status: 400 }
@@ -244,13 +241,17 @@ export async function DELETE(req: Request, context: RouteContext) {
       );
     }
 
+    if (!activeAccess) {
+      return NextResponse.json(
+        { error: "Não foi possível identificar o contexto de acesso." },
+        { status: 403 }
+      );
+    }
+
 
 
     /* =========================================================
        BUSCA DO CHAMADO COM VALIDAÇÃO DE ACESSO
-
-       SUPER_ADMIN:
-       - acessa qualquer chamado.
 
        ADMINISTRADORA:
        - acessa apenas chamados da carteira ativa.
@@ -258,8 +259,8 @@ export async function DELETE(req: Request, context: RouteContext) {
 
     const chamado = await db.ticket.findFirst({
       where: getAttachmentTicketWhere({
-        access: activeAccess!,
-        ticketId: id,
+        access: activeAccess,
+        ticketId,
       }),
       select: {
         id: true,
@@ -342,7 +343,7 @@ export async function DELETE(req: Request, context: RouteContext) {
 
     const attachment = await db.ticketAttachment.findFirst({
       where: {
-        id: attachmentId,
+        id: safeAttachmentId,
         ticketId: chamado.id,
       },
       select: {
@@ -437,13 +438,17 @@ export async function DELETE(req: Request, context: RouteContext) {
        REGISTRA LOG NA LINHA DO TEMPO
 
        Grava o contexto ativo de quem removeu.
+
+       accessId:
+       - só salva quando for UserAccess real;
+       - fallback/legado/sintético grava null para não quebrar FK.
        ========================================================= */
 
     await db.ticketLog.create({
       data: {
         ticketId: chamado.id,
         userId: user.id,
-        accessId: activeAccess!.accessId,
+        accessId: getDatabaseAccessId(activeAccess),
         actorRole: buildActorRole(activeAccess),
         actorLabel: buildActorLabel(activeAccess),
         action: "ATTACHMENT_REMOVED",
@@ -457,10 +462,10 @@ export async function DELETE(req: Request, context: RouteContext) {
       success: true,
       removedAttachmentId: attachment.id,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO REMOVER ANEXO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
 import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
@@ -30,6 +31,25 @@ import ResponsiveSection from "@/components/ui/ResponsiveSection";
    - Mantida a Visão da Carteira limpa e sem labels internas.
    - Preservada toda a lógica server-side aprovada.
    - Títulos dos chamados passam a usar formatação visual consistente.
+
+   ETAPA 42.2.2 — SEGURANÇA DE ACESSO SUPER ADMIN
+
+   Ajustes desta revisão:
+   - SUPER_ADMIN não permanece mais em /admin/dashboard.
+   - /admin/dashboard fica exclusivo para ADMINISTRADORA com administratorId.
+   - Ao tentar acessar /admin/dashboard como SUPER_ADMIN, redireciona para
+     /elogest/dashboard.
+   - Filtros globais de Super Admin foram removidos desta página para evitar
+     mistura entre área EloGest e área operacional da administradora.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Revisão final:
+   - Página já usa activeAccess para definir role e administratorId efetivos.
+   - Mantido bloqueio server-side para qualquer perfil diferente de
+     ADMINISTRADORA.
+   - Mantido redirecionamento do SUPER_ADMIN para /elogest/dashboard.
+   - Consultas continuam filtradas pela carteira da administradora ativa.
    ========================================================= */
 
 
@@ -392,7 +412,7 @@ function AdminDashboardBlockedFallback() {
   return (
     <AdminContextGuard
       fallbackTitle="Dashboard administrativo indisponível neste perfil de acesso"
-      fallbackDescription="A home administrativa é exclusiva para administradora ou super admin. Para acompanhar chamados como síndico, morador ou proprietário, acesse o portal."
+      fallbackDescription="A home administrativa é exclusiva para usuários vinculados a uma administradora. O Super Admin deve acessar o ambiente interno da EloGest."
     >
       <main className="flex min-h-screen items-center justify-center bg-[#F6F8F7] p-8 text-[#17211B]">
         <div className="w-full max-w-xl rounded-[28px] border border-red-200 bg-red-50 p-6 text-red-800">
@@ -411,6 +431,19 @@ function AdminDashboardBlockedFallback() {
 
 export default async function AdminDashboardPage() {
   const sessionUser: any = await getAuthUser();
+
+  if (!sessionUser) {
+    redirect("/login");
+  }
+
+  /*
+     Segurança:
+     /admin/dashboard pertence à área operacional da administradora.
+     SUPER_ADMIN deve usar a área interna da EloGest.
+  */
+  if (sessionUser.role === "SUPER_ADMIN") {
+    redirect("/elogest/dashboard");
+  }
 
   const activeAccess: any = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
@@ -439,11 +472,11 @@ export default async function AdminDashboardPage() {
      PROTEÇÃO SERVER-SIDE POR PERFIL DE ACESSO ATIVO
      ========================================================= */
 
-  if (effectiveRole !== "SUPER_ADMIN" && effectiveRole !== "ADMINISTRADORA") {
+  if (effectiveRole !== "ADMINISTRADORA") {
     return <AdminDashboardBlockedFallback />;
   }
 
-  if (effectiveRole === "ADMINISTRADORA" && !effectiveAdministratorId) {
+  if (!effectiveAdministratorId) {
     return <AdminDashboardBlockedFallback />;
   }
 
@@ -453,37 +486,27 @@ export default async function AdminDashboardPage() {
      FILTROS POR PERFIL EFETIVO
      ========================================================= */
 
-  const isSuperAdminContext = effectiveRole === "SUPER_ADMIN";
+  const condominiumFilter = {
+    administratorId: effectiveAdministratorId,
+  };
 
-  const condominiumFilter = isSuperAdminContext
-    ? {}
-    : {
-        administratorId: effectiveAdministratorId,
-      };
+  const unitFilter = {
+    condominium: {
+      administratorId: effectiveAdministratorId,
+    },
+  };
 
-  const unitFilter = isSuperAdminContext
-    ? {}
-    : {
-        condominium: {
-          administratorId: effectiveAdministratorId,
-        },
-      };
+  const residentFilter = {
+    condominium: {
+      administratorId: effectiveAdministratorId,
+    },
+  };
 
-  const residentFilter = isSuperAdminContext
-    ? {}
-    : {
-        condominium: {
-          administratorId: effectiveAdministratorId,
-        },
-      };
-
-  const ticketFilter = isSuperAdminContext
-    ? {}
-    : {
-        condominium: {
-          administratorId: effectiveAdministratorId,
-        },
-      };
+  const ticketFilter = {
+    condominium: {
+      administratorId: effectiveAdministratorId,
+    },
+  };
 
 
 
@@ -595,15 +618,9 @@ export default async function AdminDashboardPage() {
      IDENTIFICAÇÃO DE BOAS-VINDAS
      ========================================================= */
 
-  const nomeAdministradora =
-    isSuperAdminContext
-      ? "Super Admin"
-      : administradoraAtual?.name || "Administradora";
+  const nomeAdministradora = administradoraAtual?.name || "Administradora";
 
-  const accessDescription =
-    isSuperAdminContext
-      ? "Visão geral da plataforma, administradoras e operação consolidada."
-      : `Visão da carteira vinculada à ${nomeAdministradora}.`;
+  const accessDescription = `Visão da carteira vinculada à ${nomeAdministradora}.`;
 
 
 
@@ -826,7 +843,7 @@ export default async function AdminDashboardPage() {
   return (
     <AdminContextGuard
       fallbackTitle="Dashboard administrativo indisponível neste perfil de acesso"
-      fallbackDescription="A home administrativa é exclusiva para administradora ou super admin. Para acompanhar chamados como síndico, morador ou proprietário, acesse o portal."
+      fallbackDescription="A home administrativa é exclusiva para usuários vinculados a uma administradora. O Super Admin deve acessar o ambiente interno da EloGest."
     >
       <AdminShell current="dashboard">
         {/* =====================================================

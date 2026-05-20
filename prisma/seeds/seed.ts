@@ -40,6 +40,20 @@ import bcrypt from "bcryptjs";
 
    Senha padrão dos usuários demo:
    Heloisa100%
+
+   ETAPA 42.10.5 — TELEFONES PARA WHATSAPP
+
+   Ajustes desta revisão:
+   - User.phone passa a ser preenchido nos usuários demo.
+   - Resident.phone continua sendo mantido como telefone cadastral.
+   - User.phone passa a ser o telefone preferencial para notificações.
+   - Telefones fictícios realistas são usados como fallback.
+   - Telefones reais podem ser usados por variáveis .env locais,
+     sem gravar dados reais no repositório.
+   - Preferências demo foram alinhadas com a matriz atual:
+     SYSTEM ativo;
+     EMAIL ativo nos eventos com e-mail ativo;
+     WHATSAPP ativo apenas nos eventos públicos/controlados.
    ========================================================= */
 
 
@@ -54,6 +68,48 @@ const adapter = new PrismaPg({ connectionString });
 const prisma = new PrismaClient({ adapter });
 
 const DEFAULT_PASSWORD = "Heloisa100%";
+
+
+
+/* =========================================================
+   TELEFONES DEMO
+
+   Importante:
+   - Os valores abaixo são fictícios, mas possuem formato realista.
+   - Para testar provedor real no futuro, use variáveis .env locais.
+   - Não grave telefones pessoais reais diretamente neste arquivo.
+   ========================================================= */
+
+const DEMO_PHONES = {
+  SUPER_ADMIN: process.env.DEMO_SUPER_ADMIN_PHONE || null,
+
+  ADMIN_USER:
+    process.env.DEMO_ADMIN_USER_PHONE || "11970001001",
+
+  ATENDIMENTO_USER:
+    process.env.DEMO_ATENDIMENTO_USER_PHONE || "11970001002",
+
+  SINDICO_SKORPIOS:
+    process.env.DEMO_SINDICO_SKORPIOS_PHONE || "11970002001",
+
+  SINDICO_VISTAVERDE:
+    process.env.DEMO_SINDICO_VISTAVERDE_PHONE || "11970002002",
+
+  MORADOR_SKORPIOS:
+    process.env.DEMO_MORADOR_SKORPIOS_PHONE || "11970000001",
+
+  PROPRIETARIO_SKORPIOS:
+    process.env.DEMO_PROPRIETARIO_SKORPIOS_PHONE || "11970000002",
+
+  MORADOR_VISTAVERDE:
+    process.env.DEMO_MORADOR_VISTAVERDE_PHONE || "11970000003",
+};
+
+
+
+function phoneOptInDate(phone?: string | null) {
+  return phone ? new Date() : null;
+}
 
 
 
@@ -88,6 +144,77 @@ const DEMO_RESIDENT_CPFS = [
   "32165498701",
   "32165498702",
   "32165498703",
+];
+
+
+
+/* =========================================================
+   PREFERÊNCIAS DEMO
+
+   Alinhado com notification-events.ts:
+
+   WhatsApp ativo agora somente para:
+   - TICKET_CREATED
+   - TICKET_ASSIGNED_PUBLIC
+   - TICKET_PUBLIC_COMMENT
+   - TICKET_RESOLVED
+
+   WhatsApp futuro/desativado agora:
+   - TICKET_ASSIGNED
+   - TICKET_STATUS_CHANGED
+   - TICKET_INTERNAL_COMMENT
+   - TICKET_RATED
+   ========================================================= */
+
+const DEMO_NOTIFICATION_EVENT_DEFAULTS = [
+  {
+    eventType: "TICKET_CREATED",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+  },
+  {
+    eventType: "TICKET_ASSIGNED",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+  },
+  {
+    eventType: "TICKET_ASSIGNED_PUBLIC",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+  },
+  {
+    eventType: "TICKET_PUBLIC_COMMENT",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+  },
+  {
+    eventType: "TICKET_INTERNAL_COMMENT",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+  },
+  {
+    eventType: "TICKET_STATUS_CHANGED",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+  },
+  {
+    eventType: "TICKET_RESOLVED",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+  },
+  {
+    eventType: "TICKET_RATED",
+    systemEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: false,
+  },
 ];
 
 
@@ -326,6 +453,14 @@ async function resetDemoData() {
     },
   });
 
+  await prisma.notificationPreference.deleteMany({
+    where: {
+      userId: {
+        in: demoUserIds,
+      },
+    },
+  });
+
   await prisma.ticketRating.deleteMany({
     where: {
       ticketId: {
@@ -445,7 +580,20 @@ async function main() {
      SUPER ADMIN ELOGEST
 
      Mantemos o seu usuário real como Super Admin.
+
+     Observação:
+     - O telefone do Super Admin só é atualizado se a variável
+       DEMO_SUPER_ADMIN_PHONE estiver definida.
+     - Isso evita gravar/remover telefone pessoal sem intenção.
    ========================================================= */
+
+  const superAdminPhoneUpdate = DEMO_PHONES.SUPER_ADMIN
+    ? {
+        phone: DEMO_PHONES.SUPER_ADMIN,
+        phoneOptInAt: phoneOptInDate(DEMO_PHONES.SUPER_ADMIN),
+        phoneOptOutAt: null,
+      }
+    : {};
 
   const superAdmin = await prisma.user.upsert({
     where: {
@@ -456,10 +604,15 @@ async function main() {
       passwordHash,
       role: Role.SUPER_ADMIN,
       isActive: true,
+      ...superAdminPhoneUpdate,
     },
     create: {
       name: "Fabio Costa",
       email: "cidranef@gmail.com",
+      phone: DEMO_PHONES.SUPER_ADMIN,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.SUPER_ADMIN),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.SUPER_ADMIN,
       isActive: true,
@@ -559,6 +712,10 @@ async function main() {
     data: {
       name: "Mariana Almeida",
       email: "admin@prismagestao.com.br",
+      phone: DEMO_PHONES.ADMIN_USER,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.ADMIN_USER),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.ADMINISTRADORA,
       administratorId: administrator.id,
@@ -570,6 +727,10 @@ async function main() {
     data: {
       name: "Carolina Mendes",
       email: "atendimento@prismagestao.com.br",
+      phone: DEMO_PHONES.ATENDIMENTO_USER,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.ATENDIMENTO_USER),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.ADMINISTRADORA,
       administratorId: administrator.id,
@@ -643,6 +804,12 @@ async function main() {
 
   /* =========================================================
      MORADORES / PROPRIETÁRIOS
+
+     Resident.phone:
+     - telefone cadastral do vínculo condominial.
+
+     User.phone:
+     - telefone preferencial para notificações pessoais.
    ========================================================= */
 
   const moradorSkorpios = await prisma.resident.create({
@@ -652,7 +819,7 @@ async function main() {
       name: "Renata Oliveira",
       cpf: DEMO_RESIDENT_CPFS[0],
       email: "morador.skorpios@demo.com",
-      phone: "11970000001",
+      phone: DEMO_PHONES.MORADOR_SKORPIOS,
       residentType: "MORADOR",
       status: Status.ACTIVE,
     },
@@ -665,7 +832,7 @@ async function main() {
       name: "Carlos Henrique Lima",
       cpf: DEMO_RESIDENT_CPFS[1],
       email: "proprietario.skorpios@demo.com",
-      phone: "11970000002",
+      phone: DEMO_PHONES.PROPRIETARIO_SKORPIOS,
       residentType: "PROPRIETARIO",
       status: Status.ACTIVE,
     },
@@ -678,7 +845,7 @@ async function main() {
       name: "Patrícia Nogueira",
       cpf: DEMO_RESIDENT_CPFS[2],
       email: "morador.vistaverde@demo.com",
-      phone: "11970000003",
+      phone: DEMO_PHONES.MORADOR_VISTAVERDE,
       residentType: "MORADOR",
       status: Status.ACTIVE,
     },
@@ -694,6 +861,10 @@ async function main() {
     data: {
       name: "Eduardo Martins",
       email: "sindico.skorpios@demo.com",
+      phone: DEMO_PHONES.SINDICO_SKORPIOS,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.SINDICO_SKORPIOS),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.SINDICO,
       administratorId: administrator.id,
@@ -706,6 +877,10 @@ async function main() {
     data: {
       name: "Luciana Prado",
       email: "sindico.vistaverde@demo.com",
+      phone: DEMO_PHONES.SINDICO_VISTAVERDE,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.SINDICO_VISTAVERDE),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.SINDICO,
       administratorId: administrator.id,
@@ -724,6 +899,10 @@ async function main() {
     data: {
       name: "Renata Oliveira",
       email: "morador.skorpios@demo.com",
+      phone: DEMO_PHONES.MORADOR_SKORPIOS,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.MORADOR_SKORPIOS),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.MORADOR,
       administratorId: administrator.id,
@@ -737,6 +916,10 @@ async function main() {
     data: {
       name: "Carlos Henrique Lima",
       email: "proprietario.skorpios@demo.com",
+      phone: DEMO_PHONES.PROPRIETARIO_SKORPIOS,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.PROPRIETARIO_SKORPIOS),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.MORADOR,
       administratorId: administrator.id,
@@ -750,6 +933,10 @@ async function main() {
     data: {
       name: "Patrícia Nogueira",
       email: "morador.vistaverde@demo.com",
+      phone: DEMO_PHONES.MORADOR_VISTAVERDE,
+      phoneOptInAt: phoneOptInDate(DEMO_PHONES.MORADOR_VISTAVERDE),
+      phoneVerifiedAt: null,
+      phoneOptOutAt: null,
       passwordHash,
       role: Role.MORADOR,
       administratorId: administrator.id,
@@ -1088,35 +1275,26 @@ async function main() {
     moradorVistaUser,
   ];
 
-  const eventTypes = [
-    "TICKET_CREATED",
-    "TICKET_ASSIGNED",
-    "TICKET_PUBLIC_COMMENT",
-    "TICKET_STATUS_CHANGED",
-    "TICKET_RESOLVED",
-    "TICKET_RATED",
-  ];
-
   for (const user of preferenceUsers) {
-    for (const eventType of eventTypes) {
+    for (const eventDefault of DEMO_NOTIFICATION_EVENT_DEFAULTS) {
       await prisma.notificationPreference.upsert({
         where: {
           userId_eventType: {
             userId: user.id,
-            eventType,
+            eventType: eventDefault.eventType,
           },
         },
         update: {
-          systemEnabled: true,
-          emailEnabled: false,
-          whatsappEnabled: false,
+          systemEnabled: eventDefault.systemEnabled,
+          emailEnabled: eventDefault.emailEnabled,
+          whatsappEnabled: eventDefault.whatsappEnabled,
         },
         create: {
           userId: user.id,
-          eventType,
-          systemEnabled: true,
-          emailEnabled: false,
-          whatsappEnabled: false,
+          eventType: eventDefault.eventType,
+          systemEnabled: eventDefault.systemEnabled,
+          emailEnabled: eventDefault.emailEnabled,
+          whatsappEnabled: eventDefault.whatsappEnabled,
         },
       });
     }
@@ -1136,36 +1314,42 @@ async function main() {
       perfil: "SUPER_ADMIN",
       nome: superAdmin.name,
       email: superAdmin.email,
+      telefone: superAdmin.phone || "não definido",
       senha: DEFAULT_PASSWORD,
     },
     {
       perfil: "ADMINISTRADORA",
       nome: adminUser.name,
       email: adminUser.email,
+      telefone: adminUser.phone,
       senha: DEFAULT_PASSWORD,
     },
     {
       perfil: "ATENDIMENTO",
       nome: atendimentoUser.name,
       email: atendimentoUser.email,
+      telefone: atendimentoUser.phone,
       senha: DEFAULT_PASSWORD,
     },
     {
       perfil: "SÍNDICO",
       nome: sindicoSkorpios.name,
       email: sindicoSkorpios.email,
+      telefone: sindicoSkorpios.phone,
       senha: DEFAULT_PASSWORD,
     },
     {
       perfil: "MORADOR",
       nome: moradorUser.name,
       email: moradorUser.email,
+      telefone: moradorUser.phone,
       senha: DEFAULT_PASSWORD,
     },
     {
       perfil: "PROPRIETÁRIO",
       nome: proprietarioUser.name,
       email: proprietarioUser.email,
+      telefone: proprietarioUser.phone,
       senha: DEFAULT_PASSWORD,
     },
   ]);

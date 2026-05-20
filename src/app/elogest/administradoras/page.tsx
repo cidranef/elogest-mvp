@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import EloGestShell from "@/components/EloGestShell";
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
 
 
 
@@ -12,30 +10,35 @@ import { getAuthUser } from "@/lib/auth-guard";
    Rota:
    /elogest/administradoras
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
-   - Listar administradoras cadastradas na plataforma.
+   - Listar todas as administradoras cadastradas na plataforma.
+   - Representar a visão global da dona da plataforma EloGest.
    - Permitir acesso ao detalhe da administradora.
    - Preparar criação de novas administradoras.
-   - Manter esta área exclusiva para SUPER_ADMIN.
+   - Exibir indicadores de estrutura vinculada:
+     condomínios, usuários e status operacional.
 
-   Esta página pertence à área interna da EloGest.
-   Não deve usar AdminShell, pois AdminShell é da administradora.
+   Segurança:
+   - A proteção principal da área /elogest é feita em:
+     src/app/elogest/layout.tsx
+   - Esta página herda o guard da área EloGest e deve ser usada
+     apenas pelo SUPER_ADMIN.
+
+   Regra estratégica:
+   - Esta página não usa administratorId.
+   - SUPER_ADMIN visualiza todas as administradoras.
+   - ADMINISTRADORA deve operar apenas em /admin.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
 
 
 
-type AuthUser = {
-  id: string;
-  role?: string | null;
-  name?: string | null;
-  email?: string | null;
-};
-
-
+/* =========================================================
+   HELPERS
+   ========================================================= */
 
 function formatDate(value: Date) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -47,9 +50,16 @@ function formatDate(value: Date) {
 
 
 
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("pt-BR").format(value);
+}
+
+
+
 function statusLabel(status: string) {
   if (status === "ACTIVE") return "Ativa";
   if (status === "INACTIVE") return "Inativa";
+
   return status;
 }
 
@@ -65,23 +75,81 @@ function statusClasses(status: string) {
 
 
 
+function pluralize(value: number, singular: string, plural: string) {
+  return value === 1 ? singular : plural;
+}
+
+
+
+function formatCnpj(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (digits.length !== 14) {
+    return value || "CNPJ não informado";
+  }
+
+  return digits.replace(
+    /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+    "$1.$2.$3/$4-$5"
+  );
+}
+
+
+
+function formatPhone(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (!digits) {
+    return "Sem telefone";
+  }
+
+  if (digits.length === 11) {
+    return digits.replace(/^(\d{2})(\d{5})(\d{4})$/, "($1) $2-$3");
+  }
+
+  if (digits.length === 10) {
+    return digits.replace(/^(\d{2})(\d{4})(\d{4})$/, "($1) $2-$3");
+  }
+
+  return value || digits;
+}
+
+
+
+/* =========================================================
+   COMPONENTES INTERNOS
+   ========================================================= */
+
 function StatCard({
   title,
   value,
   description,
+  tone = "default",
 }: {
   title: string;
   value: number;
   description: string;
+  tone?: "default" | "success" | "muted";
 }) {
+  const toneClasses = {
+    default: "border-[#DDE5DF] bg-white/92",
+    success: "border-[#CFE6D4] bg-[#F7FBF8]",
+    muted: "border-[#DDE5DF] bg-[#F7F9F8]",
+  };
+
   return (
-    <div className="rounded-[26px] border border-[#DDE5DF] bg-white/92 p-5 shadow-[0_16px_48px_rgba(23,33,27,0.06)]">
+    <div
+      className={[
+        "rounded-[26px] border p-5 shadow-[0_16px_48px_rgba(23,33,27,0.06)]",
+        toneClasses[tone],
+      ].join(" ")}
+    >
       <p className="text-sm font-semibold text-[#64736A]">
         {title}
       </p>
 
       <p className="mt-3 text-3xl font-semibold tracking-[-0.045em] text-[#17211B]">
-        {value}
+        {formatNumber(value)}
       </p>
 
       <p className="mt-2 text-sm leading-6 text-[#7A877F]">
@@ -93,18 +161,44 @@ function StatCard({
 
 
 
+function EmptyState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-[#DDE5DF] bg-[#F7F9F8] px-4 py-10 text-center">
+      <p className="text-sm font-semibold text-[#17211B]">
+        Nenhuma administradora cadastrada.
+      </p>
+
+      <p className="mt-1 text-sm text-[#64736A]">
+        Cadastre a primeira administradora para iniciar a operação da plataforma.
+      </p>
+
+      <Link
+        href="/elogest/administradoras/nova"
+        className="mt-5 inline-flex min-h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F5A32]"
+      >
+        Cadastrar administradora
+      </Link>
+    </div>
+  );
+}
+
+
+
+/* =========================================================
+   PÁGINA
+   ========================================================= */
+
 export default async function EloGestAdministradorasPage() {
-  const authUser = (await getAuthUser()) as AuthUser | null;
-
-  if (!authUser) {
-    redirect("/login");
-  }
-
-  if (authUser.role !== "SUPER_ADMIN") {
-    redirect("/admin/dashboard");
-  }
 
 
+
+  /* =========================================================
+     DADOS GLOBAIS DA PLATAFORMA
+
+     Importante:
+     - Sem filtro por administratorId.
+     - Esta é a visão global do SUPER_ADMIN.
+     ========================================================= */
 
   const [administradoras, totalAtivas, totalInativas] = await Promise.all([
     db.administrator.findMany({
@@ -123,9 +217,14 @@ export default async function EloGestAdministradorasPage() {
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [
+        {
+          status: "asc",
+        },
+        {
+          createdAt: "desc",
+        },
+      ],
     }),
 
     db.administrator.count({
@@ -143,6 +242,20 @@ export default async function EloGestAdministradorasPage() {
 
 
 
+  const totalAdministradoras = administradoras.length;
+
+  const totalCondominiosVinculados = administradoras.reduce(
+    (total, item) => total + item._count.condominiums,
+    0
+  );
+
+  const totalUsuariosVinculados = administradoras.reduce(
+    (total, item) => total + item._count.users,
+    0
+  );
+
+
+
   return (
     <EloGestShell current="administradoras">
       <div className="space-y-8">
@@ -157,7 +270,7 @@ export default async function EloGestAdministradorasPage() {
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="inline-flex rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
-                Gestão EloGest
+                Gestão global EloGest
               </div>
 
               <h1 className="mt-4 text-3xl font-semibold tracking-[-0.045em] text-[#17211B] sm:text-4xl">
@@ -166,8 +279,9 @@ export default async function EloGestAdministradorasPage() {
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
                 Gerencie as administradoras clientes da plataforma, acompanhe
-                seus condomínios vinculados e mantenha o controle global do
-                ambiente EloGest.
+                seus condomínios vinculados, usuários operacionais e status de
+                operação. Esta é uma visão global da EloGest, sem vínculo com
+                uma carteira específica.
               </p>
             </div>
 
@@ -195,10 +309,10 @@ export default async function EloGestAdministradorasPage() {
            KPIS
            ===================================================== */}
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Total"
-            value={administradoras.length}
+            value={totalAdministradoras}
             description="Administradoras cadastradas na plataforma."
           />
 
@@ -206,13 +320,57 @@ export default async function EloGestAdministradorasPage() {
             title="Ativas"
             value={totalAtivas}
             description="Administradoras disponíveis para operação."
+            tone="success"
           />
 
           <StatCard
             title="Inativas"
             value={totalInativas}
-            description="Administradoras suspensas ou desativadas."
+            description="Administradoras pausadas, suspensas ou desativadas."
+            tone="muted"
           />
+
+          <StatCard
+            title="Estrutura vinculada"
+            value={totalCondominiosVinculados}
+            description={`${formatNumber(totalUsuariosVinculados)} ${pluralize(
+              totalUsuariosVinculados,
+              "usuário vinculado",
+              "usuários vinculados"
+            )}.`}
+          />
+        </section>
+
+
+
+        {/* =====================================================
+           RESUMO DE ESCOPO
+           ===================================================== */}
+
+        <section className="rounded-[28px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-[-0.025em] text-[#17211B]">
+                Escopo multiadministradora
+              </h2>
+
+              <p className="mt-1 text-sm leading-6 text-[#64736A]">
+                Esta listagem exibe todas as administradoras da plataforma.
+                A operação individual de cada administradora continua isolada
+                dentro de /admin pelo respectivo administratorId.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <span className="rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
+                Visão global
+              </span>
+
+              <span className="rounded-full border border-[#DDE5DF] bg-[#F7F9F8] px-3 py-1 text-xs font-semibold text-[#64736A]">
+                Sem filtro de carteira
+              </span>
+            </div>
+          </div>
         </section>
 
 
@@ -222,43 +380,29 @@ export default async function EloGestAdministradorasPage() {
            ===================================================== */}
 
         <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur">
-          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#17211B]">
                 Lista de administradoras
               </h2>
 
               <p className="mt-1 text-sm leading-6 text-[#64736A]">
-                Clique em uma administradora para visualizar os dados e editar o cadastro.
+                Clique em uma administradora para visualizar dados, editar o
+                cadastro e gerenciar usuários administrativos vinculados.
               </p>
             </div>
 
             <span className="inline-flex w-fit rounded-full border border-[#DDE5DF] bg-[#F7F9F8] px-3 py-1 text-xs font-semibold text-[#64736A]">
-              {administradoras.length} registro
-              {administradoras.length === 1 ? "" : "s"}
+              {formatNumber(totalAdministradoras)} registro
+              {totalAdministradoras === 1 ? "" : "s"}
             </span>
           </div>
 
           {administradoras.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-[#DDE5DF] bg-[#F7F9F8] px-4 py-10 text-center">
-              <p className="text-sm font-semibold text-[#17211B]">
-                Nenhuma administradora cadastrada.
-              </p>
-
-              <p className="mt-1 text-sm text-[#64736A]">
-                Cadastre a primeira administradora para iniciar a operação da plataforma.
-              </p>
-
-              <Link
-                href="/elogest/administradoras/nova"
-                className="mt-5 inline-flex min-h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F5A32]"
-              >
-                Cadastrar administradora
-              </Link>
-            </div>
+            <EmptyState />
           ) : (
             <div className="overflow-hidden rounded-[24px] border border-[#DDE5DF]">
-              <div className="hidden grid-cols-[1.3fr_0.9fr_0.75fr_0.7fr_0.6fr] border-b border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#7A877F] lg:grid">
+              <div className="hidden grid-cols-[1.25fr_1fr_0.85fr_0.65fr_0.6fr] border-b border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#7A877F] lg:grid">
                 <div>Administradora</div>
                 <div>Contato</div>
                 <div>Estrutura</div>
@@ -266,20 +410,28 @@ export default async function EloGestAdministradorasPage() {
                 <div className="text-right">Cadastro</div>
               </div>
 
-              <div className="divide-y divide-[#EEF2EF] bg-white">
+              <div className="max-h-[680px] divide-y divide-[#EEF2EF] overflow-y-auto bg-white">
                 {administradoras.map((administradora) => (
                   <Link
                     key={administradora.id}
                     href={`/elogest/administradoras/${administradora.id}`}
-                    className="group grid gap-3 px-4 py-4 transition hover:bg-[#F7FBF8] lg:grid-cols-[1.3fr_0.9fr_0.75fr_0.7fr_0.6fr] lg:items-center"
+                    className="group grid gap-3 px-4 py-4 transition hover:bg-[#F7FBF8] lg:grid-cols-[1.25fr_1fr_0.85fr_0.65fr_0.6fr] lg:items-center"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[#17211B] group-hover:text-[#256D3C]">
-                        {administradora.name}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-[#17211B] group-hover:text-[#256D3C]">
+                          {administradora.name}
+                        </p>
+
+                        {administradora.status !== "ACTIVE" && (
+                          <span className="rounded-full border border-[#DDE5DF] bg-[#F7F9F8] px-2 py-0.5 text-[11px] font-semibold text-[#64736A]">
+                            Pausada
+                          </span>
+                        )}
+                      </div>
 
                       <p className="mt-1 text-xs leading-5 text-[#64736A]">
-                        {administradora.cnpj || "CNPJ não informado"}
+                        {formatCnpj(administradora.cnpj)}
                       </p>
                     </div>
 
@@ -289,7 +441,7 @@ export default async function EloGestAdministradorasPage() {
                       </p>
 
                       <p className="mt-1 text-xs leading-5 text-[#64736A]">
-                        {administradora.phone || "Sem telefone"}
+                        {formatPhone(administradora.phone)}
                       </p>
                     </div>
 

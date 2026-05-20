@@ -63,6 +63,13 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
      ou administradora.
    - Síndico passa a poder avaliar chamado resolvido do condomínio,
      direcionando a avaliação para a administradora.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - CONSELHEIRO passa a ser reconhecido nos textos do portal.
+   - A API /api/portal/chamados/[id] continua sendo a camada real
+     de segurança para acesso ao detalhe do chamado.
    ========================================================= */
 
 
@@ -795,13 +802,14 @@ export default function PortalChamadoDetalhesPage() {
     if (roleValue === "SINDICO") return "Síndico";
     if (roleValue === "MORADOR") return "Morador";
     if (roleValue === "PROPRIETARIO") return "Proprietário";
+    if (roleValue === "CONSELHEIRO") return "Conselheiro";
     return "Usuário";
   }
 
 
 
   function getPortalTicketsLabel() {
-    if (role === "SINDICO") {
+    if (role === "SINDICO" || role === "CONSELHEIRO") {
       return "Chamados do condomínio";
     }
 
@@ -813,6 +821,10 @@ export default function PortalChamadoDetalhesPage() {
   function getPageSubtitle() {
     if (role === "SINDICO") {
       return "Acompanhe o andamento deste chamado do condomínio.";
+    }
+
+    if (role === "CONSELHEIRO") {
+      return "Acompanhe este chamado do condomínio vinculado ao conselho.";
     }
 
     if (role === "MORADOR" || role === "PROPRIETARIO") {

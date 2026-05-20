@@ -12,7 +12,7 @@ import NotificationBell from "@/components/NotificationBell";
 /* =========================================================
    ELOGEST SHELL - ÁREA INTERNA DA PLATAFORMA
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
    - Separar a área interna da EloGest da área administrativa
@@ -30,21 +30,21 @@ import NotificationBell from "@/components/NotificationBell";
      auditoria,
      suporte e configurações globais.
 
-   Rotas sugeridas:
+   Ajustes desta revisão:
+   - Navegação separada entre rotas ativas e módulos futuros.
+   - Links ainda não implementados ficam visualmente desabilitados.
+   - Microcopy reforça que /elogest é ambiente interno da dona da plataforma.
+   - Mantidos NotificationBell, ActiveAccessBadge e LogoutButton.
+
+   Rotas ativas nesta etapa:
    /elogest/dashboard
    /elogest/administradoras
    /elogest/administradoras/nova
    /elogest/administradoras/[id]
-   /elogest/usuarios
-   /elogest/planos
-   /elogest/indicadores
-   /elogest/auditoria
-   /elogest/suporte
-   /elogest/configuracoes
 
    Importante:
    - Este shell deve ser usado apenas por SUPER_ADMIN.
-   - A proteção de rota será feita nas páginas/APIs com getAuthUser.
+   - A proteção de rota é feita no layout /elogest e nas APIs /api/elogest.
    - O AdminShell permanece reservado para administradoras.
    ========================================================= */
 
@@ -310,77 +310,100 @@ function ShellIcon({
 
 const eloGestNavGroups: {
   title: string;
+  description?: string;
   items: {
     key: EloGestNavKey;
     label: string;
     href: string;
     icon: Parameters<typeof ShellIcon>[0]["type"];
     badge?: string;
+    disabled?: boolean;
+    description?: string;
   }[];
 }[] = [
   {
-    title: "Plataforma",
+    title: "Operação ativa",
+    description: "Rotas já disponíveis para uso nesta etapa.",
     items: [
       {
         key: "dashboard",
-        label: "Dashboard",
+        label: "Dashboard global",
         href: "/elogest/dashboard",
         icon: "dashboard",
+        description: "Visão geral da operação EloGest.",
       },
       {
         key: "administradoras",
         label: "Administradoras",
         href: "/elogest/administradoras",
         icon: "administrator",
+        description: "Clientes, vínculos e usuários administrativos.",
       },
+    ],
+  },
+  {
+    title: "Gestão futura",
+    description: "Módulos previstos no cronograma, ainda sem rota ativa.",
+    items: [
       {
         key: "usuarios",
         label: "Usuários globais",
         href: "/elogest/usuarios",
         icon: "users",
+        badge: "Em breve",
+        disabled: true,
+        description: "Visão global de usuários da plataforma.",
       },
-    ],
-  },
-  {
-    title: "Gestão SaaS",
-    items: [
       {
         key: "planos",
-        label: "Planos",
+        label: "Planos e módulos",
         href: "/elogest/planos",
         icon: "plans",
-        badge: "Futuro",
+        badge: "Em breve",
+        disabled: true,
+        description: "Limites comerciais e recursos contratados.",
       },
       {
         key: "indicadores",
-        label: "Indicadores",
+        label: "Indicadores SaaS",
         href: "/elogest/indicadores",
         icon: "chart",
+        badge: "Em breve",
+        disabled: true,
+        description: "Métricas comerciais e operacionais da plataforma.",
       },
       {
         key: "auditoria",
         label: "Auditoria",
         href: "/elogest/auditoria",
         icon: "audit",
-        badge: "Futuro",
+        badge: "Em breve",
+        disabled: true,
+        description: "Rastreabilidade e eventos sensíveis do sistema.",
       },
     ],
   },
   {
-    title: "Operação",
+    title: "Administração EloGest",
+    description: "Recursos internos previstos para operação da plataforma.",
     items: [
       {
         key: "suporte",
         label: "Suporte",
         href: "/elogest/suporte",
         icon: "support",
-        badge: "Futuro",
+        badge: "Em breve",
+        disabled: true,
+        description: "Atendimento às administradoras clientes.",
       },
       {
         key: "configuracoes",
         label: "Configurações",
         href: "/elogest/configuracoes",
         icon: "settings",
+        badge: "Em breve",
+        disabled: true,
+        description: "Parâmetros globais da plataforma.",
       },
     ],
   },
@@ -401,6 +424,10 @@ function isNavActive({
   current?: EloGestNavKey;
   item: (typeof eloGestNavItems)[number];
 }) {
+  if (item.disabled) {
+    return false;
+  }
+
   if (current) {
     return current === item.key;
   }
@@ -441,9 +468,17 @@ function EloGestSidebar({
         <div className="space-y-5">
           {eloGestNavGroups.map((group) => (
             <div key={group.title}>
-              <p className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-white/35">
-                {group.title}
-              </p>
+              <div className="mb-2 px-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/35">
+                  {group.title}
+                </p>
+
+                {group.description && (
+                  <p className="mt-1 text-[11px] leading-4 text-white/28">
+                    {group.description}
+                  </p>
+                )}
+              </div>
 
               <div className="space-y-1">
                 {group.items.map((item) => {
@@ -454,42 +489,66 @@ function EloGestSidebar({
                   });
 
                   return (
-                    <Link
-                      key={item.key}
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={[
-                        "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
-                        active
-                          ? "bg-[#256D3C] text-white shadow-[0_16px_38px_rgba(37,109,60,0.28)]"
-                          : "text-white/70 hover:bg-white/10 hover:text-white",
-                      ].join(" ")}
-                    >
-                      {active && (
-                        <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-[#8ED08E]" />
-                      )}
+                    item.disabled ? (
+                      <div
+                        key={item.key}
+                        className="group relative flex cursor-not-allowed items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold text-white/38"
+                        title={item.description || "Módulo previsto para etapa futura"}
+                        aria-disabled="true"
+                      >
+                        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/6 bg-white/[0.025] text-white/35">
+                          <ShellIcon type={item.icon} className="h-5 w-5" />
+                        </span>
 
-                      <span
+                        <span className="min-w-0 flex-1 truncate">
+                          {item.label}
+                        </span>
+
+                        {item.badge && (
+                          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-bold text-white/45">
+                            {item.badge}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <Link
+                        key={item.key}
+                        href={item.href}
+                        onClick={onNavigate}
+                        title={item.description}
                         className={[
-                          "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
+                          "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
                           active
-                            ? "border-white/15 bg-white/12 text-white"
-                            : "border-white/8 bg-white/[0.04] text-[#8ED08E] group-hover:border-white/15 group-hover:bg-white/10",
+                            ? "bg-[#256D3C] text-white shadow-[0_16px_38px_rgba(37,109,60,0.28)]"
+                            : "text-white/70 hover:bg-white/10 hover:text-white",
                         ].join(" ")}
                       >
-                        <ShellIcon type={item.icon} className="h-5 w-5" />
-                      </span>
+                        {active && (
+                          <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-[#8ED08E]" />
+                        )}
 
-                      <span className="min-w-0 flex-1 truncate">
-                        {item.label}
-                      </span>
-
-                      {item.badge && (
-                        <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/80">
-                          {item.badge}
+                        <span
+                          className={[
+                            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
+                            active
+                              ? "border-white/15 bg-white/12 text-white"
+                              : "border-white/8 bg-white/[0.04] text-[#8ED08E] group-hover:border-white/15 group-hover:bg-white/10",
+                          ].join(" ")}
+                        >
+                          <ShellIcon type={item.icon} className="h-5 w-5" />
                         </span>
-                      )}
-                    </Link>
+
+                        <span className="min-w-0 flex-1 truncate">
+                          {item.label}
+                        </span>
+
+                        {item.badge && (
+                          <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold text-white/80">
+                            {item.badge}
+                          </span>
+                        )}
+                      </Link>
+                    )
                   );
                 })}
               </div>
@@ -504,7 +563,7 @@ function EloGestSidebar({
         </p>
 
         <p className="mt-1 text-xs leading-5 text-white/45">
-          Ambiente interno da plataforma.
+          Acesso exclusivo do Super Admin EloGest.
         </p>
       </div>
     </aside>
@@ -559,7 +618,7 @@ function EloGestTopbar({
             </div>
 
             <p className="truncate text-xs font-medium text-[#5E6B63]">
-              Plataforma
+              Ambiente interno
             </p>
           </div>
         </div>
@@ -574,12 +633,12 @@ function EloGestTopbar({
               <span className="h-1 w-1 rounded-full bg-[#9AA7A0]" />
 
               <p className="text-sm font-semibold text-[#5E6B63]">
-                Ambiente interno da plataforma
+Ambiente interno EloGest
               </p>
             </div>
 
             <p className="mt-1 max-w-3xl text-sm font-medium text-[#7A877F]">
-              Gestão de administradoras, uso da plataforma e operação global.
+Controle global das administradoras clientes, vínculos e operação SaaS.
             </p>
           </div>
         </div>
@@ -641,7 +700,7 @@ function EloGestFooter() {
       <div className="flex flex-col gap-4 text-xs text-[#7A877F] md:flex-row md:items-center md:justify-between">
         <div>
           <p className="font-semibold text-[#5E6B63]">
-            EloGest — Governança Condominial
+EloGest — Governança Condominial
           </p>
 
           <p className="mt-1">
@@ -656,10 +715,6 @@ function EloGestFooter() {
 
           <Link href="/elogest/administradoras" className="font-semibold hover:text-[#256D3C]">
             Administradoras
-          </Link>
-
-          <Link href="/admin/dashboard" className="font-semibold hover:text-[#256D3C]">
-            Área Admin
           </Link>
 
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">

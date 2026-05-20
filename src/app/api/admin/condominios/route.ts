@@ -1,6 +1,12 @@
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageCondominiums } from "@/lib/access-control";
 import { NextResponse } from "next/server";
 
 
@@ -8,24 +14,25 @@ import { NextResponse } from "next/server";
 /* =========================================================
    CONDOMÍNIOS - API ADMINISTRATIVA
 
-   ETAPA 15.1
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
 
    GET:
-   - SUPER_ADMIN vê todos os condomínios.
-   - ADMINISTRADORA vê apenas condomínios da sua administradora.
+   - ADMINISTRADORA vê apenas condomínios da sua carteira ativa.
 
    POST:
-   - SUPER_ADMIN pode criar vinculado a administratorId informado.
-   - ADMINISTRADORA cria vinculado à administradora ativa.
+   - ADMINISTRADORA cria condomínio vinculado à administradora
+     do perfil ativo.
 
-   ETAPA 35.1:
-   Refinamento dos cadastros base.
-
-   Ajustes aplicados:
-   - Rota passa a respeitar contexto ativo.
-   - ADMINISTRADORA usa administratorId do contexto ativo.
-   - SUPER_ADMIN mantém visão global quando contexto for SUPER_ADMIN.
-   - Contextos de portal são bloqueados nesta rota administrativa.
+   Regras consolidadas:
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO são bloqueados.
+   - Todas as consultas usam administratorId do activeAccess.
+   - A permissão MANAGE_CONDOMINIUMS é validada no perfil ativo.
    - CNPJ duplicado recebe mensagem amigável.
    - Status é validado.
    - Campos são normalizados antes de salvar.
@@ -84,19 +91,6 @@ function normalizeCnpj(value: unknown) {
 
    A sessão identifica o usuário logado.
    O contexto ativo define o papel/carteira em uso.
-
-   Exemplos:
-   - SUPER_ADMIN + contexto SUPER_ADMIN:
-     vê todos.
-
-   - SUPER_ADMIN + contexto ADMINISTRADORA:
-     opera como administradora específica.
-
-   - ADMINISTRADORA:
-     opera somente na administradora ativa.
-
-   - SÍNDICO / MORADOR:
-     bloqueados nesta rota.
    ========================================================= */
 
 async function getAdminContextUser() {
@@ -106,9 +100,10 @@ async function getAdminContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
-    userId: sessionUser.id,
-  });
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
 
   if (!activeAccess) {
     return {
@@ -150,23 +145,45 @@ async function getAdminContextUser() {
 
 /* =========================================================
    VALIDA CONTEXTO ADMINISTRATIVO
+
+   Etapa 43:
+   /admin é área operacional da administradora cliente.
+   SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
 function validateAdminContext(user: any) {
-  if (user?.role !== "SUPER_ADMIN" && user?.role !== "ADMINISTRADORA") {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso ao cadastro administrativo de condomínios.",
+        "Este contexto não possui acesso ao cadastro administrativo de condomínios. Use o portal ou a área EloGest.",
     };
   }
 
-  if (user.role === "ADMINISTRADORA" && !user.administratorId) {
+  if (!activeAccess.administratorId) {
     return {
       ok: false,
       status: 403,
       message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageCondominiums(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para gerenciar condomínios.",
     };
   }
 
@@ -180,49 +197,17 @@ function validateAdminContext(user: any) {
 
 
 /* =========================================================
-   WHERE DE LISTAGEM POR CONTEXTO
+   OBTÉM ADMINISTRADORA ATIVA DO CONTEXTO
+
+   A validação acima garante administratorId no activeAccess,
+   mas este helper deixa o TypeScript e os filtros Prisma mais
+   explícitos.
    ========================================================= */
 
-function getCondominiumWhereByContext(user: any) {
-  if (user.role === "SUPER_ADMIN") {
-    return {};
-  }
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
 
-  if (user.role === "ADMINISTRADORA") {
-    return {
-      administratorId: user.administratorId,
-    };
-  }
-
-  return {
-    id: "__blocked__",
-  };
-}
-
-
-
-/* =========================================================
-   DEFINIR ADMINISTRADORA PARA CRIAÇÃO
-
-   ADMINISTRADORA:
-   - sempre usa administratorId do contexto ativo.
-
-   SUPER_ADMIN:
-   - pode informar body.administratorId;
-   - se estiver operando em contexto de administradora, usa esse vínculo;
-   - se não tiver administratorId, retorna erro pedindo seleção.
-   ========================================================= */
-
-function getAdministratorIdForCreate(user: any, body: any) {
-  if (user.role === "ADMINISTRADORA") {
-    return user.administratorId || null;
-  }
-
-  if (user.role === "SUPER_ADMIN") {
-    return cleanText(body?.administratorId) || user.administratorId || null;
-  }
-
-  return null;
+  return activeAccess?.administratorId || null;
 }
 
 
@@ -233,6 +218,12 @@ function getAdministratorIdForCreate(user: any, body: any) {
 
 export async function GET() {
   try {
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
     const user: any = await getAdminContextUser();
 
     const contextValidation = validateAdminContext(user);
@@ -244,10 +235,19 @@ export async function GET() {
       );
     }
 
-    const where = getCondominiumWhereByContext(user);
+    const administratorId = getAdministratorIdFromContext(user);
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
 
     const condominios = await db.condominium.findMany({
-      where,
+      where: {
+        administratorId,
+      },
       include: {
         administrator: true,
 
@@ -328,10 +328,10 @@ export async function GET() {
     });
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR CONDOMÍNIOS:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -353,6 +353,12 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
     const user: any = await getAdminContextUser();
     const body = await req.json();
 
@@ -362,6 +368,15 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: contextValidation.message },
         { status: contextValidation.status }
+      );
+    }
+
+    const administratorId = getAdministratorIdFromContext(user);
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
       );
     }
 
@@ -376,18 +391,6 @@ export async function POST(req: Request) {
 
     const status = normalizeStatus(body?.status);
     const cnpj = normalizeCnpj(body?.cnpj);
-
-    const administratorId = getAdministratorIdForCreate(user, body);
-
-    if (!administratorId) {
-      return NextResponse.json(
-        {
-          error:
-            "Administradora não identificada. Selecione uma administradora antes de cadastrar o condomínio.",
-        },
-        { status: 400 }
-      );
-    }
 
     const administradora = await db.administrator.findFirst({
       where: {
@@ -430,6 +433,10 @@ export async function POST(req: Request) {
 
     /* =========================================================
        CRIAÇÃO
+
+       Etapa 43:
+       administratorId sempre vem do perfil ativo da administradora.
+       Não aceitamos administratorId enviado no body pela rota /admin.
        ========================================================= */
 
     const condominio = await db.condominium.create({
@@ -454,17 +461,22 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(condominio);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO CRIAR CONDOMÍNIO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
 
-    if (error?.code === "P2002") {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json(
         { error: "Já existe um condomínio cadastrado com este dado único." },
         { status: 409 }

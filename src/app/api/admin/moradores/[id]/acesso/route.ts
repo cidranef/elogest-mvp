@@ -1,5 +1,11 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageResidents, canManageUsers } from "@/lib/access-control";
 import { NextResponse } from "next/server";
 
 
@@ -7,27 +13,29 @@ import { NextResponse } from "next/server";
 /* =========================================================
    MORADORES - RESOLVER ACESSO
 
-   ETAPA 35.4 — INTEGRAÇÃO MORADOR x ACESSO AO PORTAL
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
    Objetivo:
    Ao clicar em "Gerenciar acesso" no cadastro do morador,
    o sistema decide automaticamente:
 
    1. Se o morador já tem usuário vinculado:
-      -> editar usuário vinculado
+      -> editar usuário vinculado.
 
    2. Se o morador não tem usuário, mas o e-mail já existe:
-      -> editar usuário existente para permitir vínculo
+      -> editar usuário existente para permitir vínculo.
 
    3. Se o morador não tem usuário e o e-mail não existe:
-      -> criar novo usuário MORADOR
+      -> criar novo usuário MORADOR.
 
    Regras de segurança:
-   - SUPER_ADMIN pode gerenciar qualquer morador
-   - ADMINISTRADORA só pode gerenciar moradores da própria carteira
-   - Morador inativo não pode receber novo acesso
-   - Morador sem e-mail não pode gerar acesso ao portal
-   - E-mail duplicado fora da carteira bloqueia o fluxo
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - ADMINISTRADORA só pode gerenciar moradores da própria carteira.
+   - Morador inativo não pode receber novo acesso.
+   - Morador sem e-mail não pode gerar acesso ao portal.
+   - E-mail duplicado fora da carteira bloqueia o fluxo.
+   - Acesso exige permissão para gerenciar moradores e usuários.
    ========================================================= */
 
 
@@ -59,50 +67,154 @@ function isValidEmail(email: string) {
 
 
 /* =========================================================
+   USUÁRIO COM CONTEXTO ADMINISTRATIVO
+   ========================================================= */
+
+async function getAdminContextUser() {
+  const sessionUser: any = await getAuthUser();
+
+  if (!sessionUser?.id) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
+
+  if (!activeAccess) {
+    return {
+      ...sessionUser,
+      activeAccess: null,
+    };
+  }
+
+  return {
+    ...sessionUser,
+
+    role: activeAccess.role || sessionUser.role,
+
+    administratorId:
+      activeAccess.administratorId !== undefined
+        ? activeAccess.administratorId
+        : sessionUser.administratorId,
+
+    condominiumId:
+      activeAccess.condominiumId !== undefined
+        ? activeAccess.condominiumId
+        : sessionUser.condominiumId,
+
+    unitId:
+      activeAccess.unitId !== undefined
+        ? activeAccess.unitId
+        : sessionUser.unitId,
+
+    residentId:
+      activeAccess.residentId !== undefined
+        ? activeAccess.residentId
+        : sessionUser.residentId,
+
+    activeAccess,
+  };
+}
+
+
+
+function validateAdminContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Este contexto não possui acesso ao gerenciamento de acesso do morador. Use o portal ou a área EloGest.",
+    };
+  }
+
+  if (!activeAccess.administratorId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageResidents(activeAccess) || !canManageUsers(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Usuário sem permissão para gerenciar moradores ou usuários.",
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    message: "",
+  };
+}
+
+
+
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  return activeAccess?.administratorId || null;
+}
+
+
+
+/* =========================================================
    GET - RESOLVER ACESSO DO MORADOR
    ========================================================= */
 
 export async function GET(req: Request, context: RouteContext) {
   try {
-    const authUser: any = await getAuthUser();
+    const authUser: any = await getAdminContextUser();
     const { id } = await context.params;
+    const residentId = String(id || "").trim();
 
-
-
-    /* =========================================================
-       AUTORIZAÇÃO
-       ========================================================= */
-
-    if (authUser.role !== "SUPER_ADMIN" && authUser.role !== "ADMINISTRADORA") {
+    if (!residentId) {
       return NextResponse.json(
-        { error: "Não autorizado." },
-        { status: 401 }
+        { error: "ID do morador não informado." },
+        { status: 400 }
       );
     }
 
+    const contextValidation = validateAdminContext(authUser);
 
+    if (!contextValidation.ok) {
+      return NextResponse.json(
+        { error: contextValidation.message },
+        { status: contextValidation.status }
+      );
+    }
 
-    /* =========================================================
-       LOCALIZAR MORADOR COM ESCOPO DE CARTEIRA
+    const administratorId = getAdministratorIdFromContext(authUser);
 
-       SUPER_ADMIN:
-       - pode localizar qualquer morador
-
-       ADMINISTRADORA:
-       - só pode localizar morador vinculado a condomínio
-         da própria administradora
-       ========================================================= */
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
 
     const morador = await db.resident.findFirst({
       where: {
-        id,
-        ...(authUser.role === "SUPER_ADMIN"
-          ? {}
-          : {
-              condominium: {
-                administratorId: authUser.administratorId,
-              },
-            }),
+        id: residentId,
+        condominium: {
+          administratorId,
+        },
       },
       include: {
         condominium: true,
@@ -119,24 +231,12 @@ export async function GET(req: Request, context: RouteContext) {
       },
     });
 
-
-
     if (!morador) {
       return NextResponse.json(
         { error: "Morador não encontrado ou acesso negado." },
         { status: 404 }
       );
     }
-
-
-
-    /* =========================================================
-       BLOQUEAR MORADOR INATIVO
-
-       Regra:
-       - Morador inativo permanece no histórico
-       - Mas não deve receber/criar novo acesso ao portal
-       ========================================================= */
 
     if (morador.status !== "ACTIVE") {
       return NextResponse.json(
@@ -148,22 +248,11 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       CASO 1 — MORADOR JÁ TEM USUÁRIO VINCULADO
-
-       Ação:
-       - Abrir a tela de usuários em modo edição
-       ========================================================= */
-
     if (morador.user?.id) {
       const params = new URLSearchParams({
         action: "edit",
         userId: morador.user.id,
       });
-
-
 
       return NextResponse.json({
         mode: "EDIT_LINKED_USER",
@@ -174,19 +263,7 @@ export async function GET(req: Request, context: RouteContext) {
       });
     }
 
-
-
-    /* =========================================================
-       VALIDAR E-MAIL DO MORADOR
-
-       Regra:
-       - Para criar acesso ao portal, o morador precisa ter e-mail
-       - O e-mail será usado como login
-       ========================================================= */
-
     const residentEmail = normalizeEmail(morador.email);
-
-
 
     if (!residentEmail) {
       return NextResponse.json(
@@ -198,8 +275,6 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
     if (!isValidEmail(residentEmail)) {
       return NextResponse.json(
         {
@@ -210,43 +285,29 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       CASO 2 — MORADOR NÃO TEM USUÁRIO,
-       MAS EXISTE USUÁRIO COM O MESMO E-MAIL DENTRO DO ESCOPO
-
-       Ação:
-       - Abrir o usuário existente para edição/vínculo
-       ========================================================= */
-
     const existingUserByEmail = await db.user.findFirst({
       where: {
         email: {
           equals: residentEmail,
           mode: "insensitive",
         },
-        ...(authUser.role === "SUPER_ADMIN"
-          ? {}
-          : {
-              OR: [
-                {
-                  administratorId: authUser.administratorId,
-                },
-                {
-                  condominium: {
-                    administratorId: authUser.administratorId,
-                  },
-                },
-                {
-                  resident: {
-                    condominium: {
-                      administratorId: authUser.administratorId,
-                    },
-                  },
-                },
-              ],
-            }),
+        OR: [
+          {
+            administratorId,
+          },
+          {
+            condominium: {
+              administratorId,
+            },
+          },
+          {
+            resident: {
+              condominium: {
+                administratorId,
+              },
+            },
+          },
+        ],
       },
       select: {
         id: true,
@@ -258,16 +319,12 @@ export async function GET(req: Request, context: RouteContext) {
       },
     });
 
-
-
     if (existingUserByEmail) {
       const params = new URLSearchParams({
         action: "edit",
         userId: existingUserByEmail.id,
         residentId: morador.id,
       });
-
-
 
       return NextResponse.json({
         mode: "EDIT_EXISTING_EMAIL_USER",
@@ -278,17 +335,6 @@ export async function GET(req: Request, context: RouteContext) {
         url: `/admin/usuarios?${params.toString()}`,
       });
     }
-
-
-
-    /* =========================================================
-       CASO 2.1 — EXISTE USUÁRIO COM O MESMO E-MAIL,
-       MAS FORA DA CARTEIRA DA ADMINISTRADORA
-
-       Regra:
-       - Bloqueia para evitar que uma administradora vincule
-         um usuário pertencente a outra carteira
-       ========================================================= */
 
     const existingUserOutOfScope = await db.user.findFirst({
       where: {
@@ -302,8 +348,6 @@ export async function GET(req: Request, context: RouteContext) {
       },
     });
 
-
-
     if (existingUserOutOfScope) {
       return NextResponse.json(
         {
@@ -314,24 +358,11 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       CASO 3 — E-MAIL LIVRE, CRIAR NOVO USUÁRIO
-
-       Ação:
-       - Abrir a tela de usuários em modo criação
-       - Pré-configurar role MORADOR
-       - Enviar residentId para vínculo automático
-       ========================================================= */
-
     const params = new URLSearchParams({
       action: "create",
       role: "MORADOR",
       residentId: morador.id,
     });
-
-
 
     return NextResponse.json({
       mode: "CREATE_NEW_USER",
@@ -339,19 +370,15 @@ export async function GET(req: Request, context: RouteContext) {
       residentId: morador.id,
       url: `/admin/usuarios?${params.toString()}`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO RESOLVER ACESSO DO MORADOR:", error);
 
-
-
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
-
-
 
     return NextResponse.json(
       { error: "Erro ao resolver acesso do morador." },

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Status } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
 
 
 
@@ -12,7 +12,7 @@ import { getAuthUser } from "@/lib/auth-guard";
    GET   /api/elogest/administradoras/[id]
    PATCH /api/elogest/administradoras/[id]
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
    - Buscar detalhes de uma administradora.
@@ -22,13 +22,6 @@ import { getAuthUser } from "@/lib/auth-guard";
    ========================================================= */
 
 export const dynamic = "force-dynamic";
-
-
-
-type AuthUser = {
-  id: string;
-  role?: string | null;
-};
 
 
 
@@ -72,45 +65,10 @@ async function getRouteId(context: RouteContext) {
 
 
 
-async function requireSuperAdmin() {
-  const authUser = (await getAuthUser()) as AuthUser | null;
-
-  if (!authUser) {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Usuário não autenticado.",
-        },
-        {
-          status: 401,
-        }
-      ),
-    };
-  }
-
-  if (authUser.role !== "SUPER_ADMIN") {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Acesso restrito ao Super Admin EloGest.",
-        },
-        {
-          status: 403,
-        }
-      ),
-    };
-  }
-
-  return {
-    authUser,
-  };
-}
-
-
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;
@@ -203,7 +161,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;

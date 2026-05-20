@@ -1,14 +1,19 @@
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
+import { getAuthUser, type AuthUser } from "@/lib/auth-guard";
 import { sendNotification } from "@/lib/notifications";
 import {
   canAssignTicket,
   canCreateAdminTicket,
   canViewAdminTickets,
-  isAdministradora,
-  isSuperAdmin,
 } from "@/lib/access-control";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  buildActorLabel,
+  buildActorRole,
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
 import { NextResponse } from "next/server";
 import { Role, Status, TicketPriority } from "@prisma/client";
 
@@ -17,22 +22,27 @@ import { Role, Status, TicketPriority } from "@prisma/client";
 /* =========================================================
    API ADMIN - CHAMADOS
 
-   ETAPA 28.6:
-   Auditoria final do contexto ativo nas APIs.
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
-   ETAPA 31.1:
-   Revisão final de segurança por contexto nas ações críticas.
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
 
-   ETAPA 35.5:
-   Filtros de registros ativos nos fluxos operacionais.
-
-   ETAPA 40.2 — AUDITORIA DE PERMISSÕES E CONTEXTO ATIVO NAS APIs
-
-   CORREÇÃO TYPESCRIPT:
-   - getPriority agora retorna TicketPriority, não string.
-   - Mensagens de notificação usam condominio.name e
-     unidade.condominium?.name, evitando erro de tipagem em
-     chamado.condominium após create.
+   Objetivo desta revisão:
+   - A rota /admin passa a operar somente com perfil ativo
+     ADMINISTRADORA.
+   - SUPER_ADMIN não opera pela área /admin; deve usar rotas
+     próprias da área /elogest.
+   - Todas as regras de carteira passam a considerar o contexto
+     ativo, não apenas session.user.role.
+   - Criação de chamado grava createdByAccessId quando o perfil
+     ativo vem de UserAccess real.
+   - Logs gravam accessId, actorRole e actorLabel com base no
+     perfil ativo.
+   - Mantidas regras de segurança já existentes:
+     administradora só vê/opera sua própria carteira;
+     síndico/morador/proprietário não acessam /admin;
+     registros inativos não entram em fluxos operacionais.
    ========================================================= */
 
 
@@ -46,11 +56,13 @@ const ticketInclude = {
   unit: true,
   resident: true,
   createdByUser: true,
+  createdByAccess: true,
   assignedToUser: true,
 
   logs: {
     include: {
       user: true,
+      access: true,
     },
     orderBy: {
       createdAt: "desc" as const,
@@ -78,6 +90,33 @@ const ticketInclude = {
       },
     },
   },
+};
+
+
+
+/* =========================================================
+   TIPOS LOCAIS
+   ========================================================= */
+
+type AdminContextUser = Omit<AuthUser, "activeAccess"> & {
+  role: string | null;
+  administratorId: string | null;
+  condominiumId: string | null;
+  unitId: string | null;
+  residentId: string | null;
+  activeAccess: ActiveUserAccess | null;
+};
+
+type AssignedValidationResult = {
+  assignedToUserId: string | null;
+  assignedUser: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    role: Role;
+  } | null;
+  error: string | null;
+  status: number;
 };
 
 
@@ -112,28 +151,43 @@ function getPriority(value: unknown): TicketPriority {
 
 
 
+function getDatabaseAccessId(access?: ActiveUserAccess | null) {
+  return access?.source === "USER_ACCESS" ? access.accessId : null;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ATIVO
 
    A sessão base identifica quem está logado.
-   O contexto ativo define com qual papel/carteira ele está
+   O contexto ativo define com qual perfil/carteira ele está
    operando naquele momento.
+
+   Etapa 43:
+   Para /admin, o perfil ativo precisa ser ADMINISTRADORA.
+   SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = await getAuthUser();
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
+  const activeAccess = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
   });
 
   if (!activeAccess) {
     return {
       ...sessionUser,
+      role: sessionUser.role || null,
+      administratorId: sessionUser.administratorId || null,
+      condominiumId: sessionUser.condominiumId || null,
+      unitId: sessionUser.unitId || null,
+      residentId: sessionUser.residentId || null,
       activeAccess: null,
     };
   }
@@ -141,27 +195,27 @@ async function getAdminContextUser() {
   return {
     ...sessionUser,
 
-    role: activeAccess.role || sessionUser.role,
+    role: activeAccess.role || sessionUser.role || null,
 
     administratorId:
       activeAccess.administratorId !== undefined
         ? activeAccess.administratorId
-        : sessionUser.administratorId,
+        : sessionUser.administratorId || null,
 
     condominiumId:
       activeAccess.condominiumId !== undefined
         ? activeAccess.condominiumId
-        : sessionUser.condominiumId,
+        : sessionUser.condominiumId || null,
 
     unitId:
       activeAccess.unitId !== undefined
         ? activeAccess.unitId
-        : sessionUser.unitId,
+        : sessionUser.unitId || null,
 
     residentId:
       activeAccess.residentId !== undefined
         ? activeAccess.residentId
-        : sessionUser.residentId,
+        : sessionUser.residentId || null,
 
     activeAccess,
   };
@@ -171,10 +225,15 @@ async function getAdminContextUser() {
 
 /* =========================================================
    VALIDA PERFIL ADMINISTRATIVO
+
+   Etapa 43:
+   /admin é área operacional da administradora cliente.
+   SUPER_ADMIN não deve operar por aqui, evitando mistura entre
+   visão global EloGest e operação de carteira.
    ========================================================= */
 
-function isAdminContext(user: any) {
-  return isSuperAdmin(user) || isAdministradora(user);
+function isAdminContext(user: AdminContextUser) {
+  return !!user.activeAccess && isAdministradoraAccess(user.activeAccess);
 }
 
 
@@ -183,12 +242,8 @@ function isAdminContext(user: any) {
    FILTRO DE CARTEIRA ADMINISTRATIVA
    ========================================================= */
 
-function getAdminTicketWhere(user: any) {
-  if (isSuperAdmin(user)) {
-    return {};
-  }
-
-  if (isAdministradora(user) && user.administratorId) {
+function getAdminTicketWhere(user: AdminContextUser) {
+  if (isAdminContext(user) && user.administratorId) {
     return {
       condominium: {
         administratorId: user.administratorId,
@@ -204,15 +259,32 @@ function getAdminTicketWhere(user: any) {
 
 
 /* =========================================================
-   VALIDA ADMINISTRADORA ATIVA
+   VALIDA ADMINISTRADORA ATIVA / CONTEXTO
    ========================================================= */
 
-function validateAdministratorContext(user: any) {
-  if (isAdministradora(user) && !user.administratorId) {
-    return false;
+function validateAdministratorContext(user: AdminContextUser) {
+  if (!isAdminContext(user)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Este contexto não possui acesso à área administrativa de chamados.",
+    };
   }
 
-  return true;
+  if (!user.administratorId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    message: "",
+  };
 }
 
 
@@ -227,21 +299,21 @@ async function validateAssignedUser({
   targetAdministratorId,
   targetCondominiumId,
 }: {
-  currentUser: any;
+  currentUser: AdminContextUser;
   assignedToUserId?: string | null;
   targetAdministratorId: string | null;
   targetCondominiumId: string;
-}) {
+}): Promise<AssignedValidationResult> {
   if (!assignedToUserId) {
     return {
-      assignedToUserId: null as string | null,
-      assignedUser: null as any,
-      error: null as string | null,
+      assignedToUserId: null,
+      assignedUser: null,
+      error: null,
       status: 200,
     };
   }
 
-  if (!canAssignTicket(currentUser)) {
+  if (!canAssignTicket(currentUser.activeAccess || currentUser)) {
     return {
       assignedToUserId: null,
       assignedUser: null,
@@ -264,6 +336,12 @@ async function validateAssignedUser({
           condominiumId: targetCondominiumId,
         },
       ],
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
     },
   });
 
@@ -293,26 +371,33 @@ async function validateAssignedUser({
 
 export async function GET() {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
 
-    if (!isAdminContext(user)) {
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
+
+    const contextValidation = validateAdministratorContext(user);
+
+    if (!contextValidation.ok) {
       return NextResponse.json(
-        {
-          error:
-            "Este contexto não possui acesso à área administrativa de chamados.",
-        },
-        { status: 403 }
+        { error: contextValidation.message },
+        { status: contextValidation.status }
       );
     }
 
-    if (!canViewAdminTickets(user)) {
+    if (!canViewAdminTickets(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para listar chamados administrativos." },
         { status: 403 }
       );
     }
 
-    if (!validateAdministratorContext(user)) {
+    const administratorId = user.administratorId;
+
+    if (!administratorId) {
       return NextResponse.json(
         { error: "Contexto de administradora sem vínculo com administradora." },
         { status: 403 }
@@ -328,10 +413,10 @@ export async function GET() {
     });
 
     return NextResponse.json(chamados);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR CHAMADOS:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -353,27 +438,34 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
     const body = await req.json();
 
-    if (!isAdminContext(user)) {
+    const contextValidation = validateAdministratorContext(user);
+
+    if (!contextValidation.ok) {
       return NextResponse.json(
-        {
-          error:
-            "Este contexto não possui acesso para criar chamados administrativos.",
-        },
-        { status: 403 }
+        { error: contextValidation.message },
+        { status: contextValidation.status }
       );
     }
 
-    if (!canCreateAdminTicket(user)) {
+    if (!canCreateAdminTicket(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para criar chamado administrativo." },
         { status: 403 }
       );
     }
 
-    if (!validateAdministratorContext(user)) {
+    const administratorId = user.administratorId;
+
+    if (!administratorId) {
       return NextResponse.json(
         { error: "Contexto de administradora sem vínculo com administradora." },
         { status: 403 }
@@ -391,6 +483,15 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const dbAccessId = getDatabaseAccessId(user.activeAccess);
+
+    const logActorData = {
+      userId: user.id,
+      accessId: dbAccessId,
+      actorRole: buildActorRole(user.activeAccess),
+      actorLabel: buildActorLabel(user.activeAccess),
+    };
 
 
 
@@ -412,14 +513,10 @@ export async function POST(req: Request) {
         where: {
           id: condominiumId,
           status: Status.ACTIVE,
+          administratorId,
           administrator: {
             status: Status.ACTIVE,
           },
-          ...(isSuperAdmin(user)
-            ? {}
-            : {
-                administratorId: user.administratorId,
-              }),
         },
       });
 
@@ -469,6 +566,7 @@ export async function POST(req: Request) {
           category: normalizeNullableText(body.category),
           priority: getPriority(body.priority),
           createdByUserId: user.id,
+          createdByAccessId: dbAccessId,
           assignedToUserId,
         },
         include: ticketInclude,
@@ -477,12 +575,10 @@ export async function POST(req: Request) {
       await db.ticketLog.create({
         data: {
           ticketId: chamado.id,
-          userId: user.id,
+          ...logActorData,
           action: "CREATED",
           fromValue: null,
           toValue: "OPEN",
-          actorRole: user.activeAccess?.role || user.role || null,
-          actorLabel: user.activeAccess?.label || null,
           comment: "Chamado geral do condomínio criado pela administradora.",
         },
       });
@@ -491,12 +587,10 @@ export async function POST(req: Request) {
         await db.ticketLog.create({
           data: {
             ticketId: chamado.id,
-            userId: user.id,
+            ...logActorData,
             action: "ASSIGNED",
             fromValue: null,
             toValue: assignedUser.name,
-            actorRole: user.activeAccess?.role || user.role || null,
-            actorLabel: user.activeAccess?.label || null,
           },
         });
 
@@ -542,13 +636,14 @@ export async function POST(req: Request) {
     const unidade = await db.unit.findFirst({
       where: {
         id: unitId,
-        ...(isSuperAdmin(user)
-          ? {}
-          : {
-              condominium: {
-                administratorId: user.administratorId,
-              },
-            }),
+        status: Status.ACTIVE,
+        condominium: {
+          administratorId,
+          status: Status.ACTIVE,
+          administrator: {
+            status: Status.ACTIVE,
+          },
+        },
       },
       include: {
         condominium: {
@@ -561,21 +656,11 @@ export async function POST(req: Request) {
 
     if (!unidade) {
       return NextResponse.json(
-        { error: "Unidade não encontrada ou acesso negado." },
-        { status: 403 }
-      );
-    }
-
-    if (
-      unidade.condominium?.status !== Status.ACTIVE ||
-      unidade.condominium?.administrator?.status !== Status.ACTIVE
-    ) {
-      return NextResponse.json(
         {
           error:
-            "O condomínio desta unidade está inativo. Reative o condomínio antes de abrir novo chamado.",
+            "Unidade não encontrada, inativa, fora da carteira ou com condomínio/administradora inativos.",
         },
-        { status: 400 }
+        { status: 403 }
       );
     }
 
@@ -648,6 +733,7 @@ export async function POST(req: Request) {
         category: normalizeNullableText(body.category),
         priority: getPriority(body.priority),
         createdByUserId: user.id,
+        createdByAccessId: dbAccessId,
         assignedToUserId,
       },
       include: ticketInclude,
@@ -656,12 +742,10 @@ export async function POST(req: Request) {
     await db.ticketLog.create({
       data: {
         ticketId: chamado.id,
-        userId: user.id,
+        ...logActorData,
         action: "CREATED",
         fromValue: null,
         toValue: "OPEN",
-        actorRole: user.activeAccess?.role || user.role || null,
-        actorLabel: user.activeAccess?.label || null,
         comment: residentNameForLog
           ? `Chamado de unidade criado pela administradora para o morador ${residentNameForLog}.`
           : "Chamado de unidade criado pela administradora, sem morador específico vinculado.",
@@ -672,12 +756,10 @@ export async function POST(req: Request) {
       await db.ticketLog.create({
         data: {
           ticketId: chamado.id,
-          userId: user.id,
+          ...logActorData,
           action: "ASSIGNED",
           fromValue: null,
           toValue: assignedUser.name,
-          actorRole: user.activeAccess?.role || user.role || null,
-          actorLabel: user.activeAccess?.label || null,
         },
       });
 
@@ -703,10 +785,10 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(updated || chamado);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO CRIAR CHAMADO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

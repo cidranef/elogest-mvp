@@ -31,14 +31,43 @@
 
    ETAPA 42.3.4 — ATIVAÇÃO DE E-MAIL PARA EVENTOS DE CHAMADOS
 
-   Ajustes desta revisão:
+   Ajustes:
    - EMAIL passa a ficar ativo em enabledChannels para eventos de
-     chamados já preparados para envio externo.
-   - WHATSAPP permanece apenas como canal futuro em availableChannels,
-     sem entrar em enabledChannels.
+     chamados preparados para envio externo.
    - GENERAL, EMAIL_PENDING e WHATSAPP_PENDING continuam somente SYSTEM.
    - A tela de preferências passa a reconhecer E-mail como canal
      disponível agora nos eventos de chamados.
+
+   ETAPA 42.10 — WHATSAPP EM MODO DEV
+
+   Ajustes:
+   - WHATSAPP passa a existir na matriz para eventos de chamados
+     preparados para comunicação externa.
+   - O envio real NÃO é ativado aqui.
+   - O bloqueio de envio real continua em src/lib/whatsapp.ts.
+
+   ETAPA 42.10.3 — MATRIZ FINAL DO WHATSAPP DEV CONTROLADO
+
+   Ajustes desta revisão:
+   - WHATSAPP fica ativo agora apenas nos eventos públicos/controlados
+     já testados no fluxo real:
+       TICKET_CREATED
+       TICKET_ASSIGNED_PUBLIC
+       TICKET_PUBLIC_COMMENT
+       TICKET_RESOLVED
+
+   - WHATSAPP fica disponível para evolução futura, mas não ativo agora,
+     nos eventos:
+       TICKET_ASSIGNED
+       TICKET_STATUS_CHANGED
+
+   - Eventos internos/sensíveis continuam sem WhatsApp ativo:
+       TICKET_INTERNAL_COMMENT
+       TICKET_RATED
+
+   - Essa separação reduz risco antes do Railway/provedor real:
+       availableChannels -> canais possíveis/futuros;
+       enabledChannels   -> canais ativos agora no MVP.
    ========================================================= */
 
 
@@ -85,15 +114,17 @@ export interface NotificationEventConfig {
   description: string;
 
   /*
-    Canais que o evento poderá usar.
-    WHATSAPP pode aparecer aqui como canal futuro.
+    Canais que o evento poderá usar hoje ou em etapa futura.
   */
   availableChannels: NotificationChannel[];
 
   /*
     Canais ativos neste momento do MVP.
-    Nesta etapa, SYSTEM e EMAIL ficam ativos para eventos de chamados.
-    WHATSAPP permanece fora até a integração própria.
+
+    Regra importante:
+    - A tela de preferências usa enabledChannels para liberar switches.
+    - APIs também podem usar enabledChannels para validar alterações.
+    - O disparo real/simulado continua protegido em camadas adicionais.
   */
   enabledChannels: NotificationChannel[];
 
@@ -122,7 +153,7 @@ const SYSTEM_ONLY: NotificationChannel[] = ["SYSTEM"];
 
 const SYSTEM_AND_EMAIL: NotificationChannel[] = ["SYSTEM", "EMAIL"];
 
-const SYSTEM_EMAIL_WHATSAPP_AVAILABLE: NotificationChannel[] = [
+const SYSTEM_EMAIL_WHATSAPP: NotificationChannel[] = [
   "SYSTEM",
   "EMAIL",
   "WHATSAPP",
@@ -134,10 +165,11 @@ const SYSTEM_EMAIL_WHATSAPP_AVAILABLE: NotificationChannel[] = [
    MATRIZ PRINCIPAL DE EVENTOS
 
    Regra atual:
-   - Eventos de chamados: SYSTEM + EMAIL ativos.
-   - WHATSAPP: disponível como futuro quando fizer sentido,
-     mas ainda não ativo.
-   - Eventos técnicos/pendentes: apenas SYSTEM.
+   - SYSTEM fica ativo para todos os eventos configuráveis.
+   - EMAIL fica ativo para eventos externos de chamados.
+   - WHATSAPP fica ativo apenas nos eventos públicos já testados.
+   - WHATSAPP pode ficar disponível em alguns eventos futuros sem
+     estar habilitado agora.
    ========================================================= */
 
 export const NOTIFICATION_EVENTS: Record<
@@ -159,8 +191,8 @@ export const NOTIFICATION_EVENTS: Record<
     label: "Chamado criado",
     description:
       "Gerada quando um novo chamado é aberto pela administradora, síndico, morador ou proprietário.",
-    availableChannels: SYSTEM_EMAIL_WHATSAPP_AVAILABLE,
-    enabledChannels: SYSTEM_AND_EMAIL,
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_EMAIL_WHATSAPP,
     externalReady: true,
     userPreferenceEnabled: true,
   },
@@ -170,7 +202,7 @@ export const NOTIFICATION_EVENTS: Record<
     label: "Chamado atribuído",
     description:
       "Gerada quando um chamado é atribuído a um responsável operacional.",
-    availableChannels: SYSTEM_EMAIL_WHATSAPP_AVAILABLE,
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
     enabledChannels: SYSTEM_AND_EMAIL,
     externalReady: true,
     userPreferenceEnabled: true,
@@ -181,8 +213,8 @@ export const NOTIFICATION_EVENTS: Record<
     label: "Responsável definido",
     description:
       "Gerada quando um responsável é definido e o morador ou criador do chamado precisa ser avisado de forma pública e amigável.",
-    availableChannels: SYSTEM_EMAIL_WHATSAPP_AVAILABLE,
-    enabledChannels: SYSTEM_AND_EMAIL,
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_EMAIL_WHATSAPP,
     externalReady: true,
     userPreferenceEnabled: true,
   },
@@ -192,8 +224,8 @@ export const NOTIFICATION_EVENTS: Record<
     label: "Resposta pública",
     description:
       "Gerada quando uma mensagem pública é adicionada ao chamado e pode ser vista pelo portal.",
-    availableChannels: SYSTEM_EMAIL_WHATSAPP_AVAILABLE,
-    enabledChannels: SYSTEM_AND_EMAIL,
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_EMAIL_WHATSAPP,
     externalReady: true,
     userPreferenceEnabled: true,
   },
@@ -212,9 +244,8 @@ export const NOTIFICATION_EVENTS: Record<
   TICKET_STATUS_CHANGED: {
     type: "TICKET_STATUS_CHANGED",
     label: "Status alterado",
-    description:
-      "Gerada quando o status de um chamado é alterado.",
-    availableChannels: SYSTEM_AND_EMAIL,
+    description: "Gerada quando o status de um chamado é alterado.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
     enabledChannels: SYSTEM_AND_EMAIL,
     externalReady: true,
     userPreferenceEnabled: true,
@@ -223,10 +254,9 @@ export const NOTIFICATION_EVENTS: Record<
   TICKET_RESOLVED: {
     type: "TICKET_RESOLVED",
     label: "Chamado resolvido",
-    description:
-      "Gerada quando um chamado é finalizado como resolvido.",
-    availableChannels: SYSTEM_EMAIL_WHATSAPP_AVAILABLE,
-    enabledChannels: SYSTEM_AND_EMAIL,
+    description: "Gerada quando um chamado é finalizado como resolvido.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_EMAIL_WHATSAPP,
     externalReady: true,
     userPreferenceEnabled: true,
   },

@@ -1,8 +1,7 @@
 import { db } from "@/lib/db";
 import {
-  getNotificationAvailableChannels,
+  getNotificationEnabledChannels,
   getNotificationEventConfig,
-  isNotificationExternalReady,
   listNotificationEvents,
   shouldRespectUserNotificationPreference,
   type NotificationChannel,
@@ -26,14 +25,34 @@ import {
 
    ETAPA 42.3.4 — E-MAILS DE NOTIFICAÇÃO
 
-   Ajuste desta revisão:
+   Ajustes:
    - SYSTEM continua ativo por padrão.
    - EMAIL passa a iniciar ativo por padrão apenas para eventos
-     externos preparados e que possuem EMAIL em availableChannels.
-   - WHATSAPP continua desativado por padrão até implementarmos
-     a rotina própria.
+     externos preparados e que possuem EMAIL ativo em enabledChannels.
    - Mantida a possibilidade de o usuário desativar EMAIL nas
      preferências.
+
+   ETAPA 42.10 — WHATSAPP EM MODO DE TESTE
+
+   Ajustes:
+   - WHATSAPP passa a iniciar ativo por padrão apenas para eventos
+     externos preparados e que possuem WHATSAPP ativo em enabledChannels.
+   - Isso NÃO envia mensagem real.
+   - O envio real permanece bloqueado em src/lib/whatsapp.ts.
+   - A preferência passa apenas a permitir que o dispatcher execute
+     o modo de teste/simulado do WhatsApp.
+
+   ETAPA 42.10.4 — ALINHAMENTO COM MATRIZ CONTROLADA
+
+   Ajustes desta revisão:
+   - getDefaultNotificationPreference() passa a usar enabledChannels,
+     não availableChannels.
+   - Isso evita ativar por padrão canais que existem apenas como
+     possibilidade futura.
+   - Eventos sem userPreferenceEnabled não entram na base.
+   - SYSTEM só nasce ativo se estiver ativo em enabledChannels.
+   - EMAIL só nasce ativo se estiver ativo em enabledChannels.
+   - WHATSAPP só nasce ativo se estiver ativo em enabledChannels.
    ========================================================= */
 
 
@@ -100,10 +119,13 @@ export function normalizePreferenceEventType(
    PREFERÊNCIA PADRÃO
 
    Regra atual do MVP:
-   - SYSTEM começa ativo;
-   - EMAIL começa ativo somente para eventos externos preparados
-     e com EMAIL disponível;
-   - WHATSAPP continua desativado até integração futura.
+   - SYSTEM começa ativo somente se estiver ativo em enabledChannels.
+   - EMAIL começa ativo somente se estiver ativo em enabledChannels.
+   - WHATSAPP começa ativo somente se estiver ativo em enabledChannels.
+
+   Diferença importante:
+   - availableChannels = canal possível/agendado para futuro.
+   - enabledChannels   = canal ativo agora no MVP.
 
    Observação:
    Se o usuário já possui preferência salva, respeitamos o que
@@ -117,17 +139,13 @@ export function getDefaultNotificationPreference(
   "id" | "userId" | "createdAt" | "updatedAt"
 > {
   const normalizedEventType = normalizePreferenceEventType(eventType);
-  const availableChannels = getNotificationAvailableChannels(normalizedEventType);
-
-  const emailEnabledByDefault =
-    isNotificationExternalReady(normalizedEventType) &&
-    availableChannels.includes("EMAIL");
+  const enabledChannels = getNotificationEnabledChannels(normalizedEventType);
 
   return {
     eventType: normalizedEventType,
-    systemEnabled: true,
-    emailEnabled: emailEnabledByDefault,
-    whatsappEnabled: false,
+    systemEnabled: enabledChannels.includes("SYSTEM"),
+    emailEnabled: enabledChannels.includes("EMAIL"),
+    whatsappEnabled: enabledChannels.includes("WHATSAPP"),
   };
 }
 
@@ -188,6 +206,10 @@ async function findExistingNotificationPreference({
    Se não existir:
    - cria uma nova com padrão seguro;
    - retorna a preferência criada.
+
+   Segurança:
+   - Eventos sem preferência de usuário não deveriam chegar aqui pela API,
+     mas mantemos o normalize para evitar quebra em chamadas antigas.
    ========================================================= */
 
 export async function ensureNotificationPreference({
@@ -245,11 +267,12 @@ export async function ensureNotificationPreference({
    VERIFICAR SE CANAL ESTÁ ATIVO PARA O USUÁRIO
 
    Regra:
-   - SYSTEM segue permitido por padrão.
+   - Eventos que não respeitam preferência do usuário só permitem SYSTEM.
+   - SYSTEM respeita a preferência quando o evento for configurável.
    - EMAIL respeita a preferência do usuário.
+   - WHATSAPP respeita a preferência do usuário.
    - Se a preferência não existir, ensureNotificationPreference()
-     cria usando a regra padrão atual.
-   - WHATSAPP permanece desativado por padrão até etapa futura.
+     cria usando a matriz atual baseada em enabledChannels.
    ========================================================= */
 
 export async function isNotificationChannelEnabledForUser({
@@ -313,6 +336,11 @@ export async function listUserNotificationPreferences(userId: string) {
    ETAPA 37.4:
    Atualização passa a usar o id da preferência encontrada/criada,
    evitando dependência direta de userId_eventType no update.
+
+   Observação:
+   A validação de perfil ativo, evento disponível e canal ativo
+   é feita na API:
+   src/app/api/notifications/preferences/route.ts
    ========================================================= */
 
 export async function updateNotificationPreference({
@@ -366,11 +394,12 @@ export async function updateNotificationPreference({
 /* =========================================================
    GARANTIR PREFERÊNCIAS BÁSICAS PARA UM USUÁRIO
 
-   ETAPA 37.4:
-   A lista agora vem da matriz central de eventos.
-   Assim, quando adicionarmos novos eventos como
-   TICKET_ASSIGNED_PUBLIC, eles entram automaticamente desde que
-   userPreferenceEnabled seja true.
+   A lista vem da matriz central de eventos.
+
+   Regra:
+   - Cria apenas eventos com userPreferenceEnabled=true.
+   - Usa enabledChannels para os padrões iniciais.
+   - Eventos futuros/técnicos não geram preferência desnecessária.
    ========================================================= */
 
 export async function ensureBaseNotificationPreferencesForUser(userId: string) {

@@ -1,14 +1,16 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import { canAccessNotifications } from "@/lib/access-control";
 import {
-  canAccessNotifications,
-  isAdministradora,
-  isMorador,
-  isProprietario,
-  isSindico,
-  isSuperAdmin,
-} from "@/lib/access-control";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  isConselheiroAccess,
+  isMoradorAccess,
+  isProprietarioAccess,
+  isSindicoAccess,
+  isSuperAdminAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
 import { NextResponse } from "next/server";
 
 
@@ -57,6 +59,14 @@ import { NextResponse } from "next/server";
    - Mantém filtro Prisma por usuário/ticket/contexto.
    - Mantém filtro fino por metadata em JS.
    - Mantém separação correta para usuários com múltiplos contextos.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Usa helpers do user-access para decidir pelo perfil ativo.
+   - Inclui CONSELHEIRO como contexto de portal vinculado ao condomínio.
+   - Payload do activeAccess expõe dados do vínculo formal quando houver.
+   - Permissão ACCESS_NOTIFICATIONS é avaliada pelo perfil ativo.
    ========================================================= */
 
 
@@ -72,7 +82,7 @@ async function getNotificationContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
+  const activeAccess: ActiveUserAccess | null = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
   });
 
@@ -125,7 +135,17 @@ function hasActiveAccess(user: any) {
 
 
 function isResidentialContext(user: any) {
-  return isMorador(user) || isProprietario(user);
+  const access = user?.activeAccess as ActiveUserAccess | null;
+
+  return isMoradorAccess(access) || isProprietarioAccess(access);
+}
+
+
+
+function isSyndicLikeContext(user: any) {
+  const access = user?.activeAccess as ActiveUserAccess | null;
+
+  return isSindicoAccess(access) || isConselheiroAccess(access);
 }
 
 
@@ -297,7 +317,7 @@ function notificationBelongsToActiveContext(notification: any, user: any) {
        "Responsável definido para seu chamado".
      ========================================================= */
 
-  if (isSindico(user)) {
+  if (isSyndicLikeContext(user)) {
     if (notificationScope === "ASSIGNED_PUBLIC_TARGETS") {
       return false;
     }
@@ -357,11 +377,11 @@ function getContextNotificationFilter(user: any) {
     };
   }
 
-  if (isSuperAdmin(user)) {
+  if (isSuperAdminAccess(user?.activeAccess || null)) {
     return {};
   }
 
-  if (isAdministradora(user)) {
+  if (isAdministradoraAccess(user?.activeAccess || null)) {
     if (!user.administratorId) {
       return {
         id: "__NO_ACCESS__",
@@ -384,7 +404,7 @@ function getContextNotificationFilter(user: any) {
     };
   }
 
-  if (isSindico(user)) {
+  if (isSyndicLikeContext(user)) {
     if (!user.condominiumId) {
       return {
         id: "__NO_ACCESS__",
@@ -525,6 +545,11 @@ function buildActiveAccessPayload(user: any) {
     condominiumId: user.activeAccess.condominiumId,
     unitId: user.activeAccess.unitId,
     residentId: user.activeAccess.residentId,
+    unitPersonLinkId: user.activeAccess.unitPersonLinkId || null,
+    linkType: user.activeAccess.linkType || null,
+    canVote: user.activeAccess.canVote ?? null,
+    canOpenTickets: user.activeAccess.canOpenTickets ?? null,
+    receivesNotifications: user.activeAccess.receivesNotifications ?? null,
     source: user.activeAccess.source,
   };
 }
@@ -670,7 +695,7 @@ export async function GET(req: Request) {
       );
     }
 
-    if (!canAccessNotifications(user)) {
+    if (!canAccessNotifications(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para acessar notificações." },
         { status: 403 }
@@ -714,10 +739,10 @@ export async function GET(req: Request) {
       unreadCount,
       notifications,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR NOTIFICAÇÕES:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -755,7 +780,7 @@ export async function PATCH() {
       );
     }
 
-    if (!canAccessNotifications(user)) {
+    if (!canAccessNotifications(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para alterar notificações." },
         { status: 403 }
@@ -809,10 +834,10 @@ export async function PATCH() {
       message: "Notificações marcadas como lidas.",
       unreadCount,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO MARCAR NOTIFICAÇÕES COMO LIDAS:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

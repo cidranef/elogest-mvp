@@ -3,6 +3,7 @@ import { getAuthUser } from "@/lib/auth-guard";
 import {
   ACTIVE_ACCESS_COOKIE,
   SYNTHETIC_RESIDENT_ACCESS_PREFIX,
+  ActiveUserAccess,
   buildAccessSummary,
   getActiveUserAccessFromCookies,
   getDefaultUserAccess,
@@ -40,7 +41,33 @@ import {
      a rota retorna sucesso usando o acesso padrão e remove cookie
      inválido anterior.
    - Mantida validação de que o acesso pertence ao usuário logado.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Remove uso de any na rota.
+   - Mantém validação defensiva do payload antes de gravar cookie.
+   - Mantém suporte para UserAccess real, fallback legado e acesso
+     sintético residencial.
+   - Preserva cookie httpOnly para evitar manipulação direta no front.
    ========================================================= */
+
+
+
+/* =========================================================
+   TIPOS
+   ========================================================= */
+
+type ActiveAccessSelectionBody = {
+  clear?: boolean;
+  accessId?: unknown;
+  source?: unknown;
+  role?: unknown;
+  administratorId?: unknown;
+  condominiumId?: unknown;
+  unitId?: unknown;
+  residentId?: unknown;
+};
 
 
 
@@ -56,6 +83,16 @@ function getStringOrNull(value: unknown) {
   const trimmed = value.trim();
 
   return trimmed ? trimmed : null;
+}
+
+
+
+function parseBody(value: unknown): ActiveAccessSelectionBody {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as ActiveAccessSelectionBody;
 }
 
 
@@ -83,16 +120,19 @@ function sameOrEmpty(
 
 
 
-function bodyMatchesAccess(body: any, access: any) {
+function bodyMatchesAccess(
+  body: ActiveAccessSelectionBody,
+  access: ActiveUserAccess | null
+) {
   if (!access) {
     return false;
   }
 
-  const role = getStringOrNull(body?.role);
-  const administratorId = getStringOrNull(body?.administratorId);
-  const condominiumId = getStringOrNull(body?.condominiumId);
-  const unitId = getStringOrNull(body?.unitId);
-  const residentId = getStringOrNull(body?.residentId);
+  const role = getStringOrNull(body.role);
+  const administratorId = getStringOrNull(body.administratorId);
+  const condominiumId = getStringOrNull(body.condominiumId);
+  const unitId = getStringOrNull(body.unitId);
+  const residentId = getStringOrNull(body.residentId);
 
   if (role && access.role !== role) {
     return false;
@@ -119,13 +159,19 @@ function bodyMatchesAccess(body: any, access: any) {
 
 
 
+function isUnauthorizedError(error: unknown) {
+  return error instanceof Error && error.message === "UNAUTHORIZED";
+}
+
+
+
 /* =========================================================
    GET - BUSCAR CONTEXTO ATIVO
    ========================================================= */
 
 export async function GET() {
   try {
-    const authUser: any = await getAuthUser();
+    const authUser = await getAuthUser();
 
     if (!authUser?.id) {
       return NextResponse.json(
@@ -141,10 +187,10 @@ export async function GET() {
     return NextResponse.json({
       activeAccess: buildAccessSummary(activeAccess),
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO BUSCAR ACESSO ATIVO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (isUnauthorizedError(error)) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -166,7 +212,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const authUser: any = await getAuthUser();
+    const authUser = await getAuthUser();
 
     if (!authUser?.id) {
       return NextResponse.json(
@@ -175,7 +221,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
+    const body = parseBody(await req.json());
 
 
 
@@ -193,7 +239,7 @@ export async function POST(req: NextRequest) {
        - só limpa quando body.clear === true.
        ========================================================= */
 
-    if (body?.clear === true) {
+    if (body.clear === true) {
       const response = NextResponse.json({
         success: true,
         message: "Contexto ativo redefinido para o padrão.",
@@ -217,10 +263,10 @@ export async function POST(req: NextRequest) {
           synthetic-resident:<residentId>
        ========================================================= */
 
-    const receivedAccessId = getStringOrNull(body?.accessId);
+    const receivedAccessId = getStringOrNull(body.accessId);
 
-    const source = getStringOrNull(body?.source);
-    const residentId = getStringOrNull(body?.residentId);
+    const source = getStringOrNull(body.source);
+    const residentId = getStringOrNull(body.residentId);
 
     const syntheticAccessId =
       source === "SYNTHETIC_RESIDENT"
@@ -332,10 +378,10 @@ export async function POST(req: NextRequest) {
     });
 
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO DEFINIR ACESSO ATIVO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (isUnauthorizedError(error)) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

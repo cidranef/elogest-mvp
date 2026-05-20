@@ -7,13 +7,12 @@ import { randomUUID } from "crypto";
 import { Status } from "@prisma/client";
 import {
   canUploadAttachment,
-  isAdministradora,
-  isSuperAdmin,
 } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
 
@@ -197,7 +196,9 @@ async function getAdminAttachmentContextUser() {
    ========================================================= */
 
 function canUseAdminAttachmentRoute(user: any) {
-  return isSuperAdmin(user) || isAdministradora(user);
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  return !!activeAccess && isAdministradoraAccess(activeAccess);
 }
 
 
@@ -216,7 +217,9 @@ function canUseAdminAttachmentRoute(user: any) {
    ========================================================= */
 
 function validateAdminAttachmentContext(user: any) {
-  if (!user?.activeAccess) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
     return {
       ok: false,
       status: 403,
@@ -224,16 +227,21 @@ function validateAdminAttachmentContext(user: any) {
     };
   }
 
+  /*
+     Etapa 43:
+     /admin é a área operacional da administradora.
+     SUPER_ADMIN deve operar pela área /elogest.
+  */
   if (!canUseAdminAttachmentRoute(user)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso à rota administrativa de anexos. Use o portal.",
+        "Este contexto não possui acesso à rota administrativa de anexos. Use o portal ou a área EloGest.",
     };
   }
 
-  if (isAdministradora(user) && !user.administratorId) {
+  if (!user.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -270,13 +278,9 @@ function getAttachmentTicketWhere({
   user: any;
   ticketId: string;
 }) {
-  if (isSuperAdmin(user)) {
-    return {
-      id: ticketId,
-    };
-  }
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
 
-  if (isAdministradora(user) && user.administratorId) {
+  if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
       id: ticketId,
       condominium: {
@@ -380,10 +384,10 @@ export async function GET(req: Request, context: RouteContext) {
     });
 
     return NextResponse.json(attachments);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR ANEXOS:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -435,18 +439,18 @@ export async function POST(req: Request, context: RouteContext) {
       );
     }
 
-    if (!canUploadAttachment(user)) {
-      return NextResponse.json(
-        { error: "Usuário sem permissão para anexar arquivos." },
-        { status: 403 }
-      );
-    }
-
     const activeAccess = getRequiredActiveAccess(user);
 
     if (!activeAccess) {
       return NextResponse.json(
         { error: "Não foi possível identificar o contexto de acesso." },
+        { status: 403 }
+      );
+    }
+
+    if (!canUploadAttachment(activeAccess)) {
+      return NextResponse.json(
+        { error: "Usuário sem permissão para anexar arquivos." },
         { status: 403 }
       );
     }
@@ -667,10 +671,10 @@ export async function POST(req: Request, context: RouteContext) {
     });
 
     return NextResponse.json(attachment);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO ENVIAR ANEXO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

@@ -5,20 +5,20 @@ import {
   notifyAdministradoraUsers,
   notifyCondominiumSyndics,
 } from "@/lib/notifications";
-import { Role, Status, TicketPriority } from "@prisma/client";
+import { Status, TicketPriority } from "@prisma/client";
 import {
   canCreatePortalTicket,
   canViewCondominiumTickets,
   canViewOwnTickets,
-  isMorador,
-  isProprietario,
-  isSindico,
 } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isMoradorAccess,
   isPortalAccess,
+  isProprietarioAccess,
+  isSindicoAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
 
@@ -57,6 +57,19 @@ import {
    - Mantidas regras de criação apenas com registros ativos.
    - Mantida regra de síndico não abrir chamado da própria unidade
      usando contexto SÍNDICO.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - O portal passa a consumir os helpers de perfil ativo do
+     user-access.ts para identificar MORADOR, PROPRIETARIO e SINDICO.
+   - O payload do usuário/contexto passa a expor dados seguros do
+     UnitPersonLink: unitPersonLinkId, linkType, canVote,
+     canOpenTickets e receivesNotifications.
+   - A criação de chamado passa a respeitar bloqueio granular quando
+     canOpenTickets vier explicitamente false no perfil ativo.
+   - Mantida compatibilidade com UserAccess real, contexto legado e
+     synthetic-resident:<residentId>.
    ========================================================= */
 
 
@@ -121,13 +134,13 @@ function getDatabaseAccessId(access: ActiveUserAccess) {
 
 
 function isResidentialPortalAccess(access?: ActiveUserAccess | null) {
-  return isMorador(access) || isProprietario(access);
+  return isMoradorAccess(access || null) || isProprietarioAccess(access || null);
 }
 
 
 
 function isSindicoPortalAccess(access?: ActiveUserAccess | null) {
-  return isSindico(access);
+  return isSindicoAccess(access || null);
 }
 
 
@@ -359,6 +372,13 @@ function buildPortalUserPayload(user: any, access: ActiveUserAccess) {
     accessId: access.accessId,
     accessLabel: access.label,
     accessSource: access.source,
+
+    // Etapa 43 — vínculo formal da unidade, quando houver.
+    unitPersonLinkId: access.unitPersonLinkId || null,
+    linkType: access.linkType || null,
+    canVote: access.canVote ?? null,
+    canOpenTickets: access.canOpenTickets ?? null,
+    receivesNotifications: access.receivesNotifications ?? null,
   };
 }
 
@@ -372,6 +392,11 @@ function buildActiveAccessPayload(access: ActiveUserAccess) {
     condominiumId: access.condominiumId,
     unitId: access.unitId,
     residentId: access.residentId,
+    unitPersonLinkId: access.unitPersonLinkId || null,
+    linkType: access.linkType || null,
+    canVote: access.canVote ?? null,
+    canOpenTickets: access.canOpenTickets ?? null,
+    receivesNotifications: access.receivesNotifications ?? null,
     source: access.source,
   };
 }
@@ -849,6 +874,23 @@ export async function POST(req: Request) {
     if (!canCreatePortalTicket(activeAccess)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para criar chamado pelo portal." },
+        { status: 403 }
+      );
+    }
+
+    /*
+       Etapa 43:
+       Quando o perfil ativo vier de UnitPersonLink, o vínculo pode
+       bloquear abertura de chamados de forma granular.
+       - null/undefined mantém compatibilidade com UserAccess legado.
+       - false bloqueia explicitamente.
+    */
+    if (activeAccess.canOpenTickets === false) {
+      return NextResponse.json(
+        {
+          error:
+            "Este vínculo não possui permissão para abrir chamados pelo portal.",
+        },
         { status: 403 }
       );
     }

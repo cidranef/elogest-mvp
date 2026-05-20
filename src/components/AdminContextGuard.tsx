@@ -15,8 +15,8 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    Proteção visual e de navegação para páginas administrativas.
 
    Regras:
-   - SUPER_ADMIN: permitido
    - ADMINISTRADORA: permitido
+   - SUPER_ADMIN: bloqueado e direcionado à área EloGest
    - SINDICO: bloqueado e direcionado ao portal
    - MORADOR: bloqueado e direcionado ao portal
    - PROPRIETARIO: bloqueado e direcionado ao portal
@@ -43,6 +43,14 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    - Falha em /api/user/accesses não bloqueia o guard principal.
    - Mensagens mais claras para acesso admin com perfil de portal.
    - Mantida proteção visual sem substituir validação server-side/API.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - /admin passa a aceitar somente perfil ativo ADMINISTRADORA.
+   - SUPER_ADMIN fica reservado para /elogest.
+   - Perfis de portal continuam bloqueados e direcionados ao portal.
+   - A validação visual acompanha a blindagem aplicada nas APIs.
    ========================================================= */
 
 
@@ -55,6 +63,11 @@ interface ActiveAccess {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   source?: string | null;
 }
 
@@ -69,7 +82,7 @@ interface AdminContextGuardProps {
 
 
 function isAdminRole(role?: string | null) {
-  return role === "SUPER_ADMIN" || role === "ADMINISTRADORA";
+  return role === "ADMINISTRADORA";
 }
 
 
@@ -88,12 +101,33 @@ function roleLabel(role?: string | null) {
 
 
 function getAdminBlockedBadgeLabel(role?: string | null) {
+  if (role === "SUPER_ADMIN") return "Perfil Super Admin";
   if (role === "SINDICO") return "Perfil de síndico";
   if (role === "MORADOR") return "Perfil de morador";
   if (role === "PROPRIETARIO") return "Perfil de proprietário";
   if (role === "CONSELHEIRO") return "Perfil de conselheiro";
 
   return "Perfil sem acesso administrativo";
+}
+
+
+
+function getBlockedPrimaryHref(role?: string | null) {
+  if (role === "SUPER_ADMIN") {
+    return "/elogest/dashboard";
+  }
+
+  return "/portal/dashboard";
+}
+
+
+
+function getBlockedPrimaryLabel(role?: string | null) {
+  if (role === "SUPER_ADMIN") {
+    return "Ir para área EloGest";
+  }
+
+  return "Ir para o portal";
 }
 
 
@@ -145,7 +179,7 @@ function extractAccessCount(data: unknown) {
 export default function AdminContextGuard({
   children,
   fallbackTitle = "Área administrativa indisponível neste perfil de acesso",
-  fallbackDescription = "O perfil ativo não possui acesso à área administrativa. Para continuar, acesse o portal ou selecione outro perfil de acesso.",
+  fallbackDescription = "A área administrativa é exclusiva do perfil Administradora. Para continuar, acesse a área correta ou selecione outro perfil de acesso.",
 }: AdminContextGuardProps) {
   const [activeAccess, setActiveAccess] = useState<ActiveAccess | null>(null);
   const [accessCount, setAccessCount] = useState(0);
@@ -398,10 +432,10 @@ export default function AdminContextGuard({
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href="/portal/dashboard"
+            href={getBlockedPrimaryHref(activeAccess.role)}
             className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#256D3C] px-6 text-sm font-semibold text-white transition hover:bg-[#1F5A32]"
           >
-            Ir para o portal
+            {getBlockedPrimaryLabel(activeAccess.role)}
           </Link>
 
           {canSwitchProfile && (

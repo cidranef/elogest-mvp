@@ -47,6 +47,15 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    - Atualizar recarrega notificações e quantidade de perfis.
    - Estado de erro recebeu botão de tentativa.
    - Mantida a central única /notificacoes.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - CONSELHEIRO passa a ser tratado como perfil de portal.
+   - SUPER_ADMIN passa a retornar para /elogest/dashboard.
+   - ADMINISTRADORA permanece na experiência administrativa.
+   - A página continua consumindo /api/notifications, que é a camada
+     real de segurança e escopo por perfil ativo.
    ========================================================= */
 
 
@@ -59,6 +68,11 @@ interface ActiveAccess {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   source?: string | null;
 }
 
@@ -238,7 +252,8 @@ function isPortalRole(role?: string | null) {
   return (
     role === "MORADOR" ||
     role === "PROPRIETARIO" ||
-    role === "SINDICO"
+    role === "SINDICO" ||
+    role === "CONSELHEIRO"
   );
 }
 
@@ -252,6 +267,10 @@ function getEffectiveRole(user?: CurrentUser | null) {
 
 function getHomeHref(user?: CurrentUser | null) {
   const role = getEffectiveRole(user);
+
+  if (role === "SUPER_ADMIN") {
+    return "/elogest/dashboard";
+  }
 
   if (isPortalRole(role)) {
     return "/portal/dashboard";
@@ -283,6 +302,10 @@ function getProfileDescription(user?: CurrentUser | null) {
 
   if (role === "PROPRIETARIO") {
     return "Notificações do proprietário e da unidade ativa.";
+  }
+
+  if (role === "CONSELHEIRO") {
+    return "Notificações do conselho e do condomínio vinculado ao perfil ativo.";
   }
 
   return "Notificações conforme o perfil de acesso selecionado.";

@@ -1,11 +1,17 @@
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { NextResponse } from "next/server";
 
 
 
 /* =========================================================
    DASHBOARD GERAL ADMINISTRATIVO - API
+
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear esta API
+     quando a administradora estiver inativa.
+   - /api/admin/dashboard passa a ser exclusivamente da ADMINISTRADORA.
+   - SUPER_ADMIN deve usar /elogest/dashboard e APIs /api/elogest/*.
 
    ETAPA 14:
    Visão executiva da carteira da administradora.
@@ -437,14 +443,24 @@ function serializeTicketWithSla(ticket: any) {
 
 export async function GET(request: Request) {
   try {
-    const user: any = await getAuthUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
 
-    if (user.role !== "SUPER_ADMIN" && !user.administratorId) {
-      return NextResponse.json(
-        { error: "Não autorizado." },
-        { status: 401 }
-      );
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
     }
+
+    const {
+      authUser,
+      activeAccess,
+      administratorId,
+    } = adminApiAccess;
+
+    const user = {
+      ...authUser,
+      role: activeAccess.role,
+      administratorId,
+      activeAccess,
+    };
 
 
 
@@ -470,46 +486,38 @@ export async function GET(request: Request) {
     /* =========================================================
        FILTROS POR PERFIL
 
-       SUPER_ADMIN:
-       visualiza tudo.
+       ETAPA 44:
+       Esta API pertence a /api/admin/* e, portanto, é exclusiva
+       do perfil ativo ADMINISTRADORA.
 
-       ADMINISTRADORA:
-       visualiza apenas dados da sua administradora.
+       SUPER_ADMIN não opera por esta rota. A visão global pertence
+       a /elogest/dashboard e às APIs /api/elogest/*.
+
+       A carteira sempre vem do admin-api-guard:
+       administratorId = activeAccess.administratorId validado e ativo.
        ========================================================= */
 
-    const condominiumWhere: any =
-      user.role === "SUPER_ADMIN"
-        ? {}
-        : {
-            administratorId: user.administratorId,
-          };
+    const condominiumWhere: any = {
+      administratorId,
+    };
 
-    const unitWhere: any =
-      user.role === "SUPER_ADMIN"
-        ? {}
-        : {
-            condominium: {
-              administratorId: user.administratorId,
-            },
-          };
+    const unitWhere: any = {
+      condominium: {
+        administratorId,
+      },
+    };
 
-    const residentWhere: any =
-      user.role === "SUPER_ADMIN"
-        ? {}
-        : {
-            condominium: {
-              administratorId: user.administratorId,
-            },
-          };
+    const residentWhere: any = {
+      condominium: {
+        administratorId,
+      },
+    };
 
-    const baseTicketWhere: any =
-      user.role === "SUPER_ADMIN"
-        ? {}
-        : {
-            condominium: {
-              administratorId: user.administratorId,
-            },
-          };
+    const baseTicketWhere: any = {
+      condominium: {
+        administratorId,
+      },
+    };
 
     const createdAtWhere: any = {};
 

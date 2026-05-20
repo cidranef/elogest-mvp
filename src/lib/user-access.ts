@@ -3,65 +3,48 @@ import { db } from "@/lib/db";
 
 
 /* =========================================================
-   ETAPA 27.3 - UTILITÁRIO DE CONTEXTO ATIVO DO USUÁRIO
+   ETAPA 43 - UTILITÁRIO DE PERFIL ATIVO / VÍNCULOS - ELOGEST
 
-   Objetivo:
-   Centralizar a leitura do vínculo ativo do usuário.
+   Este arquivo centraliza a leitura e normalização dos perfis
+   de acesso do usuário.
 
-   Novo modelo:
-   - User representa a pessoa/login.
-   - UserAccess representa o contexto de acesso.
+   Conceito principal da Etapa 43:
+   - User representa a identidade/login.
+   - UserAccess representa o perfil operacional explícito.
+   - UnitPersonLink representa o vínculo formal da pessoa com
+     uma unidade: proprietário, morador, inquilino, dependente
+     ou autorizado.
+   - Campos legados de User/Resident continuam sendo aceitos para
+     manter o MVP funcionando durante a migração gradual.
 
-   Exemplos:
-   - MORADOR em uma unidade;
-   - PROPRIETARIO em outra unidade;
-   - SINDICO em um condomínio;
-   - ADMINISTRADORA em uma administradora;
-   - SUPER_ADMIN global.
+   Compatibilidade mantida:
+   - activeAccessId em cookie;
+   - UserAccess real;
+   - fallback legado de User;
+   - synthetic-resident:<residentId>;
+   - /contexto;
+   - /api/user/accesses;
+   - /api/user/active-access.
 
-   ETAPA 28.3:
-   - Adicionada leitura do cookie activeAccessId.
-   - Rotas podem usar getActiveUserAccessFromCookies().
-   - Se o cookie existir e for válido, usa o contexto escolhido.
-   - Se não existir cookie, usa o contexto padrão.
-   - Se o cookie estiver inválido, ignora e usa o padrão.
-
-   ETAPA 30.4:
-   Correção para usuário com múltiplos papéis operacionais.
-
-   Problema identificado:
-   - Usuário com role SINDICO e também residentId/unitId vinculado
-     entrava apenas como síndico.
-   - A tela /contexto não oferecia opção de Morador/Proprietário.
-   - Ao tentar trocar, o contexto continuava como SINDICO.
-
-   Solução:
-   - Criamos acesso sintético residencial quando o usuário possui
-     vínculo com Resident/Unit.
-   - Isso permite que um mesmo usuário opere como:
-     SINDICO + MORADOR
-     ou
-     SINDICO + PROPRIETARIO
-   - O accessId sintético é estável e pode ser salvo no cookie:
-     synthetic-resident:<residentId>
+   Ajuste de build:
+   - Os tipos de entrada foram intencionalmente flexibilizados para
+     aceitar os objetos retornados pelo Prisma, especialmente campos
+     JsonValue como permissionsOverride e metadata.
+   - A normalização continua segura porque somente campos públicos e
+     necessários são expostos no ActiveUserAccess.
    ========================================================= */
 
 
 
 /* =========================================================
    COOKIE DO CONTEXTO ATIVO
-
-   Este cookie é gravado pela rota:
-   /api/user/active-access
-
-   Ele guarda o ID do UserAccess escolhido pelo usuário.
-   Também pode guardar um ID sintético residencial:
-   synthetic-resident:<residentId>
    ========================================================= */
 
 export const ACTIVE_ACCESS_COOKIE = "activeAccessId";
 
 export const SYNTHETIC_RESIDENT_ACCESS_PREFIX = "synthetic-resident:";
+
+export const SYNTHETIC_UNIT_PERSON_LINK_ACCESS_PREFIX = "unit-person-link:";
 
 
 
@@ -77,6 +60,19 @@ export type ActiveAccessRole =
   | "PROPRIETARIO"
   | "CONSELHEIRO";
 
+export type UnitPersonLinkType =
+  | "OWNER"
+  | "RESIDENT"
+  | "TENANT"
+  | "DEPENDENT"
+  | "AUTHORIZED";
+
+export type ActiveAccessSource =
+  | "USER_ACCESS"
+  | "LEGACY_USER"
+  | "SYNTHETIC_RESIDENT"
+  | "UNIT_PERSON_LINK";
+
 export type ActiveUserAccess = {
   accessId: string | null;
   userId: string;
@@ -88,13 +84,222 @@ export type ActiveUserAccess = {
   condominiumId: string | null;
   unitId: string | null;
   residentId: string | null;
+  unitPersonLinkId?: string | null;
+
+  linkType?: UnitPersonLinkType | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
+
+  permissionsOverride?: unknown;
+  metadata?: unknown;
 
   label: string;
   isDefault: boolean;
   isActive: boolean;
 
-  source: "USER_ACCESS" | "LEGACY_USER" | "SYNTHETIC_RESIDENT";
+  source: ActiveAccessSource;
 };
+
+
+
+/*
+   Tipos flexíveis para entradas vindas do Prisma.
+
+   Importante:
+   Não usamos um tipo Prisma rígido aqui porque esta função recebe
+   objetos com includes diferentes em rotas antigas e novas. Campos
+   Json do Prisma também podem vir como JsonValue, JsonObject,
+   JsonArray, string, number, boolean ou null.
+*/
+
+type UnitLike = {
+  id?: string | null;
+  block?: string | null;
+  unitNumber?: string | null;
+  condominiumId?: string | null;
+  condominium?: {
+    id?: string | null;
+    name?: string | null;
+    administratorId?: string | null;
+  } | null;
+};
+
+type CondominiumLike = {
+  id?: string | null;
+  name?: string | null;
+  administratorId?: string | null;
+};
+
+type AdministratorLike = {
+  id?: string | null;
+  name?: string | null;
+};
+
+type ResidentLike = {
+  id?: string | null;
+  name?: string | null;
+  residentType?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  unit?: UnitLike | null;
+  condominium?: CondominiumLike | null;
+};
+
+type UnitPersonLinkLike = {
+  id?: string | null;
+  userId?: string | null;
+  role?: string | null;
+  linkType?: string | null;
+  type?: string | null;
+  status?: string | null;
+  isActive?: boolean | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+
+  unit?: UnitLike | null;
+  condominium?: CondominiumLike | null;
+  resident?: ResidentLike | null;
+
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
+  permissionsOverride?: unknown;
+  metadata?: unknown;
+};
+
+type UserAccessLike = {
+  id?: string | null;
+  role?: string | null;
+  label?: string | null;
+
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+  unitPersonLinkId?: string | null;
+
+  isDefault?: boolean | null;
+  isActive?: boolean | null;
+
+  administrator?: AdministratorLike | null;
+  condominium?: CondominiumLike | null;
+  unit?: UnitLike | null;
+  resident?: ResidentLike | null;
+  unitPersonLink?: UnitPersonLinkLike | null;
+
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
+  permissionsOverride?: unknown;
+  metadata?: unknown;
+};
+
+type UserWithAccessesLike = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  isActive?: boolean | null;
+
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+
+  administrator?: AdministratorLike | null;
+  condominium?: CondominiumLike | null;
+  resident?: ResidentLike | null;
+  unit?: UnitLike | null;
+
+  accesses?: UserAccessLike[] | null;
+  unitPersonLinks?: UnitPersonLinkLike[] | null;
+};
+
+
+
+/* =========================================================
+   NORMALIZAÇÃO BÁSICA
+   ========================================================= */
+
+function normalizeRoleValue(role?: string | null): ActiveAccessRole {
+  const normalized = String(role || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+
+  if (normalized === "SUPER_ADMIN") return "SUPER_ADMIN";
+  if (normalized === "ADMINISTRADORA") return "ADMINISTRADORA";
+  if (normalized === "SINDICO") return "SINDICO";
+  if (normalized === "PROPRIETARIO") return "PROPRIETARIO";
+  if (normalized === "CONSELHEIRO") return "CONSELHEIRO";
+
+  return "MORADOR";
+}
+
+
+
+function normalizeLinkTypeValue(
+  linkType?: string | null
+): UnitPersonLinkType | null {
+  const normalized = String(linkType || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+
+  if (normalized === "OWNER" || normalized === "PROPRIETARIO") return "OWNER";
+  if (normalized === "RESIDENT" || normalized === "MORADOR") return "RESIDENT";
+  if (normalized === "TENANT" || normalized === "INQUILINO") return "TENANT";
+  if (normalized === "DEPENDENT" || normalized === "DEPENDENTE") {
+    return "DEPENDENT";
+  }
+  if (normalized === "AUTHORIZED" || normalized === "AUTORIZADO") {
+    return "AUTHORIZED";
+  }
+
+  return null;
+}
+
+
+
+function roleFromUnitPersonLink(link: UnitPersonLinkLike): ActiveAccessRole {
+  const explicitRole = String(link.role || "").trim();
+
+  if (explicitRole) {
+    return normalizeRoleValue(explicitRole);
+  }
+
+  const linkType = normalizeLinkTypeValue(link.linkType || link.type || null);
+
+  if (linkType === "OWNER") {
+    return "PROPRIETARIO";
+  }
+
+  return "MORADOR";
+}
+
+
+
+function isActiveLink(link: UnitPersonLinkLike) {
+  if (link.isActive === false) {
+    return false;
+  }
+
+  const status = String(link.status || "")
+    .toUpperCase()
+    .trim();
+
+  if (status && status !== "ACTIVE") {
+    return false;
+  }
+
+  return true;
+}
 
 
 
@@ -129,6 +334,30 @@ export function roleLabel(role?: string | null) {
 
 
 
+export function linkTypeLabel(linkType?: string | null) {
+  switch (linkType) {
+    case "OWNER":
+      return "Proprietário";
+
+    case "RESIDENT":
+      return "Morador";
+
+    case "TENANT":
+      return "Inquilino";
+
+    case "DEPENDENT":
+      return "Dependente";
+
+    case "AUTHORIZED":
+      return "Autorizado";
+
+    default:
+      return null;
+  }
+}
+
+
+
 export function buildUnitLabel(unit?: {
   block?: string | null;
   unitNumber?: string | null;
@@ -145,6 +374,7 @@ export function buildAccessLabelFromData({
   administratorName,
   condominiumName,
   unit,
+  linkType,
 }: {
   role?: string | null;
   administratorName?: string | null;
@@ -153,9 +383,11 @@ export function buildAccessLabelFromData({
     block?: string | null;
     unitNumber?: string | null;
   } | null;
+  linkType?: string | null;
 }) {
   const baseRole = roleLabel(role);
   const unitLabel = buildUnitLabel(unit);
+  const linkLabel = linkTypeLabel(linkType);
 
   if (role === "SUPER_ADMIN") {
     return "Super Admin";
@@ -172,15 +404,17 @@ export function buildAccessLabelFromData({
   }
 
   if (role === "MORADOR") {
+    const displayRole = linkLabel || "Morador";
+
     if (condominiumName && unitLabel) {
-      return `Morador - ${condominiumName} / ${unitLabel}`;
+      return `${displayRole} - ${condominiumName} / ${unitLabel}`;
     }
 
     if (unitLabel) {
-      return `Morador - ${unitLabel}`;
+      return `${displayRole} - ${unitLabel}`;
     }
 
-    return "Morador";
+    return displayRole;
   }
 
   if (role === "PROPRIETARIO") {
@@ -206,9 +440,6 @@ export function buildAccessLabelFromData({
 
 /* =========================================================
    BUSCAR USUÁRIO COMPLETO COM ACESSOS
-
-   Usado internamente por getDefaultUserAccess e
-   getActiveUserAccess.
    ========================================================= */
 
 export async function getUserWithAccesses(userId: string) {
@@ -226,6 +457,44 @@ export async function getUserWithAccesses(userId: string) {
         },
       },
 
+      /*
+         Etapa 43:
+         Inclui vínculos formais de unidade, quando existirem.
+         Caso o projeto ainda esteja sem dados nessa tabela, o array
+         virá vazio e o fluxo legado continua funcionando.
+      */
+      unitPersonLinks: {
+        /*
+           Etapa 43 - correção de build:
+           UnitPersonLink não usa isActive no schema atual.
+           O filtro oficial deve usar status ACTIVE. A função
+           isActiveLink() continua fazendo uma segunda validação
+           defensiva em memória.
+        */
+        where: {
+          status: "ACTIVE",
+        },
+        include: {
+          unit: {
+            include: {
+              condominium: true,
+            },
+          },
+          condominium: true,
+          resident: {
+            include: {
+              unit: true,
+              condominium: true,
+            },
+          },
+        },
+        orderBy: [
+          {
+            createdAt: "asc",
+          },
+        ],
+      },
+
       accesses: {
         where: {
           isActive: true,
@@ -238,6 +507,22 @@ export async function getUserWithAccesses(userId: string) {
             include: {
               unit: true,
               condominium: true,
+            },
+          },
+          unitPersonLink: {
+            include: {
+              unit: {
+                include: {
+                  condominium: true,
+                },
+              },
+              condominium: true,
+              resident: {
+                include: {
+                  unit: true,
+                  condominium: true,
+                },
+              },
             },
           },
         },
@@ -258,24 +543,43 @@ export async function getUserWithAccesses(userId: string) {
 
 /* =========================================================
    NORMALIZA UM REGISTRO USER_ACCESS
-
-   Transforma o registro do banco em um formato padrão
-   para as rotas usarem.
    ========================================================= */
 
-export function normalizeUserAccess(user: any, access: any): ActiveUserAccess {
-  const role = access.role as ActiveAccessRole;
+export function normalizeUserAccess(
+  user: UserWithAccessesLike,
+  access: UserAccessLike
+): ActiveUserAccess {
+  const role = normalizeRoleValue(access.role || user.role || "MORADOR");
+
+  const link = access.unitPersonLink || null;
+  const linkType =
+    normalizeLinkTypeValue(
+      access.linkType ||
+        link?.linkType ||
+        link?.type ||
+        null
+    ) || null;
 
   const condominiumName =
     access.condominium?.name ||
+    access.unit?.condominium?.name ||
     access.resident?.condominium?.name ||
+    link?.condominium?.name ||
+    link?.unit?.condominium?.name ||
+    link?.resident?.condominium?.name ||
     user.condominium?.name ||
+    user.resident?.condominium?.name ||
     null;
 
   const administratorName =
     access.administrator?.name || user.administrator?.name || null;
 
-  const unit = access.unit || access.resident?.unit || null;
+  const unit =
+    access.unit ||
+    access.resident?.unit ||
+    link?.unit ||
+    link?.resident?.unit ||
+    null;
 
   const label =
     access.label ||
@@ -284,24 +588,47 @@ export function normalizeUserAccess(user: any, access: any): ActiveUserAccess {
       administratorName,
       condominiumName,
       unit,
+      linkType,
     });
 
   return {
-    accessId: access.id,
+    accessId: access.id || null,
     userId: user.id,
-    userName: user.name,
-    userEmail: user.email,
+    userName: user.name || "",
+    userEmail: user.email || "",
     role,
 
     administratorId: access.administratorId || null,
     condominiumId:
-      access.condominiumId || access.resident?.condominiumId || null,
-    unitId: access.unitId || access.resident?.unitId || null,
-    residentId: access.residentId || null,
+      access.condominiumId ||
+      access.unit?.condominiumId ||
+      access.resident?.condominiumId ||
+      link?.condominiumId ||
+      link?.unit?.condominiumId ||
+      link?.resident?.condominiumId ||
+      null,
+    unitId:
+      access.unitId ||
+      access.resident?.unitId ||
+      link?.unitId ||
+      link?.resident?.unitId ||
+      null,
+    residentId: access.residentId || link?.residentId || null,
+    unitPersonLinkId: access.unitPersonLinkId || link?.id || null,
+
+    linkType,
+    canVote:
+      access.canVote ?? link?.canVote ?? (linkType === "OWNER" ? true : null),
+    canOpenTickets: access.canOpenTickets ?? link?.canOpenTickets ?? null,
+    receivesNotifications:
+      access.receivesNotifications ?? link?.receivesNotifications ?? null,
+
+    permissionsOverride: access.permissionsOverride ?? link?.permissionsOverride,
+    metadata: access.metadata ?? link?.metadata,
 
     label,
     isDefault: !!access.isDefault,
-    isActive: !!access.isActive,
+    isActive: access.isActive !== false,
 
     source: "USER_ACCESS",
   };
@@ -311,22 +638,17 @@ export function normalizeUserAccess(user: any, access: any): ActiveUserAccess {
 
 /* =========================================================
    FALLBACK LEGADO
-
-   Caso algum usuário ainda não tenha UserAccess, criamos um
-   contexto em memória com base nos campos antigos do User.
-
-   Isso evita quebra durante a migração gradual.
    ========================================================= */
 
-export function normalizeLegacyUserAccess(user: any): ActiveUserAccess {
-  const role = user.role as ActiveAccessRole;
+export function normalizeLegacyUserAccess(user: UserWithAccessesLike): ActiveUserAccess {
+  const role = normalizeRoleValue(user.role || "MORADOR");
 
   const condominiumName =
     user.condominium?.name || user.resident?.condominium?.name || null;
 
   const administratorName = user.administrator?.name || null;
 
-  const unit = user.resident?.unit || null;
+  const unit = user.resident?.unit || user.unit || null;
 
   const label = buildAccessLabelFromData({
     role,
@@ -338,18 +660,27 @@ export function normalizeLegacyUserAccess(user: any): ActiveUserAccess {
   return {
     accessId: null,
     userId: user.id,
-    userName: user.name,
-    userEmail: user.email,
+    userName: user.name || "",
+    userEmail: user.email || "",
     role,
 
     administratorId: user.administratorId || null,
     condominiumId: user.condominiumId || user.resident?.condominiumId || null,
-    unitId: user.resident?.unitId || null,
+    unitId: user.unitId || user.resident?.unitId || null,
     residentId: user.residentId || null,
+    unitPersonLinkId: null,
+
+    linkType: null,
+    canVote: role === "PROPRIETARIO" ? true : null,
+    canOpenTickets: null,
+    receivesNotifications: null,
+
+    permissionsOverride: null,
+    metadata: null,
 
     label,
     isDefault: true,
-    isActive: !!user.isActive,
+    isActive: user.isActive !== false,
 
     source: "LEGACY_USER",
   };
@@ -358,23 +689,10 @@ export function normalizeLegacyUserAccess(user: any): ActiveUserAccess {
 
 
 /* =========================================================
-   ETAPA 30.4 - ROLE RESIDENCIAL SINTÉTICO
-
-   Define se o vínculo residencial deve aparecer como
-   MORADOR ou PROPRIETARIO.
-
-   Regra:
-   - Se residentType indicar proprietário, usa PROPRIETARIO.
-   - Caso contrário, usa MORADOR.
-
-   Esta regra é tolerante a variações:
-   - PROPRIETARIO
-   - PROPRIETÁRIO
-   - Proprietário
-   - owner
+   ROLE RESIDENCIAL SINTÉTICO LEGADO
    ========================================================= */
 
-function getSyntheticResidentRole(user: any): ActiveAccessRole {
+function getSyntheticResidentRole(user: UserWithAccessesLike): ActiveAccessRole {
   const residentType = String(user?.resident?.residentType || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -394,27 +712,11 @@ function getSyntheticResidentRole(user: any): ActiveAccessRole {
 
 
 /* =========================================================
-   ETAPA 30.4 - ACESSO RESIDENCIAL SINTÉTICO
-
-   Cria um contexto adicional quando o usuário tem vínculo
-   com Resident/Unit.
-
-   Exemplo:
-   Usuário principal:
-   - role: SINDICO
-   - condominiumId: Condomínio Alpha
-   - residentId: João / Unidade 101
-
-   Contextos resultantes:
-   - SINDICO - Condomínio Alpha
-   - MORADOR - Condomínio Alpha / 101
-
-   O accessId sintético é:
-   synthetic-resident:<residentId>
+   ACESSO RESIDENCIAL SINTÉTICO LEGADO
    ========================================================= */
 
 export function normalizeSyntheticResidentAccess(
-  user: any
+  user: UserWithAccessesLike
 ): ActiveUserAccess | null {
   if (!user?.residentId || !user?.resident) {
     return null;
@@ -425,7 +727,7 @@ export function normalizeSyntheticResidentAccess(
   const condominiumName =
     user.resident?.condominium?.name || user.condominium?.name || null;
 
-  const unit = user.resident?.unit || null;
+  const unit = user.resident?.unit || user.unit || null;
 
   const label = buildAccessLabelFromData({
     role,
@@ -436,18 +738,27 @@ export function normalizeSyntheticResidentAccess(
   return {
     accessId: `${SYNTHETIC_RESIDENT_ACCESS_PREFIX}${user.residentId}`,
     userId: user.id,
-    userName: user.name,
-    userEmail: user.email,
+    userName: user.name || "",
+    userEmail: user.email || "",
     role,
 
     administratorId: null,
     condominiumId: user.resident?.condominiumId || user.condominiumId || null,
-    unitId: user.resident?.unitId || null,
+    unitId: user.resident?.unitId || user.unitId || null,
     residentId: user.residentId || null,
+    unitPersonLinkId: null,
+
+    linkType: role === "PROPRIETARIO" ? "OWNER" : "RESIDENT",
+    canVote: role === "PROPRIETARIO",
+    canOpenTickets: null,
+    receivesNotifications: null,
+
+    permissionsOverride: null,
+    metadata: null,
 
     label,
     isDefault: false,
-    isActive: !!user.isActive,
+    isActive: user.isActive !== false,
 
     source: "SYNTHETIC_RESIDENT",
   };
@@ -456,14 +767,73 @@ export function normalizeSyntheticResidentAccess(
 
 
 /* =========================================================
-   ETAPA 30.4 - CHAVE DE DEDUPLICAÇÃO
+   ACESSO SINTÉTICO FORMAL VIA UNIT_PERSON_LINK
+   ========================================================= */
 
-   Evita duplicar contexto se já existir UserAccess explícito
-   para o mesmo morador/unidade.
+export function normalizeUnitPersonLinkAccess(
+  user: UserWithAccessesLike,
+  link: UnitPersonLinkLike
+): ActiveUserAccess | null {
+  if (!link?.id || !isActiveLink(link)) {
+    return null;
+  }
 
-   Preferência:
-   - UserAccess explícito sempre ganha.
-   - Sintético só entra quando não houver contexto residencial.
+  const role = roleFromUnitPersonLink(link);
+  const linkType = normalizeLinkTypeValue(link.linkType || link.type || null);
+
+  const condominiumName =
+    link.condominium?.name ||
+    link.unit?.condominium?.name ||
+    link.resident?.condominium?.name ||
+    user.condominium?.name ||
+    null;
+
+  const unit = link.unit || link.resident?.unit || null;
+
+  const label = buildAccessLabelFromData({
+    role,
+    condominiumName,
+    unit,
+    linkType,
+  });
+
+  return {
+    accessId: `${SYNTHETIC_UNIT_PERSON_LINK_ACCESS_PREFIX}${link.id}`,
+    userId: user.id,
+    userName: user.name || "",
+    userEmail: user.email || "",
+    role,
+
+    administratorId: null,
+    condominiumId:
+      link.condominiumId ||
+      link.unit?.condominiumId ||
+      link.resident?.condominiumId ||
+      null,
+    unitId: link.unitId || link.resident?.unitId || null,
+    residentId: link.residentId || null,
+    unitPersonLinkId: link.id,
+
+    linkType,
+    canVote: link.canVote ?? (linkType === "OWNER" ? true : null),
+    canOpenTickets: link.canOpenTickets ?? null,
+    receivesNotifications: link.receivesNotifications ?? null,
+
+    permissionsOverride: link.permissionsOverride,
+    metadata: link.metadata,
+
+    label,
+    isDefault: false,
+    isActive: true,
+
+    source: "UNIT_PERSON_LINK",
+  };
+}
+
+
+
+/* =========================================================
+   CHAVE DE DEDUPLICAÇÃO
    ========================================================= */
 
 function getAccessDedupKey(access: ActiveUserAccess) {
@@ -473,57 +843,163 @@ function getAccessDedupKey(access: ActiveUserAccess) {
     access.condominiumId || "",
     access.unitId || "",
     access.residentId || "",
+    access.unitPersonLinkId || "",
   ].join("|");
 }
 
 
 
-/* =========================================================
-   ETAPA 30.4 - LISTA NORMALIZADA DE TODOS OS ACESSOS
+function hasEquivalentResidentialAccess(
+  accesses: ActiveUserAccess[],
+  candidate: ActiveUserAccess
+) {
+  return accesses.some((access) => {
+    if (candidate.unitPersonLinkId && access.unitPersonLinkId) {
+      return access.unitPersonLinkId === candidate.unitPersonLinkId;
+    }
 
-   Esta é a função principal para montar a lista de contextos.
+    if (
+      candidate.residentId &&
+      access.residentId &&
+      access.residentId === candidate.residentId &&
+      (access.role === "MORADOR" || access.role === "PROPRIETARIO")
+    ) {
+      return true;
+    }
+
+    if (
+      candidate.unitId &&
+      access.unitId &&
+      access.unitId === candidate.unitId &&
+      access.role === candidate.role
+    ) {
+      return true;
+    }
+
+    return getAccessDedupKey(access) === getAccessDedupKey(candidate);
+  });
+}
+
+
+
+
+/* =========================================================
+   ETAPA 43 - DEFESA CONTRA USER_ACCESS OPERACIONAL OBSOLETO
+
+   Situação corrigida:
+   - Um usuário com perfil SÍNDICO foi movido para outro condomínio.
+   - O campo legado User.condominiumId foi atualizado corretamente.
+   - Porém um UserAccess antigo ainda podia permanecer ativo apontando
+     para o condomínio anterior.
+   - Se o cookie activeAccessId ainda apontasse para esse UserAccess,
+     o portal poderia continuar lendo chamados do condomínio antigo.
 
    Regra:
-   1. Se houver UserAccess, normaliza todos.
-   2. Se não houver UserAccess, usa fallback legado.
-   3. Se o usuário tiver Resident vinculado, adiciona contexto
-      residencial sintético, desde que não exista duplicado.
+   - Para perfis operacionais diretos do usuário, o UserAccess real
+     precisa continuar coerente com os vínculos atuais do User.
+   - Se estiver divergente, ele é ignorado na normalização.
+
+   Observação:
+   - Essa defesa não substitui a sincronização do banco feita em
+     /api/admin/usuarios.
+   - Ela protege usuários que já estavam com cookie antigo ou vínculo
+     obsoleto antes da correção.
    ========================================================= */
 
-export function getNormalizedUserAccesses(user: any): ActiveUserAccess[] {
+function isStaleOperationalUserAccess(
+  user: UserWithAccessesLike,
+  access: UserAccessLike
+) {
+  const accessRole = normalizeRoleValue(access.role || null);
+  const userRole = normalizeRoleValue(user.role || null);
+
+  if (accessRole !== userRole) {
+    return false;
+  }
+
+  if (accessRole === "SINDICO") {
+    if (!user.condominiumId) {
+      return true;
+    }
+
+    const accessCondominiumId =
+      access.condominiumId || access.condominium?.id || null;
+
+    return accessCondominiumId !== user.condominiumId;
+  }
+
+  if (accessRole === "ADMINISTRADORA") {
+    if (!user.administratorId) {
+      return true;
+    }
+
+    const accessAdministratorId =
+      access.administratorId || access.administrator?.id || null;
+
+    return accessAdministratorId !== user.administratorId;
+  }
+
+  if (accessRole === "MORADOR" || accessRole === "PROPRIETARIO") {
+    if (!user.residentId) {
+      return true;
+    }
+
+    const accessResidentId =
+      access.residentId || access.resident?.id || null;
+
+    return accessResidentId !== user.residentId;
+  }
+
+  return false;
+}
+
+
+
+/* =========================================================
+   LISTA NORMALIZADA DE TODOS OS ACESSOS
+   ========================================================= */
+
+export function getNormalizedUserAccesses(
+  user: UserWithAccessesLike
+): ActiveUserAccess[] {
+  const explicitAccesses = Array.isArray(user.accesses) ? user.accesses : [];
+
+  const safeExplicitAccesses = explicitAccesses.filter((access) => {
+    return !isStaleOperationalUserAccess(user, access);
+  });
+
   const normalizedAccesses: ActiveUserAccess[] =
-    user.accesses && user.accesses.length > 0
-      ? user.accesses.map((access: any) => normalizeUserAccess(user, access))
+    safeExplicitAccesses.length > 0
+      ? safeExplicitAccesses.map((access) => normalizeUserAccess(user, access))
       : [normalizeLegacyUserAccess(user)];
 
+  /*
+     Etapa 43:
+     Vínculos formais de unidade entram como perfis sintéticos
+     adicionais quando ainda não existir UserAccess equivalente.
+  */
+  const unitPersonLinks = user.unitPersonLinks || [];
+
+  for (const link of unitPersonLinks) {
+    const linkAccess = normalizeUnitPersonLinkAccess(user, link);
+
+    if (linkAccess && !hasEquivalentResidentialAccess(normalizedAccesses, linkAccess)) {
+      normalizedAccesses.push(linkAccess);
+    }
+  }
+
+  /*
+     Compatibilidade legado:
+     Continua criando synthetic-resident:<residentId> para usuários
+     que ainda dependem do vínculo Resident antigo.
+  */
   const syntheticResidentAccess = normalizeSyntheticResidentAccess(user);
 
-  if (syntheticResidentAccess) {
-    const alreadyHasResidentialAccess = normalizedAccesses.some((access) => {
-      if (access.role !== "MORADOR" && access.role !== "PROPRIETARIO") {
-        return false;
-      }
-
-      if (
-        syntheticResidentAccess.residentId &&
-        access.residentId === syntheticResidentAccess.residentId
-      ) {
-        return true;
-      }
-
-      if (
-        syntheticResidentAccess.unitId &&
-        access.unitId === syntheticResidentAccess.unitId
-      ) {
-        return true;
-      }
-
-      return getAccessDedupKey(access) === getAccessDedupKey(syntheticResidentAccess);
-    });
-
-    if (!alreadyHasResidentialAccess) {
-      normalizedAccesses.push(syntheticResidentAccess);
-    }
+  if (
+    syntheticResidentAccess &&
+    !hasEquivalentResidentialAccess(normalizedAccesses, syntheticResidentAccess)
+  ) {
+    normalizedAccesses.push(syntheticResidentAccess);
   }
 
   return normalizedAccesses;
@@ -533,11 +1009,6 @@ export function getNormalizedUserAccesses(user: any): ActiveUserAccess[] {
 
 /* =========================================================
    BUSCAR ACESSO PADRÃO DO USUÁRIO
-
-   Regra:
-   1. Monta todos os acessos normalizados.
-   2. Busca isDefault=true.
-   3. Se não houver, pega o primeiro.
    ========================================================= */
 
 export async function getDefaultUserAccess(
@@ -558,10 +1029,6 @@ export async function getDefaultUserAccess(
 
 /* =========================================================
    BUSCAR ACESSO ESPECÍFICO DO USUÁRIO
-
-   Agora também funciona para accessId sintético:
-
-   synthetic-resident:<residentId>
    ========================================================= */
 
 export async function getUserAccessById(
@@ -583,15 +1050,6 @@ export async function getUserAccessById(
 
 /* =========================================================
    BUSCAR CONTEXTO ATIVO DO USUÁRIO
-
-   Regra:
-   - se activeAccessId for enviado, tenta usar ele;
-   - se não for enviado, usa o acesso padrão;
-   - se nada existir, usa fallback legado.
-
-   Observação:
-   Esta função continua existindo para compatibilidade com
-   rotas/scripts que ainda passam activeAccessId manualmente.
    ========================================================= */
 
 export async function getActiveUserAccess({
@@ -615,17 +1073,7 @@ export async function getActiveUserAccess({
 
 
 /* =========================================================
-   ETAPA 28.3 - LER activeAccessId DOS COOKIES
-
-   Esta função é segura para uso em rotas server-side do Next.js.
-
-   Por que usamos import dinâmico?
-   - Para não quebrar scripts Node fora do contexto Next.
-   - Para manter compatibilidade com scripts de backfill.
-   - Para evitar import estático de next/headers em rotinas que
-     não rodam dentro de uma requisição Next.
-
-   Se estiver fora de um request context, retorna null.
+   LER activeAccessId DOS COOKIES
    ========================================================= */
 
 export async function getActiveAccessIdFromCookies(): Promise<string | null> {
@@ -648,14 +1096,7 @@ export async function getActiveAccessIdFromCookies(): Promise<string | null> {
 
 
 /* =========================================================
-   ETAPA 28.3 - BUSCAR CONTEXTO ATIVO A PARTIR DO COOKIE
-
-   Esta será a função preferencial nas rotas.
-
-   Regra:
-   1. Lê activeAccessId do cookie.
-   2. Se existir e pertencer ao usuário, usa esse contexto.
-   3. Se não existir ou for inválido, usa o contexto padrão.
+   BUSCAR CONTEXTO ATIVO A PARTIR DO COOKIE
    ========================================================= */
 
 export async function getActiveUserAccessFromCookies({
@@ -718,6 +1159,18 @@ export function isProprietarioAccess(access: ActiveUserAccess | null) {
 
 
 
+export function isConselheiroAccess(access: ActiveUserAccess | null) {
+  return hasAccessRole(access, ["CONSELHEIRO"]);
+}
+
+
+
+export function isResidentialAccess(access: ActiveUserAccess | null) {
+  return hasAccessRole(access, ["MORADOR", "PROPRIETARIO"]);
+}
+
+
+
 export function isPortalAccess(access: ActiveUserAccess | null) {
   return hasAccessRole(access, [
     "MORADOR",
@@ -731,23 +1184,6 @@ export function isPortalAccess(access: ActiveUserAccess | null) {
 
 /* =========================================================
    LABEL PARA TIMELINE / COMENTÁRIOS
-
-   Esta função será usada para gravar:
-
-   TicketLog.actorRole
-   TicketLog.actorLabel
-
-   Assim a timeline poderá mostrar:
-
-   João da Silva
-   [Morador]
-
-   Maria Souza
-   [Síndico]
-
-   Observação:
-   O banco mantém actorLabel completo para auditoria.
-   A tela pode exibir apenas roleLabel().
    ========================================================= */
 
 export function buildActorRole(access: ActiveUserAccess | null) {
@@ -768,9 +1204,6 @@ export function buildActorLabel(access: ActiveUserAccess | null) {
 
 /* =========================================================
    RESUMO PARA API
-
-   Retorna um objeto seguro para enviar ao frontend, sem dados
-   sensíveis.
    ========================================================= */
 
 export function buildAccessSummary(access: ActiveUserAccess | null) {
@@ -784,20 +1217,19 @@ export function buildAccessSummary(access: ActiveUserAccess | null) {
     condominiumId: access.condominiumId,
     unitId: access.unitId,
     residentId: access.residentId,
+    unitPersonLinkId: access.unitPersonLinkId || null,
+    linkType: access.linkType || null,
+    canVote: access.canVote ?? null,
+    canOpenTickets: access.canOpenTickets ?? null,
+    receivesNotifications: access.receivesNotifications ?? null,
     source: access.source,
   };
 }
 
 
+
 /* =========================================================
    HELPERS DE ÁREA POR CONTEXTO ATIVO
-
-   Usar em layouts e páginas server-side para proteger áreas.
-
-   Separação oficial:
-   - /elogest → SUPER_ADMIN
-   - /admin   → ADMINISTRADORA com administratorId
-   - /portal  → SINDICO, MORADOR, PROPRIETARIO, CONSELHEIRO
    ========================================================= */
 
 export function canUseEloGestAreaAccess(access: ActiveUserAccess | null) {

@@ -41,6 +41,14 @@ import ResponsiveSection from "@/components/ui/ResponsiveSection";
      /elogest/dashboard.
    - Filtros globais de Super Admin foram removidos desta página para evitar
      mistura entre área EloGest e área operacional da administradora.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Revisão final:
+   - Dashboard administrativo permanece exclusivo para perfil ativo ADMINISTRADORA.
+   - As consultas continuam filtradas pelo administratorId do activeAccess.
+   - SUPER_ADMIN permanece direcionado para /elogest/dashboard.
+   - Perfis de portal continuam bloqueados pelo AdminContextGuard.
    ========================================================= */
 
 

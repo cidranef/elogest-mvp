@@ -9,15 +9,15 @@ import {
   canCommentPublic,
   canViewCondominiumTickets,
   canViewOwnTickets,
-  isMorador,
-  isProprietario,
-  isSindico,
 } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isMoradorAccess,
   isPortalAccess,
+  isProprietarioAccess,
+  isSindicoAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
 import { Role, Status, TicketRatingTargetType } from "@prisma/client";
@@ -42,6 +42,18 @@ import { Role, Status, TicketRatingTargetType } from "@prisma/client";
      os contextos apenas por ter o mesmo userId.
    - Avaliações antigas sem metadata de perfil não são exibidas em
      contexto ambíguo.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - O detalhe do chamado passa a consumir os helpers de perfil ativo
+     do user-access.ts para identificar MORADOR, PROPRIETARIO e SINDICO.
+   - O payload do usuário/contexto passa a expor dados seguros do
+     UnitPersonLink: unitPersonLinkId, linkType, canVote,
+     canOpenTickets e receivesNotifications.
+   - Mantida a regra de privacidade da avaliação por perfil ativo.
+   - Mantida compatibilidade com UserAccess real, contexto legado e
+     synthetic-resident:<residentId>.
    ========================================================= */
 
 
@@ -82,13 +94,13 @@ function normalizeRole(role?: string | null) {
 
 
 function isResidentialPortalAccess(access?: ActiveUserAccess | null) {
-  return isMorador(access) || isProprietario(access);
+  return isMoradorAccess(access || null) || isProprietarioAccess(access || null);
 }
 
 
 
 function isSindicoPortalAccess(access?: ActiveUserAccess | null) {
-  return isSindico(access);
+  return isSindicoAccess(access || null);
 }
 
 
@@ -800,6 +812,13 @@ function buildPortalResponse(user: any, access: ActiveUserAccess, ticket: any) {
       accessId: access.accessId,
       accessLabel: access.label,
       accessSource: access.source,
+
+      // Etapa 43 — vínculo formal da unidade, quando houver.
+      unitPersonLinkId: access.unitPersonLinkId || null,
+      linkType: access.linkType || null,
+      canVote: access.canVote ?? null,
+      canOpenTickets: access.canOpenTickets ?? null,
+      receivesNotifications: access.receivesNotifications ?? null,
     },
 
     activeAccess: {
@@ -809,6 +828,11 @@ function buildPortalResponse(user: any, access: ActiveUserAccess, ticket: any) {
       condominiumId: access.condominiumId,
       unitId: access.unitId,
       residentId: access.residentId,
+      unitPersonLinkId: access.unitPersonLinkId || null,
+      linkType: access.linkType || null,
+      canVote: access.canVote ?? null,
+      canOpenTickets: access.canOpenTickets ?? null,
+      receivesNotifications: access.receivesNotifications ?? null,
       source: access.source,
     },
 

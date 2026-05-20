@@ -8,19 +8,26 @@ import EloGestShell from "@/components/EloGestShell";
 
 
 /* =========================================================
-   ELOGEST - NOVO USUÁRIO DA ADMINISTRADORA
+   ELOGEST - NOVO RESPONSÁVEL PELO ACESSO DA ADMINISTRADORA
 
    Rota:
    /elogest/administradoras/[id]/usuarios/novo
 
-   ETAPA 42.2.1 — USUÁRIOS DA ADMINISTRADORA
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
-   - Permitir que o Super Admin EloGest crie usuários
-     vinculados a uma administradora.
-   - Criar User com role ADMINISTRADORA.
-   - Criar UserAccess com AccessRole ADMINISTRADORA.
+   - Permitir que o Super Admin EloGest crie novos responsáveis
+     pelo acesso administrativo de uma administradora.
+   - Criar usuário vinculado à administradora.
+   - Criar acesso administrativo para esse usuário.
    - Redirecionar de volta ao detalhe da administradora.
+   - Preparar o fluxo futuro de convite por e-mail.
+
+   Segurança:
+   - Não existe senha padrão preenchida.
+   - A senha temporária precisa seguir a política forte.
+   - A API também deve validar a política central de senha.
+   - A API deve validar se o Super Admin está autorizado.
    ========================================================= */
 
 
@@ -41,11 +48,66 @@ export default function NovoUsuarioAdministradoraPage() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("Heloisa100%");
+  const [password, setPassword] = useState("");
   const [isActive, setIsActive] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+
+
+  function getPasswordChecklist(value: string) {
+    return [
+      {
+        label: "Mínimo de 8 caracteres",
+        valid: value.length >= 8,
+      },
+      {
+        label: "Pelo menos 1 letra maiúscula",
+        valid: /[A-Z]/.test(value),
+      },
+      {
+        label: "Pelo menos 1 letra minúscula",
+        valid: /[a-z]/.test(value),
+      },
+      {
+        label: "Pelo menos 1 número",
+        valid: /\d/.test(value),
+      },
+      {
+        label: "Pelo menos 1 caractere especial",
+        valid: /[^A-Za-z0-9]/.test(value),
+      },
+    ];
+  }
+
+
+
+  function isValidEmail(value: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
+
+
+  function StepCard({
+    title,
+    description,
+  }: {
+    title: string;
+    description: string;
+  }) {
+    return (
+      <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
+        <p className="text-sm font-semibold text-[#17211B]">
+          {title}
+        </p>
+
+        <p className="mt-1 text-sm leading-6 text-[#64736A]">
+          {description}
+        </p>
+      </div>
+    );
+  }
 
 
 
@@ -65,17 +127,27 @@ export default function NovoUsuarioAdministradoraPage() {
     }
 
     if (!normalizedName) {
-      setError("Informe o nome do usuário.");
+      setError("Informe o nome do responsável pelo acesso.");
       return;
     }
 
     if (!normalizedEmail) {
-      setError("Informe o e-mail do usuário.");
+      setError("Informe o e-mail de acesso.");
       return;
     }
 
-    if (!password || password.length < 8) {
-      setError("A senha inicial deve ter pelo menos 8 caracteres.");
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Informe um e-mail válido para o responsável pelo acesso.");
+      return;
+    }
+
+    const passwordChecklist = getPasswordChecklist(password);
+    const hasStrongPasswordBase = passwordChecklist.every((item) => item.valid);
+
+    if (!hasStrongPasswordBase) {
+      setError(
+        "A senha temporária deve ter no mínimo 8 caracteres, com letra maiúscula, letra minúscula, número e caractere especial."
+      );
       return;
     }
 
@@ -102,7 +174,7 @@ export default function NovoUsuarioAdministradoraPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data?.error || "Não foi possível criar o usuário.");
+        setError(data?.error || "Não foi possível criar o responsável pelo acesso.");
         return;
       }
 
@@ -110,7 +182,7 @@ export default function NovoUsuarioAdministradoraPage() {
       router.refresh();
     } catch (err) {
       console.error(err);
-      setError("Não foi possível criar o usuário. Tente novamente.");
+      setError("Não foi possível criar o responsável pelo acesso. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -121,20 +193,27 @@ export default function NovoUsuarioAdministradoraPage() {
   return (
     <EloGestShell current="administradoras">
       <div className="space-y-8">
+
+
+
+        {/* =====================================================
+           HEADER
+           ===================================================== */}
+
         <section className="rounded-[34px] border border-[#DDE5DF] bg-white/90 p-6 shadow-[0_24px_80px_rgba(23,33,27,0.08)] backdrop-blur sm:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="inline-flex rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
-                Usuário administrativo
+                Acesso administrativo
               </div>
 
               <h1 className="mt-4 text-3xl font-semibold tracking-[-0.045em] text-[#17211B] sm:text-4xl">
-                Novo usuário da administradora
+                Novo responsável pelo acesso
               </h1>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
-                Crie um usuário vinculado à administradora para que ele possa
-                acessar a área administrativa e operar a carteira.
+                Crie um novo responsável para acessar o painel administrativo
+                da administradora e operar a carteira vinculada.
               </p>
             </div>
 
@@ -146,6 +225,49 @@ export default function NovoUsuarioAdministradoraPage() {
             </Link>
           </div>
         </section>
+
+
+
+        {/* =====================================================
+           ORIENTAÇÃO
+           ===================================================== */}
+
+        <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur sm:p-8">
+          <div className="mb-5">
+            <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#17211B]">
+              Como funciona este acesso
+            </h2>
+
+            <p className="mt-1 text-sm leading-6 text-[#64736A]">
+              Este cadastro cria um acesso administrativo vinculado à
+              administradora selecionada. Em uma próxima etapa, este fluxo
+              poderá ser substituído por convite automático por e-mail.
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <StepCard
+              title="Responsável"
+              description="Informe nome e e-mail da pessoa que acessará o painel administrativo."
+            />
+
+            <StepCard
+              title="Senha temporária"
+              description="Crie uma senha forte e oriente o usuário a alterá-la quando possível."
+            />
+
+            <StepCard
+              title="Operação"
+              description="Usuários ativos podem acessar o painel da administradora enquanto a carteira estiver ativa."
+            />
+          </div>
+        </section>
+
+
+
+        {/* =====================================================
+           FORMULÁRIO
+           ===================================================== */}
 
         <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur sm:p-8">
           {error && (
@@ -164,8 +286,8 @@ export default function NovoUsuarioAdministradoraPage() {
               </h2>
 
               <p className="mt-1 text-sm leading-6 text-[#64736A]">
-                Esse usuário será criado com perfil administrativo dentro da
-                administradora selecionada.
+                Este responsável será vinculado à administradora selecionada e
+                poderá acessar o painel administrativo da carteira.
               </p>
             </div>
 
@@ -175,7 +297,7 @@ export default function NovoUsuarioAdministradoraPage() {
                   htmlFor="name"
                   className="mb-2 block text-sm font-semibold text-[#17211B]"
                 >
-                  Nome do usuário
+                  Nome do responsável
                 </label>
 
                 <input
@@ -222,24 +344,51 @@ export default function NovoUsuarioAdministradoraPage() {
                   htmlFor="password"
                   className="mb-2 block text-sm font-semibold text-[#17211B]"
                 >
-                  Senha inicial
+                  Senha temporária
                 </label>
 
                 <input
                   id="password"
-                  type="text"
+                  type="password"
                   value={password}
                   onChange={(event) => {
                     setPassword(event.target.value);
                     setError("");
                   }}
+                  placeholder="Crie uma senha temporária forte"
+                  autoComplete="new-password"
                   className="h-12 w-full rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] px-4 text-sm text-[#17211B] outline-none transition placeholder:text-[#9AA7A0] focus:border-[#256D3C] focus:bg-white focus:ring-4 focus:ring-[#256D3C]/10"
                   required
                 />
 
+                <div className="mt-3 grid gap-2 rounded-2xl border border-[#DDE5DF] bg-white/70 p-4 sm:grid-cols-2">
+                  {getPasswordChecklist(password).map((item) => (
+                    <div
+                      key={item.label}
+                      className={[
+                        "flex items-center gap-2 text-xs font-semibold",
+                        item.valid ? "text-[#256D3C]" : "text-[#7A877F]",
+                      ].join(" ")}
+                    >
+                      <span
+                        className={[
+                          "flex h-5 w-5 items-center justify-center rounded-full border text-[10px]",
+                          item.valid
+                            ? "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]"
+                            : "border-[#DDE5DF] bg-[#F7F9F8] text-[#9AA7A0]",
+                        ].join(" ")}
+                      >
+                        {item.valid ? "✓" : "•"}
+                      </span>
+                      {item.label}
+                    </div>
+                  ))}
+                </div>
+
                 <p className="mt-2 text-xs leading-5 text-[#64736A]">
-                  Futuramente, esse fluxo poderá ser substituído por convite por
-                  e-mail com definição de senha pelo próprio usuário.
+                  A senha temporária deve ser forte e não deve conter partes
+                  do nome ou e-mail do responsável. A validação final também
+                  acontece no servidor.
                 </p>
               </div>
             </div>
@@ -258,11 +407,13 @@ export default function NovoUsuarioAdministradoraPage() {
 
                 <div>
                   <p className="text-sm font-semibold text-[#17211B]">
-                    Usuário ativo
+                    Liberar acesso após o cadastro
                   </p>
 
                   <p className="mt-1 text-sm leading-6 text-[#64736A]">
-                    Usuários ativos podem acessar a plataforma imediatamente.
+                    Quando liberado, o responsável poderá acessar o painel
+                    administrativo imediatamente, desde que a administradora
+                    esteja ativa.
                   </p>
                 </div>
               </label>
@@ -281,7 +432,7 @@ export default function NovoUsuarioAdministradoraPage() {
                 disabled={loading}
                 className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F5A32] disabled:cursor-not-allowed disabled:bg-[#9AA7A0]"
               >
-                {loading ? "Criando..." : "Criar usuário"}
+                {loading ? "Criando..." : "Criar responsável"}
               </button>
             </div>
           </form>

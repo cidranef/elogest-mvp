@@ -18,8 +18,9 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    - SINDICO: permitido
    - MORADOR: permitido
    - PROPRIETARIO: permitido
+   - CONSELHEIRO: permitido
    - ADMINISTRADORA: bloqueado e direcionado ao admin
-   - SUPER_ADMIN: bloqueado e direcionado ao admin
+   - SUPER_ADMIN: bloqueado e direcionado à área EloGest
    - Sem perfil ativo: direciona para /contexto
 
    ETAPA 39.17 — PADRONIZAÇÃO DOS "ENTRE PÁGINAS"
@@ -43,6 +44,14 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    - Falha em /api/user/accesses não bloqueia o guard principal.
    - Mensagens mais claras para acesso ao portal com perfil admin.
    - Mantida proteção visual sem substituir validação server-side/API.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Portal passa a aceitar também o perfil CONSELHEIRO.
+   - SUPER_ADMIN fica reservado para /elogest.
+   - ADMINISTRADORA continua direcionada para /admin.
+   - A validação visual acompanha a blindagem aplicada nas APIs.
    ========================================================= */
 
 
@@ -55,6 +64,11 @@ interface ActiveAccess {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   source?: string | null;
 }
 
@@ -72,7 +86,8 @@ function isPortalRole(role?: string | null) {
   return (
     role === "SINDICO" ||
     role === "MORADOR" ||
-    role === "PROPRIETARIO"
+    role === "PROPRIETARIO" ||
+    role === "CONSELHEIRO"
   );
 }
 
@@ -96,6 +111,26 @@ function getPortalBlockedBadgeLabel(role?: string | null) {
   if (role === "ADMINISTRADORA") return "Perfil de administradora";
 
   return "Perfil sem acesso ao portal";
+}
+
+
+
+function getBlockedPrimaryHref(role?: string | null) {
+  if (role === "SUPER_ADMIN") {
+    return "/elogest/dashboard";
+  }
+
+  return "/admin/dashboard";
+}
+
+
+
+function getBlockedPrimaryLabel(role?: string | null) {
+  if (role === "SUPER_ADMIN") {
+    return "Ir para área EloGest";
+  }
+
+  return "Ir para o admin";
 }
 
 
@@ -400,10 +435,10 @@ export default function PortalContextGuard({
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href="/admin/dashboard"
+            href={getBlockedPrimaryHref(activeAccess.role)}
             className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#256D3C] px-6 text-sm font-semibold text-white transition hover:bg-[#1F5A32]"
           >
-            Ir para o admin
+            {getBlockedPrimaryLabel(activeAccess.role)}
           </Link>
 
           {canSwitchProfile && (

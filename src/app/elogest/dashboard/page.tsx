@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import EloGestShell from "@/components/EloGestShell";
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
 
 
 
@@ -12,39 +10,38 @@ import { getAuthUser } from "@/lib/auth-guard";
    Rota:
    /elogest/dashboard
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
-   - Criar a primeira tela da área interna da própria EloGest.
+   - Consolidar a primeira visão global da dona da plataforma.
    - Separar claramente:
-     EloGest = dona da plataforma
+     EloGest = gestão global da plataforma
      Administradora = cliente operacional
-     Portal = usuário final.
-   - Exibir visão geral da plataforma:
+     Portal = síndicos, moradores, proprietários e conselheiros.
+   - Exibir indicadores globais de:
      administradoras, condomínios, usuários e chamados.
-   - Preparar caminho para:
-     cadastro de administradoras,
-     indicadores SaaS,
-     planos,
-     suporte,
-     auditoria e gestão global.
+   - Preparar o ambiente para módulos futuros:
+     planos, limites, auditoria, indicadores SaaS e suporte.
 
    Segurança:
-   - Apenas SUPER_ADMIN pode acessar.
+   - A proteção principal da área /elogest é feita em:
+     src/app/elogest/layout.tsx
+   - Esta página deve permanecer exclusiva do SUPER_ADMIN
+     por herdar o layout protegido da área EloGest.
+
+   Regra estratégica:
+   - SUPER_ADMIN enxerga a plataforma inteira.
+   - ADMINISTRADORA enxerga apenas sua carteira em /admin.
+   - PORTAL enxerga apenas o perfil ativo em /portal.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
 
 
 
-type AuthUser = {
-  id: string;
-  role?: string | null;
-  name?: string | null;
-  email?: string | null;
-};
-
-
+/* =========================================================
+   HELPERS
+   ========================================================= */
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("pt-BR").format(value);
@@ -58,6 +55,18 @@ function kpiLabel(value: number, singular: string, plural: string) {
 
 
 
+function percentage(part: number, total: number) {
+  if (!total) return "0%";
+
+  return `${Math.round((part / total) * 100)}%`;
+}
+
+
+
+/* =========================================================
+   COMPONENTES INTERNOS
+   ========================================================= */
+
 function KpiCard({
   title,
   value,
@@ -70,7 +79,7 @@ function KpiCard({
   href?: string;
 }) {
   const content = (
-    <div className="rounded-[28px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] transition hover:border-[#CFE6D4] hover:shadow-[0_22px_70px_rgba(23,33,27,0.09)]">
+    <div className="h-full rounded-[28px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] transition hover:border-[#CFE6D4] hover:shadow-[0_22px_70px_rgba(23,33,27,0.09)]">
       <p className="text-sm font-semibold text-[#64736A]">
         {title}
       </p>
@@ -90,7 +99,7 @@ function KpiCard({
   }
 
   return (
-    <Link href={href} className="block">
+    <Link href={href} className="block h-full">
       {content}
     </Link>
   );
@@ -107,12 +116,13 @@ function StatusCard({
   title: string;
   value: string;
   description: string;
-  tone?: "default" | "success" | "warning";
+  tone?: "default" | "success" | "warning" | "danger";
 }) {
   const toneClasses = {
     default: "border-[#DDE5DF] bg-white text-[#17211B]",
     success: "border-[#CFE6D4] bg-[#F7FBF8] text-[#256D3C]",
     warning: "border-yellow-200 bg-yellow-50 text-yellow-800",
+    danger: "border-red-200 bg-red-50 text-red-800",
   };
 
   return (
@@ -144,20 +154,33 @@ function QuickAction({
   description,
   href,
   label,
+  disabled = false,
 }: {
   title: string;
   description: string;
-  href: string;
+  href?: string;
   label: string;
+  disabled?: boolean;
 }) {
-  return (
-    <Link
-      href={href}
-      className="group block rounded-[24px] border border-[#DDE5DF] bg-[#F9FBFA] p-5 transition hover:border-[#CFE6D4] hover:bg-white hover:shadow-[0_18px_52px_rgba(23,33,27,0.08)]"
+  const content = (
+    <div
+      className={[
+        "group block rounded-[24px] border p-5 transition",
+        disabled
+          ? "cursor-not-allowed border-[#DDE5DF] bg-[#F7F9F8] opacity-75"
+          : "border-[#DDE5DF] bg-[#F9FBFA] hover:border-[#CFE6D4] hover:bg-white hover:shadow-[0_18px_52px_rgba(23,33,27,0.08)]",
+      ].join(" ")}
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-base font-semibold tracking-[-0.02em] text-[#17211B] group-hover:text-[#256D3C]">
+          <h3
+            className={[
+              "text-base font-semibold tracking-[-0.02em]",
+              disabled
+                ? "text-[#64736A]"
+                : "text-[#17211B] group-hover:text-[#256D3C]",
+            ].join(" ")}
+          >
             {title}
           </h3>
 
@@ -166,77 +189,152 @@ function QuickAction({
           </p>
         </div>
 
-        <span className="shrink-0 rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
+        <span
+          className={[
+            "shrink-0 rounded-full border px-3 py-1 text-xs font-semibold",
+            disabled
+              ? "border-[#DDE5DF] bg-white text-[#7A877F]"
+              : "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
+          ].join(" ")}
+        >
           {label}
         </span>
       </div>
+    </div>
+  );
+
+  if (disabled || !href) {
+    return content;
+  }
+
+  return (
+    <Link href={href} className="block">
+      {content}
     </Link>
   );
 }
 
 
 
+function RuleCard({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[22px] border border-[#DDE5DF] bg-[#F9FBFA] p-4">
+      <p className="text-sm font-semibold text-[#17211B]">
+        {title}
+      </p>
+
+      <p className="mt-1 text-sm leading-6 text-[#64736A]">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+
+
+/* =========================================================
+   PÁGINA
+   ========================================================= */
+
 export default async function EloGestDashboardPage() {
-  const authUser = (await getAuthUser()) as AuthUser | null;
-
-  if (!authUser) {
-    redirect("/login");
-  }
-
-  if (authUser.role !== "SUPER_ADMIN") {
-    redirect("/admin/dashboard");
-  }
 
 
 
   /* =========================================================
-     INDICADORES GERAIS DA PLATAFORMA
+     INDICADORES GLOBAIS DA PLATAFORMA
+
+     Importante:
+     - Sem filtro por administratorId.
+     - Esta é a visão global do SUPER_ADMIN.
      ========================================================= */
 
   const [
     totalAdministradoras,
     administradorasAtivas,
+    administradorasInativas,
     totalCondominios,
     condominiosAtivos,
+    condominiosInativos,
     totalUsuarios,
     usuariosAtivos,
+    usuariosInativos,
     totalChamados,
     chamadosAbertos,
     chamadosEmAtendimento,
     chamadosResolvidos,
+    chamadosCancelados,
   ] = await Promise.all([
     db.administrator.count(),
+
     db.administrator.count({
       where: {
         status: "ACTIVE",
       },
     }),
+
+    db.administrator.count({
+      where: {
+        status: "INACTIVE",
+      },
+    }),
+
     db.condominium.count(),
+
     db.condominium.count({
       where: {
         status: "ACTIVE",
       },
     }),
+
+    db.condominium.count({
+      where: {
+        status: "INACTIVE",
+      },
+    }),
+
     db.user.count(),
+
     db.user.count({
       where: {
         isActive: true,
       },
     }),
+
+    db.user.count({
+      where: {
+        isActive: false,
+      },
+    }),
+
     db.ticket.count(),
+
     db.ticket.count({
       where: {
         status: "OPEN",
       },
     }),
+
     db.ticket.count({
       where: {
         status: "IN_PROGRESS",
       },
     }),
+
     db.ticket.count({
       where: {
         status: "RESOLVED",
+      },
+    }),
+
+    db.ticket.count({
+      where: {
+        status: "CANCELED",
       },
     }),
   ]);
@@ -290,12 +388,14 @@ export default async function EloGestDashboardPage() {
                 </div>
 
                 <h1 className="mt-4 max-w-3xl text-3xl font-semibold tracking-[-0.045em] text-[#17211B] sm:text-4xl">
-                  Gestão global da plataforma.
+                  Dashboard global da plataforma.
                 </h1>
 
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
-                  Acompanhe administradoras, condomínios, usuários, chamados e
-                  indicadores gerais da operação EloGest em um único ambiente.
+                  Acompanhe a operação geral da EloGest com visão consolidada
+                  de administradoras, condomínios, usuários e chamados. Esta
+                  tela não representa uma carteira específica: ela é a visão da
+                  dona da plataforma.
                 </p>
               </div>
 
@@ -321,7 +421,7 @@ export default async function EloGestDashboardPage() {
 
 
         {/* =====================================================
-           KPIS
+           KPIS PRINCIPAIS
            ===================================================== */}
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -332,7 +432,11 @@ export default async function EloGestDashboardPage() {
               administradorasAtivas,
               "ativa",
               "ativas"
-            )} na plataforma.`}
+            )} e ${formatNumber(administradorasInativas)} ${kpiLabel(
+              administradorasInativas,
+              "inativa",
+              "inativas"
+            )}.`}
             href="/elogest/administradoras"
           />
 
@@ -341,8 +445,12 @@ export default async function EloGestDashboardPage() {
             value={totalCondominios}
             description={`${formatNumber(condominiosAtivos)} ${kpiLabel(
               condominiosAtivos,
-              "condomínio ativo",
-              "condomínios ativos"
+              "ativo",
+              "ativos"
+            )} e ${formatNumber(condominiosInativos)} ${kpiLabel(
+              condominiosInativos,
+              "inativo",
+              "inativos"
             )}.`}
           />
 
@@ -351,27 +459,29 @@ export default async function EloGestDashboardPage() {
             value={totalUsuarios}
             description={`${formatNumber(usuariosAtivos)} ${kpiLabel(
               usuariosAtivos,
-              "usuário ativo",
-              "usuários ativos"
+              "ativo",
+              "ativos"
+            )} e ${formatNumber(usuariosInativos)} ${kpiLabel(
+              usuariosInativos,
+              "inativo",
+              "inativos"
             )}.`}
-            href="/elogest/usuarios"
           />
 
           <KpiCard
             title="Chamados"
             value={totalChamados}
-            description="Volume geral registrado na plataforma."
-            href="/elogest/indicadores"
+            description="Volume geral registrado em toda a plataforma."
           />
         </section>
 
 
 
         {/* =====================================================
-           STATUS OPERACIONAL
+           SAÚDE OPERACIONAL
            ===================================================== */}
 
-        <section className="grid gap-4 lg:grid-cols-3">
+        <section className="grid gap-4 lg:grid-cols-4">
           <StatusCard
             title="Chamados abertos"
             value={formatNumber(chamadosAbertos)}
@@ -389,9 +499,55 @@ export default async function EloGestDashboardPage() {
           <StatusCard
             title="Resolvidos"
             value={formatNumber(chamadosResolvidos)}
-            description="Chamados concluídos no ambiente atual."
+            description={`${percentage(
+              chamadosResolvidos,
+              totalChamados
+            )} do volume geral já foi concluído.`}
             tone="success"
           />
+
+          <StatusCard
+            title="Cancelados"
+            value={formatNumber(chamadosCancelados)}
+            description="Chamados cancelados dentro da plataforma."
+            tone={chamadosCancelados > 0 ? "danger" : "default"}
+          />
+        </section>
+
+
+
+        {/* =====================================================
+           REGRAS DE ESCOPO
+           ===================================================== */}
+
+        <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur">
+          <div className="mb-5">
+            <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#17211B]">
+              Separação de ambientes
+            </h2>
+
+            <p className="mt-1 text-sm leading-6 text-[#64736A]">
+              A Etapa 44 consolida a base multiadministradora e reforça o
+              isolamento entre a dona da plataforma, administradoras e usuários finais.
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <RuleCard
+              title="EloGest"
+              description="O Super Admin acessa /elogest e visualiza a plataforma inteira."
+            />
+
+            <RuleCard
+              title="Administradora"
+              description="A administradora acessa /admin e visualiza apenas a própria carteira."
+            />
+
+            <RuleCard
+              title="Portal"
+              description="Síndicos, moradores, proprietários e conselheiros acessam /portal conforme o perfil ativo."
+            />
+          </div>
         </section>
 
 
@@ -416,7 +572,7 @@ export default async function EloGestDashboardPage() {
                 </h2>
 
                 <p className="mt-1 text-sm leading-6 text-[#64736A]">
-                  Visão inicial das administradoras cadastradas na plataforma.
+                  Últimas administradoras cadastradas na plataforma.
                 </p>
               </div>
 
@@ -503,15 +659,22 @@ export default async function EloGestDashboardPage() {
             <QuickAction
               title="Gestão de planos"
               description="Estrutura futura para planos, limites, cobranças e uso."
-              href="/elogest/planos"
-              label="Futuro"
+              label="Em breve"
+              disabled
             />
 
             <QuickAction
               title="Indicadores SaaS"
               description="Acompanhe crescimento, uso e saúde da plataforma."
-              href="/elogest/indicadores"
               label="Em breve"
+              disabled
+            />
+
+            <QuickAction
+              title="Auditoria global"
+              description="Base futura para logs, rastreabilidade e segurança operacional."
+              label="Futuro"
+              disabled
             />
           </div>
         </section>

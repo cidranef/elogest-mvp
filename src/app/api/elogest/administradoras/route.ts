@@ -6,7 +6,8 @@ import {
   Status,
 } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { validateStrongPassword } from "@/lib/password-policy";
+import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
 
 
 
@@ -17,23 +18,23 @@ import { getAuthUser } from "@/lib/auth-guard";
    GET  /api/elogest/administradoras
    POST /api/elogest/administradoras
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
    - Permitir que a EloGest liste e cadastre administradoras.
-   - Opcionalmente criar o primeiro usuário administrador.
-   - Criar UserAccess para o usuário administrador.
+   - Opcionalmente criar o primeiro usuário responsável pelo acesso.
+   - Criar User com role ADMINISTRADORA.
+   - Criar UserAccess ADMINISTRADORA para o usuário responsável.
    - Manter endpoint exclusivo para SUPER_ADMIN.
+   - Preparar o fluxo futuro de convite por e-mail.
+
+   Segurança:
+   - A rota usa requireEloGestSuperAdmin().
+   - A senha temporária usa a política central de senha forte.
+   - Não existe senha padrão no backend.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
-
-
-
-type AuthUser = {
-  id: string;
-  role?: string | null;
-};
 
 
 
@@ -57,45 +58,15 @@ function onlyNumbers(value: unknown) {
 
 
 
-async function requireSuperAdmin() {
-  const authUser = (await getAuthUser()) as AuthUser | null;
-
-  if (!authUser) {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Usuário não autenticado.",
-        },
-        {
-          status: 401,
-        }
-      ),
-    };
-  }
-
-  if (authUser.role !== "SUPER_ADMIN") {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Acesso restrito ao Super Admin EloGest.",
-        },
-        {
-          status: 403,
-        }
-      ),
-    };
-  }
-
-  return {
-    authUser,
-  };
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 
 
 export async function GET() {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;
@@ -144,7 +115,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;
@@ -185,6 +156,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (email && !isValidEmail(email)) {
+      return NextResponse.json(
+        {
+          error: "Informe um e-mail institucional válido para a administradora.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
     if (cnpj) {
       const existingAdministrator = await db.administrator.findUnique({
         where: {
@@ -211,7 +193,7 @@ export async function POST(request: NextRequest) {
       if (!userName) {
         return NextResponse.json(
           {
-            error: "Informe o nome do usuário administrador.",
+            error: "Informe o nome do usuário responsável."
           },
           {
             status: 400,
@@ -222,7 +204,7 @@ export async function POST(request: NextRequest) {
       if (!userEmail) {
         return NextResponse.json(
           {
-            error: "Informe o e-mail do usuário administrador.",
+            error: "Informe o e-mail do usuário responsável.",
           },
           {
             status: 400,
@@ -230,10 +212,27 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (!userPassword || userPassword.length < 8) {
+      if (!isValidEmail(userEmail)) {
         return NextResponse.json(
           {
-            error: "A senha inicial deve ter pelo menos 8 caracteres.",
+            error: "Informe um e-mail válido para o usuário responsável.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      const passwordValidation = validateStrongPassword(userPassword, {
+        email: userEmail,
+        name: userName,
+      });
+
+      if (!passwordValidation.valid) {
+        return NextResponse.json(
+          {
+            error: passwordValidation.errors.join(" "),
+            errors: passwordValidation.errors,
           },
           {
             status: 400,
@@ -253,7 +252,7 @@ export async function POST(request: NextRequest) {
       if (existingUser) {
         return NextResponse.json(
           {
-            error: "Já existe um usuário cadastrado com este e-mail.",
+            error: "Já existe um usuário cadastrado com este e-mail."
           },
           {
             status: 409,
@@ -293,7 +292,7 @@ export async function POST(request: NextRequest) {
           data: {
             userId: user.id,
             role: AccessRole.ADMINISTRADORA,
-            label: administrator.name,
+            label: `Administradora - ${administrator.name}`,
             administratorId: administrator.id,
             isDefault: true,
             isActive: true,

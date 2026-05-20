@@ -9,13 +9,12 @@ import {
 import {
   canCommentInternal,
   canCommentPublic,
-  isAdministradora,
-  isSuperAdmin,
 } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
 import { Status } from "@prisma/client";
@@ -190,7 +189,9 @@ async function getCommentContextUser() {
    ========================================================= */
 
 function validateCommentContext(user: any) {
-  if (!user?.activeAccess) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
     return {
       ok: false,
       status: 403,
@@ -198,16 +199,21 @@ function validateCommentContext(user: any) {
     };
   }
 
-  if (!isSuperAdmin(user) && !isAdministradora(user)) {
+  /*
+     Etapa 43:
+     /admin é a área operacional da administradora.
+     SUPER_ADMIN deve operar pela área /elogest, não por esta rota.
+  */
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso à rota administrativa de comentários. Use o portal.",
+        "Este contexto não possui acesso à rota administrativa de comentários. Use o portal ou a área EloGest.",
     };
   }
 
-  if (isAdministradora(user) && !user.administratorId) {
+  if (!user.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -238,13 +244,9 @@ function validateCommentContext(user: any) {
    ========================================================= */
 
 function getTicketWhereByContext(user: any, ticketId: string) {
-  if (isSuperAdmin(user)) {
-    return {
-      id: ticketId,
-    };
-  }
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
 
-  if (isAdministradora(user) && user.administratorId) {
+  if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
       id: ticketId,
       condominium: {
@@ -337,14 +339,14 @@ export async function POST(request: NextRequest, { params }: Params) {
        - nunca aparece no portal.
        ========================================================= */
 
-    if (action === "COMMENT_PUBLIC" && !canCommentPublic(authUser)) {
+    if (action === "COMMENT_PUBLIC" && !canCommentPublic(activeAccess)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para responder publicamente." },
         { status: 403 }
       );
     }
 
-    if (action === "COMMENT_INTERNAL" && !canCommentInternal(authUser)) {
+    if (action === "COMMENT_INTERNAL" && !canCommentInternal(activeAccess)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para registrar comentário interno." },
         { status: 403 }
@@ -615,10 +617,10 @@ export async function POST(request: NextRequest, { params }: Params) {
           : "Comentário interno registrado com sucesso.",
       log,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Erro ao criar comentário no chamado:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Usuário não autenticado." },
         { status: 401 }

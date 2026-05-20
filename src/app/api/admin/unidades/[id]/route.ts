@@ -1,6 +1,11 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageUnits } from "@/lib/access-control";
 import { NextResponse } from "next/server";
 
 
@@ -8,31 +13,23 @@ import { NextResponse } from "next/server";
 /* =========================================================
    UNIDADES - API DE ATUALIZAÇÃO
 
-   ETAPA 15.5.2
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
    PATCH:
-   - Editar unidade
-   - Alterar condomínio
-   - Alterar bloco, número, tipo e status
-   - Ativar / inativar unidade
+   - ADMINISTRADORA edita apenas unidades de condomínios da sua
+     carteira ativa.
+   - Pode alterar condomínio, bloco, número, tipo e status, desde
+     que o novo condomínio também pertença à carteira ativa.
 
-   Regras:
-   SUPER_ADMIN:
-   - pode editar qualquer unidade.
-
-   ADMINISTRADORA:
-   - só pode editar unidades de condomínios da administradora ativa.
-
-   ETAPA 35.2:
-   Refinamento dos cadastros base.
-
-   Ajustes aplicados:
-   - Rota passa a respeitar contexto ativo.
-   - ADMINISTRADORA usa administratorId do contexto ativo.
-   - SUPER_ADMIN mantém edição global quando contexto for SUPER_ADMIN.
-   - Contextos de portal são bloqueados nesta rota administrativa.
+   Regras consolidadas:
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO são bloqueados.
+   - Todas as consultas usam administratorId do activeAccess.
+   - A permissão MANAGE_UNITS é validada no perfil ativo.
    - Edição aceita apenas condomínio da carteira ativa.
    - Unidade não pode ser movida para condomínio inativo.
+   - Administradora do condomínio precisa estar ativa.
    - Status é validado como ACTIVE ou INACTIVE.
    - Campos são normalizados antes de salvar.
    - Duplicidade de unidade no mesmo condomínio recebe mensagem amigável.
@@ -112,9 +109,10 @@ async function getAdminContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
-    userId: sessionUser.id,
-  });
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
 
   if (!activeAccess) {
     return {
@@ -156,23 +154,45 @@ async function getAdminContextUser() {
 
 /* =========================================================
    VALIDA CONTEXTO ADMINISTRATIVO
+
+   Etapa 43:
+   /admin é área operacional da administradora cliente.
+   SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
 function validateAdminContext(user: any) {
-  if (user?.role !== "SUPER_ADMIN" && user?.role !== "ADMINISTRADORA") {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso ao cadastro administrativo de unidades.",
+        "Este contexto não possui acesso ao cadastro administrativo de unidades. Use o portal ou a área EloGest.",
     };
   }
 
-  if (user.role === "ADMINISTRADORA" && !user.administratorId) {
+  if (!activeAccess.administratorId) {
     return {
       ok: false,
       status: 403,
       message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageUnits(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para gerenciar unidades.",
     };
   }
 
@@ -185,62 +205,10 @@ function validateAdminContext(user: any) {
 
 
 
-/* =========================================================
-   WHERE DE ACESSO À UNIDADE
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
 
-   SUPER_ADMIN:
-   - pode editar qualquer unidade.
-
-   ADMINISTRADORA:
-   - só edita unidade de condomínio da administradora ativa.
-   ========================================================= */
-
-function getUnitWhereByContext(user: any, unitId: string) {
-  if (user.role === "SUPER_ADMIN") {
-    return {
-      id: unitId,
-    };
-  }
-
-  if (user.role === "ADMINISTRADORA") {
-    return {
-      id: unitId,
-      condominium: {
-        administratorId: user.administratorId,
-      },
-    };
-  }
-
-  return {
-    id: "__blocked__",
-  };
-}
-
-
-
-/* =========================================================
-   WHERE DE CONDOMÍNIO PERMITIDO
-
-   Usado quando a unidade é criada/editada para outro condomínio.
-   ========================================================= */
-
-function getAllowedCondominiumWhere(user: any, condominiumId: string) {
-  if (user.role === "SUPER_ADMIN") {
-    return {
-      id: condominiumId,
-    };
-  }
-
-  if (user.role === "ADMINISTRADORA") {
-    return {
-      id: condominiumId,
-      administratorId: user.administratorId,
-    };
-  }
-
-  return {
-    id: "__blocked__",
-  };
+  return activeAccess?.administratorId || null;
 }
 
 
@@ -292,7 +260,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     const { id } = await context.params;
     const body = await req.json();
 
-    if (!id) {
+    const unitId = cleanText(id);
+
+    if (!unitId) {
       return NextResponse.json(
         { error: "ID da unidade não informado." },
         { status: 400 }
@@ -308,6 +278,15 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
+    const administratorId = getAdministratorIdFromContext(user);
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
+
 
 
     /* =========================================================
@@ -315,7 +294,12 @@ export async function PATCH(req: Request, context: RouteContext) {
        ========================================================= */
 
     const unidadeAtual = await db.unit.findFirst({
-      where: getUnitWhereByContext(user, id),
+      where: {
+        id: unitId,
+        condominium: {
+          administratorId,
+        },
+      },
       include: {
         condominium: true,
       },
@@ -350,20 +334,23 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
 
       const condominio = await db.condominium.findFirst({
-        where: getAllowedCondominiumWhere(user, requestedCondominiumId),
+        where: {
+          id: requestedCondominiumId,
+          administratorId,
+          status: "ACTIVE",
+          administrator: {
+            status: "ACTIVE",
+          },
+        },
       });
 
       if (!condominio) {
         return NextResponse.json(
-          { error: "Condomínio não encontrado ou acesso negado." },
+          {
+            error:
+              "Condomínio não encontrado, inativo, fora da carteira ou com administradora inativa.",
+          },
           { status: 403 }
-        );
-      }
-
-      if (condominio.status !== "ACTIVE") {
-        return NextResponse.json(
-          { error: "Não é possível mover unidade para condomínio inativo." },
-          { status: 400 }
         );
       }
 
@@ -439,7 +426,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         block,
         unitNumber,
         id: {
-          not: id,
+          not: unitId,
         },
       },
     });
@@ -489,17 +476,22 @@ export async function PATCH(req: Request, context: RouteContext) {
     });
 
     return NextResponse.json(buildUnitPayload(unidade));
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO ATUALIZAR UNIDADE:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
 
-    if (error?.code === "P2002") {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json(
         {
           error:

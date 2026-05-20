@@ -72,6 +72,18 @@ import LogoutButton from "@/components/LogoutButton";
    - Perfil SUPER_ADMIN agora redireciona para /elogest/dashboard.
    - Perfil ADMINISTRADORA permanece em /admin/dashboard.
    - Perfis de portal permanecem em /portal/dashboard.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Mantida rota técnica /contexto.
+   - SUPER_ADMIN redireciona exclusivamente para /elogest/dashboard.
+   - ADMINISTRADORA redireciona para /admin/dashboard.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO redirecionam
+     para /portal/dashboard.
+   - Payload enviado para /api/user/active-access passa a incluir
+     dados do vínculo formal: unitPersonLinkId, linkType,
+     canVote, canOpenTickets e receivesNotifications.
    ========================================================= */
 
 
@@ -84,6 +96,11 @@ interface AccessItem {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   source?: string;
   roleLabel?: string;
   isDefault?: boolean;
@@ -287,7 +304,8 @@ function getRedirectPathForRole(role?: string | null) {
   if (
     role === "SINDICO" ||
     role === "MORADOR" ||
-    role === "PROPRIETARIO"
+    role === "PROPRIETARIO" ||
+    role === "CONSELHEIRO"
   ) {
     return "/portal/dashboard";
   }
@@ -586,6 +604,11 @@ export default function ContextoPage() {
           condominiumId: access.condominiumId ?? null,
           unitId: access.unitId ?? null,
           residentId: access.residentId ?? null,
+          unitPersonLinkId: access.unitPersonLinkId ?? null,
+          linkType: access.linkType ?? null,
+          canVote: access.canVote ?? null,
+          canOpenTickets: access.canOpenTickets ?? null,
+          receivesNotifications: access.receivesNotifications ?? null,
           source: access.source ?? null,
         }),
       });

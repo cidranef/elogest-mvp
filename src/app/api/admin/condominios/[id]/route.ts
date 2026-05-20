@@ -1,6 +1,11 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageCondominiums } from "@/lib/access-control";
 import { NextResponse } from "next/server";
 
 
@@ -8,27 +13,18 @@ import { NextResponse } from "next/server";
 /* =========================================================
    CONDOMÍNIOS - API DE ATUALIZAÇÃO
 
-   ETAPA 15.5.1
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
    PATCH:
-   - Editar dados do condomínio
-   - Ativar / inativar condomínio
+   - ADMINISTRADORA edita apenas condomínios vinculados à
+     administradora do perfil ativo.
 
-   Regras:
-   SUPER_ADMIN:
-   - pode editar qualquer condomínio.
-
-   ADMINISTRADORA:
-   - só pode editar condomínio vinculado à administradora ativa.
-
-   ETAPA 35.1:
-   Refinamento dos cadastros base.
-
-   Ajustes aplicados:
-   - Rota passa a respeitar contexto ativo.
-   - ADMINISTRADORA usa administratorId do contexto ativo.
-   - SUPER_ADMIN mantém edição global quando contexto for SUPER_ADMIN.
-   - Contextos de portal são bloqueados nesta rota administrativa.
+   Regras consolidadas:
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO são bloqueados.
+   - Todas as consultas usam administratorId do activeAccess.
+   - A permissão MANAGE_CONDOMINIUMS é validada no perfil ativo.
    - CNPJ duplicado recebe mensagem amigável.
    - Status é validado.
    - Campos são normalizados antes de salvar.
@@ -104,9 +100,10 @@ async function getAdminContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
-    userId: sessionUser.id,
-  });
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
 
   if (!activeAccess) {
     return {
@@ -148,23 +145,45 @@ async function getAdminContextUser() {
 
 /* =========================================================
    VALIDA CONTEXTO ADMINISTRATIVO
+
+   Etapa 43:
+   /admin é área operacional da administradora cliente.
+   SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
 function validateAdminContext(user: any) {
-  if (user?.role !== "SUPER_ADMIN" && user?.role !== "ADMINISTRADORA") {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso ao cadastro administrativo de condomínios.",
+        "Este contexto não possui acesso ao cadastro administrativo de condomínios. Use o portal ou a área EloGest.",
     };
   }
 
-  if (user.role === "ADMINISTRADORA" && !user.administratorId) {
+  if (!activeAccess.administratorId) {
     return {
       ok: false,
       status: 403,
       message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageCondominiums(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para gerenciar condomínios.",
     };
   }
 
@@ -177,32 +196,31 @@ function validateAdminContext(user: any) {
 
 
 
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  return activeAccess?.administratorId || null;
+}
+
+
+
 /* =========================================================
    WHERE DE ACESSO AO CONDOMÍNIO
-
-   SUPER_ADMIN:
-   - pode editar qualquer condomínio.
 
    ADMINISTRADORA:
    - só edita condomínio da administradora ativa.
    ========================================================= */
 
-function getCondominiumWhereByContext(user: any, condominiumId: string) {
-  if (user.role === "SUPER_ADMIN") {
-    return {
-      id: condominiumId,
-    };
-  }
-
-  if (user.role === "ADMINISTRADORA") {
-    return {
-      id: condominiumId,
-      administratorId: user.administratorId,
-    };
-  }
-
+function getCondominiumWhereByContext({
+  condominiumId,
+  administratorId,
+}: {
+  condominiumId: string;
+  administratorId: string;
+}) {
   return {
-    id: "__blocked__",
+    id: condominiumId,
+    administratorId,
   };
 }
 
@@ -271,6 +289,57 @@ function buildUpdateData(body: any) {
 
 
 /* =========================================================
+   RESPOSTA PADRONIZADA
+   ========================================================= */
+
+function buildCondominiumResponse(condominio: any) {
+  const chamadosAbertos = condominio.tickets.filter(
+    (ticket: any) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
+  ).length;
+
+  const unidadesAtivas = condominio.units.filter(
+    (unit: any) => unit.status === "ACTIVE"
+  ).length;
+
+  const moradoresAtivos = condominio.residents.filter(
+    (resident: any) => resident.status === "ACTIVE"
+  ).length;
+
+  return {
+    id: condominio.id,
+    administratorId: condominio.administratorId,
+    administrator: condominio.administrator,
+
+    name: condominio.name,
+    cnpj: condominio.cnpj,
+    email: condominio.email,
+    phone: condominio.phone,
+    cep: condominio.cep,
+    address: condominio.address,
+    number: condominio.number,
+    complement: condominio.complement,
+    district: condominio.district,
+    city: condominio.city,
+    state: condominio.state,
+    status: condominio.status,
+
+    createdAt: condominio.createdAt,
+    updatedAt: condominio.updatedAt,
+
+    totalUnits: condominio.units.length,
+    activeUnits: unidadesAtivas,
+
+    totalResidents: condominio.residents.length,
+    activeResidents: moradoresAtivos,
+
+    totalTickets: condominio.tickets.length,
+    openTickets: chamadosAbertos,
+  };
+}
+
+
+
+/* =========================================================
    PATCH - ATUALIZAR CONDOMÍNIO
    ========================================================= */
 
@@ -280,7 +349,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     const { id } = await context.params;
     const body = await req.json();
 
-    if (!id) {
+    const condominiumId = cleanText(id);
+
+    if (!condominiumId) {
       return NextResponse.json(
         { error: "ID do condomínio não informado." },
         { status: 400 }
@@ -296,6 +367,15 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
+    const administratorId = getAdministratorIdFromContext(user);
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
+
 
 
     /* =========================================================
@@ -303,7 +383,10 @@ export async function PATCH(req: Request, context: RouteContext) {
        ========================================================= */
 
     const condominioAtual = await db.condominium.findFirst({
-      where: getCondominiumWhereByContext(user, id),
+      where: getCondominiumWhereByContext({
+        condominiumId,
+        administratorId,
+      }),
     });
 
     if (!condominioAtual) {
@@ -355,7 +438,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         },
       });
 
-      if (existing && existing.id !== id) {
+      if (existing && existing.id !== condominiumId) {
         return NextResponse.json(
           { error: "Já existe um condomínio cadastrado com este CNPJ." },
           { status: 409 }
@@ -406,48 +489,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         );
       }
 
-      const chamadosAbertos = current.tickets.filter(
-        (ticket) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
-      ).length;
-
-      const unidadesAtivas = current.units.filter(
-        (unit) => unit.status === "ACTIVE"
-      ).length;
-
-      const moradoresAtivos = current.residents.filter(
-        (resident) => resident.status === "ACTIVE"
-      ).length;
-
-      return NextResponse.json({
-        id: current.id,
-        administratorId: current.administratorId,
-        administrator: current.administrator,
-
-        name: current.name,
-        cnpj: current.cnpj,
-        email: current.email,
-        phone: current.phone,
-        cep: current.cep,
-        address: current.address,
-        number: current.number,
-        complement: current.complement,
-        district: current.district,
-        city: current.city,
-        state: current.state,
-        status: current.status,
-
-        createdAt: current.createdAt,
-        updatedAt: current.updatedAt,
-
-        totalUnits: current.units.length,
-        activeUnits: unidadesAtivas,
-
-        totalResidents: current.residents.length,
-        activeResidents: moradoresAtivos,
-
-        totalTickets: current.tickets.length,
-        openTickets: chamadosAbertos,
-      });
+      return NextResponse.json(buildCondominiumResponse(current));
     }
 
     const condominio = await db.condominium.update({
@@ -478,65 +520,23 @@ export async function PATCH(req: Request, context: RouteContext) {
       },
     });
 
-
-
-    /* =========================================================
-       RETORNO PADRONIZADO
-       ========================================================= */
-
-    const chamadosAbertos = condominio.tickets.filter(
-      (ticket) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
-    ).length;
-
-    const unidadesAtivas = condominio.units.filter(
-      (unit) => unit.status === "ACTIVE"
-    ).length;
-
-    const moradoresAtivos = condominio.residents.filter(
-      (resident) => resident.status === "ACTIVE"
-    ).length;
-
-    return NextResponse.json({
-      id: condominio.id,
-      administratorId: condominio.administratorId,
-      administrator: condominio.administrator,
-
-      name: condominio.name,
-      cnpj: condominio.cnpj,
-      email: condominio.email,
-      phone: condominio.phone,
-      cep: condominio.cep,
-      address: condominio.address,
-      number: condominio.number,
-      complement: condominio.complement,
-      district: condominio.district,
-      city: condominio.city,
-      state: condominio.state,
-      status: condominio.status,
-
-      createdAt: condominio.createdAt,
-      updatedAt: condominio.updatedAt,
-
-      totalUnits: condominio.units.length,
-      activeUnits: unidadesAtivas,
-
-      totalResidents: condominio.residents.length,
-      activeResidents: moradoresAtivos,
-
-      totalTickets: condominio.tickets.length,
-      openTickets: chamadosAbertos,
-    });
-  } catch (error: any) {
+    return NextResponse.json(buildCondominiumResponse(condominio));
+  } catch (error: unknown) {
     console.error("ERRO AO ATUALIZAR CONDOMÍNIO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
 
-    if (error?.code === "P2002") {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json(
         { error: "Já existe um condomínio cadastrado com este dado único." },
         { status: 409 }

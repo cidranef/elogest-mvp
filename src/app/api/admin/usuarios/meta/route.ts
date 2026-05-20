@@ -1,31 +1,33 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageUsers } from "@/lib/access-control";
 import { NextResponse } from "next/server";
-import { Role, Status } from "@prisma/client";
+import { Status } from "@prisma/client";
 
 
 
 /* =========================================================
    USUÁRIOS - META DADOS
 
-   ETAPA 35.5 — FILTROS DE REGISTROS ATIVOS NOS SELECTS
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
    Usado no formulário de criação/edição de usuários.
 
    Retorna:
-   - administradoras ativas
-   - condomínios ativos
-   - moradores ativos, sem usuário vinculado, em condomínio ativo
-   - usuários existentes para checagem/listagem auxiliar
+   - administradora ativa do perfil ativo;
+   - condomínios ativos da carteira;
+   - moradores ativos, sem usuário vinculado, em condomínio ativo;
+   - usuários existentes da carteira para checagem/listagem auxiliar.
 
    Regras:
-   SUPER_ADMIN:
-   - vê tudo que está operacionalmente ativo nos selects
-
-   ADMINISTRADORA:
-   - vê apenas dados da própria carteira
-
-   Importante:
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - Dados retornados são sempre da carteira do activeAccess.
    - Esta API alimenta selects operacionais.
    - Registros inativos continuam preservados no histórico e nas
      listagens próprias, mas não devem aparecer para novos vínculos.
@@ -34,33 +36,108 @@ import { Role, Status } from "@prisma/client";
 
 
 /* =========================================================
-   HELPERS
+   USUÁRIO COM CONTEXTO ADMINISTRATIVO
    ========================================================= */
 
-function buildUserScope(user: any) {
-  if (user.role === Role.SUPER_ADMIN) {
-    return {};
+async function getAdminContextUser() {
+  const sessionUser: any = await getAuthUser();
+
+  if (!sessionUser?.id) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
+
+  if (!activeAccess) {
+    return {
+      ...sessionUser,
+      activeAccess: null,
+    };
   }
 
   return {
-    OR: [
-      {
-        administratorId: user.administratorId,
-      },
-      {
-        condominium: {
-          administratorId: user.administratorId,
-        },
-      },
-      {
-        resident: {
-          condominium: {
-            administratorId: user.administratorId,
-          },
-        },
-      },
-    ],
+    ...sessionUser,
+
+    role: activeAccess.role || sessionUser.role,
+
+    administratorId:
+      activeAccess.administratorId !== undefined
+        ? activeAccess.administratorId
+        : sessionUser.administratorId,
+
+    condominiumId:
+      activeAccess.condominiumId !== undefined
+        ? activeAccess.condominiumId
+        : sessionUser.condominiumId,
+
+    unitId:
+      activeAccess.unitId !== undefined
+        ? activeAccess.unitId
+        : sessionUser.unitId,
+
+    residentId:
+      activeAccess.residentId !== undefined
+        ? activeAccess.residentId
+        : sessionUser.residentId,
+
+    activeAccess,
   };
+}
+
+
+
+function validateAdminContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Este contexto não possui acesso aos metadados administrativos de usuários. Use o portal ou a área EloGest.",
+    };
+  }
+
+  if (!activeAccess.administratorId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageUsers(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para gerenciar usuários.",
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    message: "",
+  };
+}
+
+
+
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  return activeAccess?.administratorId || null;
 }
 
 
@@ -71,26 +148,22 @@ function buildUserScope(user: any) {
 
 export async function GET() {
   try {
-    const user: any = await getAuthUser();
+    const user: any = await getAdminContextUser();
 
+    const contextValidation = validateAdminContext(user);
 
-
-    /* =========================================================
-       AUTORIZAÇÃO
-       ========================================================= */
-
-    if (user.role !== Role.SUPER_ADMIN && user.role !== Role.ADMINISTRADORA) {
+    if (!contextValidation.ok) {
       return NextResponse.json(
-        { error: "Não autorizado." },
-        { status: 401 }
+        { error: contextValidation.message },
+        { status: contextValidation.status }
       );
     }
 
+    const administratorId = getAdministratorIdFromContext(user);
 
-
-    if (user.role === Role.ADMINISTRADORA && !user.administratorId) {
+    if (!administratorId) {
       return NextResponse.json(
-        { error: "Usuário administrador sem administradora vinculada." },
+        { error: "Contexto de administradora sem vínculo com administradora." },
         { status: 403 }
       );
     }
@@ -100,73 +173,57 @@ export async function GET() {
     /* =========================================================
        FILTROS POR PERFIL
 
-       Regra da etapa:
-       - selects operacionais devem exibir somente registros ativos.
+       Selects operacionais devem exibir somente registros ativos
+       e somente dados da carteira ativa.
        ========================================================= */
 
-    const administratorWhere =
-      user.role === Role.SUPER_ADMIN
-        ? {
-            status: Status.ACTIVE,
-          }
-        : {
-            id: user.administratorId,
-            status: Status.ACTIVE,
-          };
+    const administratorWhere = {
+      id: administratorId,
+      status: Status.ACTIVE,
+    };
 
+    const condominiumWhere = {
+      administratorId,
+      status: Status.ACTIVE,
+      administrator: {
+        status: Status.ACTIVE,
+      },
+    };
 
+    const residentWhere = {
+      user: null,
+      status: Status.ACTIVE,
+      email: {
+        not: null,
+      },
+      condominium: {
+        administratorId,
+        status: Status.ACTIVE,
+        administrator: {
+          status: Status.ACTIVE,
+        },
+      },
+    };
 
-    const condominiumWhere =
-      user.role === Role.SUPER_ADMIN
-        ? {
-            status: Status.ACTIVE,
-            administrator: {
-              status: Status.ACTIVE,
-            },
-          }
-        : {
-            administratorId: user.administratorId,
-            status: Status.ACTIVE,
-            administrator: {
-              status: Status.ACTIVE,
-            },
-          };
-
-
-
-    const residentWhere =
-      user.role === Role.SUPER_ADMIN
-        ? {
-            user: null,
-            status: Status.ACTIVE,
-            email: {
-              not: null,
-            },
+    const userWhere = {
+      OR: [
+        {
+          administratorId,
+        },
+        {
+          condominium: {
+            administratorId,
+          },
+        },
+        {
+          resident: {
             condominium: {
-              status: Status.ACTIVE,
-              administrator: {
-                status: Status.ACTIVE,
-              },
+              administratorId,
             },
-          }
-        : {
-            user: null,
-            status: Status.ACTIVE,
-            email: {
-              not: null,
-            },
-            condominium: {
-              administratorId: user.administratorId,
-              status: Status.ACTIVE,
-              administrator: {
-                status: Status.ACTIVE,
-              },
-            },
-          };
-
-
-
-    const userWhere = buildUserScope(user);
+          },
+        },
+      ],
+    };
 
 
 
@@ -316,27 +373,21 @@ export async function GET() {
       return !!email;
     });
 
-
-
     return NextResponse.json({
       administrators,
       condominiums,
       residents: residentsWithValidEmail,
       existingUsers,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO CARREGAR META DE USUÁRIOS:", error);
 
-
-
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
-
-
 
     return NextResponse.json(
       { error: "Erro ao carregar dados para usuários." },

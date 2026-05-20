@@ -64,6 +64,16 @@ import {
      "Síndico", "Morador", "Administradora".
    - Mantém accessId sintético, como:
      synthetic-resident:<residentId>.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Remove uso de any na rota.
+   - Mantém compatibilidade com UserAccess real, fallback legado
+     e acesso sintético residencial.
+   - Mantém resposta segura, sem senha ou dados sensíveis.
+   - Preserva comparação por accessId/contexto para identificar
+     corretamente o perfil ativo.
    ========================================================= */
 
 
@@ -112,13 +122,19 @@ function getDefaultAccessFromList(accesses: ActiveUserAccess[]) {
 
 
 
+function isUnauthorizedError(error: unknown) {
+  return error instanceof Error && error.message === "UNAUTHORIZED";
+}
+
+
+
 /* =========================================================
    GET - LISTAR PERFIS DE ACESSO
    ========================================================= */
 
 export async function GET() {
   try {
-    const authUser: any = await getAuthUser();
+    const authUser = await getAuthUser();
 
     if (!authUser?.id) {
       return NextResponse.json(
@@ -229,10 +245,10 @@ export async function GET() {
         source: access.source,
       })),
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR ACESSOS DO USUÁRIO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (isUnauthorizedError(error)) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

@@ -2,39 +2,43 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { AccessRole, Role } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
 import { validateStrongPassword } from "@/lib/password-policy";
+import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
 
 
 
 /* =========================================================
-   API ELOGEST - USUÁRIOS DA ADMINISTRADORA
+   API ELOGEST - RESPONSÁVEIS PELO ACESSO DA ADMINISTRADORA
 
    Rotas:
    GET  /api/elogest/administradoras/[id]/usuarios
    POST /api/elogest/administradoras/[id]/usuarios
 
-   ETAPA 42.2.1 — USUÁRIOS DA ADMINISTRADORA
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
-   - Listar usuários vinculados a uma administradora.
-   - Criar novo usuário administrativo.
+   - Listar responsáveis pelo acesso administrativo de uma administradora.
+   - Criar novo usuário vinculado à administradora.
+   - Criar User com role ADMINISTRADORA.
    - Criar UserAccess ADMINISTRADORA.
    - Manter endpoint exclusivo para SUPER_ADMIN.
+   - Preparar o fluxo futuro de convite por e-mail.
 
-   ETAPA 42.8 — SEGURANÇA DE SENHA
-   - Senha inicial passa a usar a política central de senha forte.
+   Segurança:
+   - A rota usa requireEloGestSuperAdmin().
+   - A senha temporária usa a política central de senha forte.
    - Bloqueia senha fraca, previsível ou contendo parte do e-mail/nome.
+   - Valida e-mail do responsável.
+   - Não existe senha padrão no backend.
+
+   Observação operacional:
+   - O Super Admin pode criar responsáveis mesmo para administradora inativa.
+   - Porém o acesso ao painel administrativo só funcionará quando a
+     administradora estiver ACTIVE, conforme bloqueios já aplicados em:
+     /admin e /api/admin/*.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
-
-
-
-type AuthUser = {
-  id: string;
-  role?: string | null;
-};
 
 
 
@@ -50,8 +54,24 @@ type RouteContext = {
 
 
 
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
 function normalizeText(value: unknown) {
   return String(value || "").trim();
+}
+
+
+
+function normalizeEmail(value: unknown) {
+  return normalizeText(value).toLowerCase();
+}
+
+
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 
@@ -64,45 +84,13 @@ async function getRouteId(context: RouteContext) {
 
 
 
-async function requireSuperAdmin() {
-  const authUser = (await getAuthUser()) as AuthUser | null;
-
-  if (!authUser) {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Usuário não autenticado.",
-        },
-        {
-          status: 401,
-        }
-      ),
-    };
-  }
-
-  if (authUser.role !== "SUPER_ADMIN") {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Acesso restrito ao Super Admin EloGest.",
-        },
-        {
-          status: 403,
-        }
-      ),
-    };
-  }
-
-  return {
-    authUser,
-  };
-}
-
-
+/* =========================================================
+   GET - LISTAR RESPONSÁVEIS PELO ACESSO
+   ========================================================= */
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;
@@ -127,6 +115,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       },
       select: {
         id: true,
+        name: true,
+        status: true,
       },
     });
 
@@ -169,14 +159,19 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     });
 
     return NextResponse.json({
+      administrator: {
+        id: administrator.id,
+        name: administrator.name,
+        status: administrator.status,
+      },
       users,
     });
   } catch (error) {
-    console.error("Erro ao listar usuários da administradora:", error);
+    console.error("Erro ao listar responsáveis da administradora:", error);
 
     return NextResponse.json(
       {
-        error: "Não foi possível listar os usuários da administradora.",
+        error: "Não foi possível listar os responsáveis pelo acesso.",
       },
       {
         status: 500,
@@ -187,9 +182,13 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
 
 
+/* =========================================================
+   POST - CRIAR RESPONSÁVEL PELO ACESSO
+   ========================================================= */
+
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
-    const auth = await requireSuperAdmin();
+    const auth = await requireEloGestSuperAdmin();
 
     if ("error" in auth) {
       return auth.error;
@@ -215,6 +214,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       select: {
         id: true,
         name: true,
+        status: true,
       },
     });
 
@@ -232,14 +232,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const body = await request.json();
 
     const name = normalizeText(body?.name);
-    const email = normalizeText(body?.email).toLowerCase();
+    const email = normalizeEmail(body?.email);
     const password = String(body?.password || "");
     const isActive = body?.isActive !== false;
 
     if (!name) {
       return NextResponse.json(
         {
-          error: "Informe o nome do usuário.",
+          error: "Informe o nome do responsável pelo acesso.",
         },
         {
           status: 400,
@@ -250,7 +250,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (!email) {
       return NextResponse.json(
         {
-          error: "Informe o e-mail do usuário.",
+          error: "Informe o e-mail de acesso.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (!isValidEmail(email)) {
+      return NextResponse.json(
+        {
+          error: "Informe um e-mail válido para o responsável pelo acesso.",
         },
         {
           status: 400,
@@ -275,9 +286,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
-    const existingUser = await db.user.findUnique({
+    const existingUser = await db.user.findFirst({
       where: {
-        email,
+        email: {
+          equals: email,
+          mode: "insensitive",
+        },
       },
       select: {
         id: true,
@@ -313,7 +327,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         data: {
           userId: user.id,
           role: AccessRole.ADMINISTRADORA,
-          label: administrator.name,
+          label: `Administradora - ${administrator.name}`,
           administratorId: administrator.id,
           isDefault: true,
           isActive,
@@ -328,20 +342,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json(
       {
-        message: "Usuário criado com sucesso.",
+        message: "Responsável pelo acesso criado com sucesso.",
         user: result.user,
         access: result.access,
+        administrator: {
+          id: administrator.id,
+          name: administrator.name,
+          status: administrator.status,
+        },
       },
       {
         status: 201,
       }
     );
   } catch (error) {
-    console.error("Erro ao criar usuário da administradora:", error);
+    console.error("Erro ao criar responsável da administradora:", error);
 
     return NextResponse.json(
       {
-        error: "Não foi possível criar o usuário da administradora.",
+        error: "Não foi possível criar o responsável pelo acesso.",
       },
       {
         status: 500,

@@ -84,6 +84,15 @@ import ResponsiveSection from "@/components/ui/ResponsiveSection";
    - Filtros e métricas trabalham sobre a lista já sanitizada.
    - Contagem de perfis considera apenas perfis ativos.
    - Visual reduzido e menos colorido, alinhado à fila Admin aprovada.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - CONSELHEIRO passa a ser reconhecido como perfil de portal.
+   - CONSELHEIRO visualiza chamados do condomínio ativo como
+     acompanhamento, mas não abre chamados por esta tela.
+   - A API /api/portal/chamados continua sendo a camada real de
+     segurança; esta página mantém uma camada defensiva visual.
    ========================================================= */
 
 
@@ -187,7 +196,12 @@ interface PortalUser {
   unitId?: string | null;
 }
 
-type PortalRole = "MORADOR" | "SINDICO" | "PROPRIETARIO" | string;
+type PortalRole =
+  | "MORADOR"
+  | "SINDICO"
+  | "PROPRIETARIO"
+  | "CONSELHEIRO"
+  | string;
 
 type TicketTarget = "CONDOMINIUM" | "MY_UNIT" | "UNIT";
 
@@ -261,6 +275,12 @@ function extractAccessCount(data: unknown) {
    bloqueado no detalhe com "Chamado não encontrado".
    ========================================================= */
 
+function isCondominiumPortalRole(role?: string | null) {
+  return role === "SINDICO" || role === "CONSELHEIRO";
+}
+
+
+
 function isSindicoRole(role?: string | null) {
   return role === "SINDICO";
 }
@@ -295,7 +315,7 @@ function ticketBelongsToActivePortalContext({
     return false;
   }
 
-  if (isSindicoRole(role)) {
+  if (isCondominiumPortalRole(role)) {
     if (!user.condominiumId) {
       return false;
     }
@@ -456,6 +476,13 @@ function PortalChamadosContent() {
      ========================================================= */
 
   function openCreateModal() {
+    if (role === "CONSELHEIRO") {
+      alert(
+        "O perfil Conselheiro possui acesso de acompanhamento. A abertura de chamados deve ser feita pelo síndico, morador ou proprietário."
+      );
+      return;
+    }
+
     setForm(getEmptyForm(role));
     setModalOpen(true);
   }
@@ -733,6 +760,7 @@ function PortalChamadosContent() {
     if (currentRole === "SINDICO") return "Síndico";
     if (currentRole === "MORADOR") return "Morador";
     if (currentRole === "PROPRIETARIO") return "Proprietário";
+    if (currentRole === "CONSELHEIRO") return "Conselheiro";
     return currentRole || "-";
   }
 
@@ -741,7 +769,7 @@ function PortalChamadosContent() {
   }
 
   function getPageTitle() {
-    if (isSindicoPortal()) {
+    if (isSindicoPortal() || role === "CONSELHEIRO") {
       return "Chamados do condomínio";
     }
 
@@ -753,10 +781,18 @@ function PortalChamadosContent() {
       return "Acompanhe as solicitações do condomínio, áreas comuns e unidades vinculadas ao seu perfil de acesso.";
     }
 
+    if (role === "CONSELHEIRO") {
+      return "Acompanhe os chamados do condomínio vinculado ao perfil de conselho.";
+    }
+
     return "Acompanhe seus chamados, mensagens, status e atualizações do atendimento.";
   }
 
   function getOpenTicketButtonLabel() {
+    if (role === "CONSELHEIRO") {
+      return "Acompanhamento";
+    }
+
     if (isSindicoPortal()) {
       return "Abrir chamado";
     }

@@ -1,52 +1,23 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
 import { canAccessNotifications } from "@/lib/access-control";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  getActiveUserAccessFromCookies,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
 import { NextResponse } from "next/server";
 
 
-
 /* =========================================================
-   ETAPA 24.2 - ARQUIVAR NOTIFICAÇÃO
-
-   Rota:
-   PATCH /api/notifications/[id]/archive
-
-   Objetivo:
-   Arquivar uma notificação específica do usuário logado.
+   ETAPA 43 - ARQUIVAR NOTIFICAÇÃO
 
    Regras:
    - usuário precisa estar autenticado;
-   - usuário só pode arquivar suas próprias notificações;
-   - arquivar muda status para ARCHIVED;
-   - se estava UNREAD, considera como tratada e define readAt;
-   - retorna contador atualizado de não lidas.
-
-   ETAPA 26.3:
-   Usa a matriz central de permissões.
-
-   Permissão exigida:
-   - ACCESS_NOTIFICATIONS
-
-   ETAPA 29.3:
-   - Agora respeita o contexto ativo.
-   - A notificação precisa pertencer ao usuário logado.
-   - Se estiver ligada a um chamado, o chamado precisa pertencer
-     ao contexto ativo.
-   - Notificações gerais sem ticketId continuam válidas para
-     o próprio usuário.
-
-   ETAPA 31.14:
-   Revisão final de segurança por contexto nas ações críticas.
-
-   Reforços aplicados:
-   - Sem contexto ativo, a rota não arquiva notificações.
-   - Isso evita arquivar uma notificação de outro vínculo quando
-     o usuário possui múltiplos contextos.
-   - O mesmo filtro usado para localizar a notificação também é usado
-     para recalcular o contador de não lidas.
+   - exige perfil ativo;
+   - usuário só altera suas próprias notificações;
+   - se houver ticket, ele precisa pertencer ao contexto ativo;
+   - filtro fino por metadata preserva separação Síndico x Morador.
    ========================================================= */
-
 
 
 type RouteContext = {
@@ -56,12 +27,8 @@ type RouteContext = {
 };
 
 
-
 /* =========================================================
    USUÁRIO COM CONTEXTO ATIVO
-
-   A sessão base identifica quem está logado.
-   O contexto ativo define com qual vínculo ele está operando.
    ========================================================= */
 
 async function getNotificationContextUser() {
@@ -71,7 +38,7 @@ async function getNotificationContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
+  const activeAccess: ActiveUserAccess | null = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
   });
 
@@ -115,29 +82,6 @@ async function getNotificationContextUser() {
 
 /* =========================================================
    FILTRO POR CONTEXTO ATIVO
-
-   A notificação sempre pertence ao usuário logado.
-
-   Aqui filtramos apenas quando ela está associada a um ticket.
-
-   Notificações sem ticketId:
-   - continuam disponíveis para o próprio usuário;
-   - porém somente quando existe contexto ativo selecionado.
-
-   Sem contexto ativo:
-   - bloqueia a alteração para evitar mistura de vínculos.
-
-   SUPER_ADMIN:
-   - sem filtro adicional, desde que o contexto ativo seja SUPER_ADMIN.
-
-   ADMINISTRADORA:
-   - chamado precisa pertencer à administradora ativa.
-
-   SÍNDICO:
-   - chamado precisa pertencer ao condomínio ativo.
-
-   MORADOR / PROPRIETÁRIO:
-   - chamado precisa pertencer ao vínculo ativo.
    ========================================================= */
 
 function getContextNotificationFilter(user: any) {
@@ -174,7 +118,7 @@ function getContextNotificationFilter(user: any) {
     };
   }
 
-  if (user.role === "SINDICO") {
+  if (user.role === "SINDICO" || user.role === "CONSELHEIRO") {
     if (!user.condominiumId) {
       return {
         id: "__blocked__",
@@ -198,6 +142,10 @@ function getContextNotificationFilter(user: any) {
   if (user.role === "MORADOR" || user.role === "PROPRIETARIO") {
     const ticketOrFilters: any[] = [];
 
+    ticketOrFilters.push({
+      createdByUserId: user.id,
+    });
+
     if (user.residentId) {
       ticketOrFilters.push({
         residentId: user.residentId,
@@ -210,11 +158,6 @@ function getContextNotificationFilter(user: any) {
       });
     }
 
-    /*
-      Chamados gerais do condomínio também podem gerar
-      notificação ao morador/proprietário, desde que estejam
-      vinculados ao condomínio do contexto ativo.
-    */
     if (user.condominiumId) {
       ticketOrFilters.push({
         scope: "CONDOMINIUM",
@@ -249,18 +192,6 @@ function getContextNotificationFilter(user: any) {
 
 
 
-/* =========================================================
-   MONTA WHERE COMPLETO
-
-   Usado para:
-   - localizar a notificação individual;
-   - calcular contador de não lidas no contexto ativo.
-
-   Importante:
-   Se não houver contexto ativo, getContextNotificationFilter()
-   retorna id="__blocked__", impedindo alteração indevida.
-   ========================================================= */
-
 function buildNotificationWhere({
   user,
   extraWhere = {},
@@ -288,6 +219,118 @@ function buildNotificationWhere({
 
 
 /* =========================================================
+   FILTRO FINO POR FINALIDADE DA NOTIFICAÇÃO
+
+   Mantém a separação correta quando o mesmo usuário possui
+   múltiplos perfis, por exemplo Síndico + Morador/Proprietário.
+   ========================================================= */
+
+function getMetadata(notification: any) {
+  const metadata = notification?.metadata;
+
+  if (!metadata) {
+    return {};
+  }
+
+  if (typeof metadata === "string") {
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof metadata === "object") {
+    return metadata;
+  }
+
+  return {};
+}
+
+
+
+function getMetadataValue(notification: any, key: string) {
+  const metadata = getMetadata(notification);
+  const value = metadata?.[key];
+
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  return String(value);
+}
+
+
+
+function notificationBelongsToActiveContext(notification: any, user: any) {
+  const type = String(notification?.type || "");
+
+  const notificationScope = getMetadataValue(
+    notification,
+    "notificationScope"
+  );
+
+  const notificationGroup = getMetadataValue(
+    notification,
+    "notificationGroup"
+  );
+
+  const notificationAudience = getMetadataValue(
+    notification,
+    "notificationAudience"
+  );
+
+  if (user.role === "MORADOR" || user.role === "PROPRIETARIO") {
+    if (notificationScope === "CONDOMINIUM_SYNDICS") return false;
+    if (notificationAudience === "SINDICO") return false;
+    if (notificationScope === "ASSIGNED_RESPONSIBLE") return false;
+    if (notificationGroup === "RESPONSIBLE_OPERATIONAL") return false;
+    if (type === "TICKET_ASSIGNED") return false;
+
+    return true;
+  }
+
+  if (user.role === "SINDICO" || user.role === "CONSELHEIRO") {
+    if (notificationScope === "ASSIGNED_PUBLIC_TARGETS") return false;
+    if (notificationGroup === "PUBLIC_TICKET_OWNER") return false;
+    if (type === "TICKET_ASSIGNED_PUBLIC") return false;
+
+    return true;
+  }
+
+  return true;
+}
+
+
+
+async function countUnreadContextNotifications(user: any) {
+  const unreadNotifications = await db.notification.findMany({
+    where: buildNotificationWhere({
+      user,
+      extraWhere: {
+        status: "UNREAD",
+      },
+    }),
+    take: 500,
+    select: {
+      id: true,
+      type: true,
+      metadata: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  return unreadNotifications.filter((notification) =>
+    notificationBelongsToActiveContext(notification, user)
+  ).length;
+}
+
+
+
+
+/* =========================================================
    PATCH - ARQUIVAR NOTIFICAÇÃO
    ========================================================= */
 
@@ -295,86 +338,51 @@ export async function PATCH(req: Request, context: RouteContext) {
   try {
     const user: any = await getNotificationContextUser();
     const { id } = await context.params;
+    const notificationId = String(id || "").trim();
 
-    if (!user) {
+    if (!user?.id) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
 
-    if (!canAccessNotifications(user)) {
+    if (!user.activeAccess) {
+      return NextResponse.json(
+        { error: "Selecione um perfil de acesso antes de alterar notificações." },
+        { status: 403 }
+      );
+    }
+
+    if (!canAccessNotifications(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para arquivar notificações." },
         { status: 403 }
       );
     }
 
-    if (!id) {
+    if (!notificationId) {
       return NextResponse.json(
         { error: "ID da notificação não informado." },
         { status: 400 }
       );
     }
 
-
-
-    /* =========================================================
-       CONTEXTO ATIVO OBRIGATÓRIO
-
-       ETAPA 31.14:
-       Sem contexto ativo, não arquivamos notificações.
-       O usuário deve selecionar o contexto em /contexto.
-       ========================================================= */
-
-    if (!user.activeAccess) {
-      return NextResponse.json(
-        {
-          error:
-            "Selecione um contexto de acesso antes de arquivar notificações.",
-        },
-        { status: 403 }
-      );
-    }
-
-
-
-    /* =========================================================
-       BUSCA NOTIFICAÇÃO DO USUÁRIO LOGADO + CONTEXTO ATIVO
-
-       Importante:
-       Sempre filtramos por userId para impedir que um usuário
-       arquive notificação de outro usuário.
-
-       Também filtramos pelo contexto ativo.
-       ========================================================= */
-
     const notification = await db.notification.findFirst({
       where: buildNotificationWhere({
         user,
         extraWhere: {
-          id,
+          id: notificationId,
         },
       }),
     });
 
-    if (!notification) {
+    if (!notification || !notificationBelongsToActiveContext(notification, user)) {
       return NextResponse.json(
         { error: "Notificação não encontrada ou acesso negado." },
         { status: 404 }
       );
     }
-
-
-
-    /* =========================================================
-       ARQUIVA
-
-       Se já estiver arquivada, apenas retorna o estado atual.
-
-       Se estava UNREAD, readAt é preenchido porque arquivar
-       também significa que a notificação foi tratada.
-       ========================================================= */
 
     let updatedNotification = notification;
 
@@ -390,22 +398,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       });
     }
 
-
-
-    /* =========================================================
-       CONTADOR DE NÃO LIDAS NO CONTEXTO ATIVO
-       ========================================================= */
-
-    const unreadCount = await db.notification.count({
-      where: buildNotificationWhere({
-        user,
-        extraWhere: {
-          status: "UNREAD",
-        },
-      }),
-    });
-
-
+    const unreadCount = await countUnreadContextNotifications(user);
 
     return NextResponse.json({
       success: true,
@@ -413,10 +406,10 @@ export async function PATCH(req: Request, context: RouteContext) {
       unreadCount,
       notification: updatedNotification,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO ARQUIVAR NOTIFICAÇÃO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

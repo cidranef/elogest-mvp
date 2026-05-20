@@ -110,6 +110,18 @@ import { useState } from "react";
    - Removidas credenciais/senhas de demonstração da interface pública.
    - Removida dependência da variável NEXT_PUBLIC_SHOW_DEMO_USERS nesta página.
    - Mantida toda a lógica de autenticação, recuperação de senha e redirecionamento.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - CONSELHEIRO passa a ser tratado como perfil de portal.
+   - Quando houver apenas 1 perfil ativo, o login grava o perfil ativo
+     em /api/user/active-access antes de redirecionar.
+   - O payload do perfil ativo inclui dados formais do vínculo:
+     unitPersonLinkId, linkType, canVote, canOpenTickets e receivesNotifications.
+   - SUPER_ADMIN permanece direcionado para /elogest/dashboard.
+   - ADMINISTRADORA permanece direcionada para /admin/dashboard.
+   - Perfis de portal seguem para /portal/dashboard.
    ========================================================= */
 
 
@@ -122,6 +134,11 @@ interface UserAccessSummary {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   isDefault?: boolean;
   isActive?: boolean;
   source?: string | null;
@@ -309,7 +326,7 @@ function InstitutionalFeature({
    ADMINISTRADORA
    → /admin/dashboard
 
-   SINDICO / MORADOR / PROPRIETARIO
+   SINDICO / MORADOR / PROPRIETARIO / CONSELHEIRO
    → /portal/dashboard
 
    Importante:
@@ -329,7 +346,8 @@ function getDestinationByRole(role?: string | null) {
   if (
     role === "SINDICO" ||
     role === "MORADOR" ||
-    role === "PROPRIETARIO"
+    role === "PROPRIETARIO" ||
+    role === "CONSELHEIRO"
   ) {
     return "/portal/dashboard";
   }
@@ -364,6 +382,36 @@ async function fetchUserAccesses(): Promise<UserAccessSummary[]> {
   } catch (error) {
     console.error("Erro ao buscar perfis do usuário:", error);
     return [];
+  }
+}
+
+
+
+async function saveActiveAccess(access: UserAccessSummary) {
+  try {
+    await fetch("/api/user/active-access", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        accessId: access.accessId ?? null,
+        role: access.role ?? null,
+        label: access.label ?? null,
+        administratorId: access.administratorId ?? null,
+        condominiumId: access.condominiumId ?? null,
+        unitId: access.unitId ?? null,
+        residentId: access.residentId ?? null,
+        unitPersonLinkId: access.unitPersonLinkId ?? null,
+        linkType: access.linkType ?? null,
+        canVote: access.canVote ?? null,
+        canOpenTickets: access.canOpenTickets ?? null,
+        receivesNotifications: access.receivesNotifications ?? null,
+        source: access.source ?? null,
+      }),
+    });
+  } catch (error) {
+    console.error("Erro ao gravar perfil ativo após login:", error);
   }
 }
 
@@ -464,7 +512,10 @@ export default function LoginPage() {
       }
 
       if (activeAccesses.length === 1) {
-        const destination = getDestinationByRole(activeAccesses[0].role);
+        const selectedAccess = activeAccesses[0];
+        const destination = getDestinationByRole(selectedAccess.role);
+
+        await saveActiveAccess(selectedAccess);
 
         router.push(destination);
         router.refresh();

@@ -26,6 +26,18 @@ import { useEffect, useRef, useState } from "react";
    - Perfil ativo
    - Contexto/label
    - Trocar perfil, apenas se houver mais de um perfil
+
+   ETAPA 43.1 — REFINAMENTO VISUAL DO CONTEXTO ATIVO
+
+   Ajustes desta revisão:
+   - Badge passa a exibir papel + contexto de forma mais clara.
+   - No modo compacto, a topbar também mostra a identificação
+     principal do condomínio/carteira/unidade quando houver label.
+   - Dropdown remove a frase "Você está acessando como" para evitar
+     excesso de texto.
+   - O campo explicativo passa a comunicar diretamente o contexto:
+     "Você está acessando o condomínio/carteira/unidade...".
+   - Incluídos campos formais de vínculo no tipo ActiveAccess.
    ========================================================= */
 
 
@@ -38,6 +50,11 @@ interface ActiveAccess {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+  linkType?: string | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
   source?: string | null;
 }
 
@@ -107,6 +124,101 @@ function roleTone(role?: string | null) {
 
 
 
+function normalizeContextLabel(value?: string | null) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return "Perfil de acesso ativo";
+  }
+
+  return text;
+}
+
+
+
+function removeRolePrefixFromLabel({
+  role,
+  label,
+}: {
+  role?: string | null;
+  label?: string | null;
+}) {
+  let text = normalizeContextLabel(label);
+
+  const rolePrefixes: Record<string, string[]> = {
+    SUPER_ADMIN: ["SUPER_ADMIN", "SUPER ADMIN", "Super Admin"],
+    ADMINISTRADORA: ["ADMINISTRADORA", "Administradora"],
+    SINDICO: ["SINDICO", "SÍNDICO", "Sindico", "Síndico"],
+    MORADOR: ["MORADOR", "Morador"],
+    PROPRIETARIO: ["PROPRIETARIO", "PROPRIETÁRIO", "Proprietario", "Proprietário"],
+    CONSELHEIRO: ["CONSELHEIRO", "Conselheiro"],
+  };
+
+  const prefixes = role ? rolePrefixes[role] || [] : [];
+
+  prefixes.forEach((prefix) => {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`^${escapedPrefix}\\s*[-–—•:]\\s*`, "i");
+
+    text = text.replace(regex, "").trim();
+  });
+
+  return text || normalizeContextLabel(label);
+}
+
+
+
+function getAccessSummary(role?: string | null, label?: string | null) {
+  const roleText = roleLabel(role);
+  const contextText = removeRolePrefixFromLabel({ role, label });
+
+  if (!label) {
+    return roleText;
+  }
+
+  return `${roleText} · ${contextText}`;
+}
+
+
+
+function getAccessExplanation({
+  role,
+  label,
+}: {
+  role?: string | null;
+  label?: string | null;
+}) {
+  const contextText = removeRolePrefixFromLabel({ role, label });
+
+  if (role === "SUPER_ADMIN") {
+    return "Você está acessando o ambiente interno da plataforma EloGest.";
+  }
+
+  if (role === "ADMINISTRADORA") {
+    return `Você está acessando a carteira ${contextText}.`;
+  }
+
+  if (role === "SINDICO") {
+    return `Você está acessando o condomínio ${contextText}.`;
+  }
+
+  if (role === "MORADOR") {
+    return `Você está acessando a unidade ${contextText}.`;
+  }
+
+  if (role === "PROPRIETARIO") {
+    return `Você está acessando a unidade ${contextText}.`;
+  }
+
+  if (role === "CONSELHEIRO") {
+    return `Você está acompanhando o condomínio ${contextText}.`;
+  }
+
+  return `Você está acessando ${contextText}.`;
+}
+
+
+
 /* =========================================================
    EXTRAIR QUANTIDADE DE PERFIS DISPONÍVEIS
    ========================================================= */
@@ -122,19 +234,19 @@ function extractAccessCount(data: unknown) {
   };
 
   if (Array.isArray(value?.accesses)) {
-    return value.accesses.length;
+    return value.accesses.filter((item: any) => item?.isActive !== false).length;
   }
 
   if (Array.isArray(value?.user?.accesses)) {
-    return value.user.accesses.length;
+    return value.user.accesses.filter((item: any) => item?.isActive !== false).length;
   }
 
   if (Array.isArray(value?.availableAccesses)) {
-    return value.availableAccesses.length;
+    return value.availableAccesses.filter((item: any) => item?.isActive !== false).length;
   }
 
   if (Array.isArray(value?.items)) {
-    return value.items.length;
+    return value.items.filter((item: any) => item?.isActive !== false).length;
   }
 
   return 0;
@@ -294,7 +406,15 @@ export default function ActiveAccessBadge({
   const canSwitchProfile = accessCount > 1;
   const tone = roleTone(activeAccess?.role);
   const currentRoleLabel = roleLabel(activeAccess?.role);
-  const contextLabel = activeAccess?.label || "Perfil de acesso ativo";
+  const contextLabel = removeRolePrefixFromLabel({
+    role: activeAccess?.role,
+    label: activeAccess?.label,
+  });
+  const accessSummary = getAccessSummary(activeAccess?.role, activeAccess?.label);
+  const accessExplanation = getAccessExplanation({
+    role: activeAccess?.role,
+    label: activeAccess?.label,
+  });
 
 
 
@@ -340,9 +460,9 @@ export default function ActiveAccessBadge({
         className={[
           "inline-flex h-12 items-center gap-3 rounded-2xl border border-[#DDE5DF] bg-white px-3 shadow-sm transition",
           "hover:border-[#256D3C] hover:shadow-md focus:outline-none focus:ring-4 focus:ring-[#256D3C]/10",
-          compact ? "max-w-[180px]" : "max-w-[220px]",
+          compact ? "max-w-[280px]" : "max-w-[360px]",
         ].join(" ")}
-        title={`${currentRoleLabel}${contextLabel ? ` - ${contextLabel}` : ""}`}
+        title={accessSummary}
       >
         <span
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${tone.icon}`}
@@ -351,10 +471,16 @@ export default function ActiveAccessBadge({
         </span>
 
         <span className="min-w-0 text-left">
-  <span className="block truncate text-sm font-semibold leading-5 text-[#17211B]">
-    {currentRoleLabel}
-  </span>
-</span>
+          <span className="block truncate text-sm font-semibold leading-5 text-[#17211B]">
+            {currentRoleLabel}
+          </span>
+
+          {activeAccess.label && (
+            <span className="block max-w-[190px] truncate text-[11px] font-medium leading-4 text-[#5E6B63]">
+              {contextLabel}
+            </span>
+          )}
+        </span>
 
         <ChevronIcon
           className={[
@@ -382,11 +508,9 @@ export default function ActiveAccessBadge({
                 {currentRoleLabel}
               </p>
 
-              {activeAccess.label && (
-                <p className="mt-1 break-words text-sm leading-5 text-[#5E6B63]">
-                  {activeAccess.label}
-                </p>
-              )}
+              <p className="mt-1 break-words text-sm leading-5 text-[#5E6B63]">
+                {contextLabel}
+              </p>
             </div>
           </div>
 
@@ -401,6 +525,10 @@ export default function ActiveAccessBadge({
               Perfil de acesso
             </span>
           </div>
+
+          <p className="mt-3 rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] p-3 text-xs leading-5 text-[#5E6B63]">
+            {accessExplanation}
+          </p>
 
           {canSwitchProfile && (
             <Link

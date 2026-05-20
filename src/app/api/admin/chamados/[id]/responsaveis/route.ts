@@ -1,12 +1,14 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
 import { Role, Status } from "@prisma/client";
 import {
   canAssignTicket,
-  isAdministradora,
-  isSuperAdmin,
 } from "@/lib/access-control";
 
 
@@ -82,7 +84,7 @@ async function getResponsaveisContextUser() {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
+  const activeAccess: ActiveUserAccess | null = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
   });
 
@@ -139,7 +141,9 @@ async function getResponsaveisContextUser() {
    ========================================================= */
 
 function validateResponsaveisContext(user: any) {
-  if (!user?.activeAccess) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
     return {
       ok: false,
       status: 403,
@@ -147,16 +151,21 @@ function validateResponsaveisContext(user: any) {
     };
   }
 
-  if (!isSuperAdmin(user) && !isAdministradora(user)) {
+  /*
+     Etapa 43:
+     /admin é a área operacional da administradora.
+     SUPER_ADMIN deve operar pela área /elogest.
+  */
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso à rota administrativa de responsáveis. Use o portal.",
+        "Este contexto não possui acesso à rota administrativa de responsáveis. Use o portal ou a área EloGest.",
     };
   }
 
-  if (isAdministradora(user) && !user.administratorId) {
+  if (!user.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -164,7 +173,7 @@ function validateResponsaveisContext(user: any) {
     };
   }
 
-  if (!canAssignTicket(user)) {
+  if (!canAssignTicket(activeAccess)) {
     return {
       ok: false,
       status: 403,
@@ -195,13 +204,9 @@ function validateResponsaveisContext(user: any) {
    ========================================================= */
 
 function getTicketWhereByContext(user: any, ticketId: string) {
-  if (isSuperAdmin(user)) {
-    return {
-      id: ticketId,
-    };
-  }
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
 
-  if (isAdministradora(user) && user.administratorId) {
+  if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
       id: ticketId,
       condominium: {
@@ -367,10 +372,10 @@ export async function GET(req: Request, context: RouteContext) {
 
 
     return NextResponse.json(responsaveis);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO LISTAR RESPONSÁVEIS DO CHAMADO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

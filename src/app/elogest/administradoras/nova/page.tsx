@@ -13,15 +13,19 @@ import EloGestShell from "@/components/EloGestShell";
    Rota:
    /elogest/administradoras/nova
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
    - Permitir que a EloGest cadastre uma nova administradora.
-   - Opcionalmente criar o primeiro usuário administrador.
-   - Enviar dados para POST /api/elogest/administradoras.
+   - Opcionalmente criar o primeiro usuário responsável pelo acesso.
+   - Explicar de forma clara que a nova administradora nasce ativa.
+   - Garantir criação segura do primeiro acesso administrativo.
+   - Preparar o fluxo futuro de convite por e-mail.
 
    Segurança:
    - A API valida se o usuário é SUPER_ADMIN.
+   - A API aplica a política central de senha forte.
+   - Não existe senha padrão preenchida no formulário.
    - Esta página pertence ao ambiente interno da EloGest.
    ========================================================= */
 
@@ -41,12 +45,71 @@ export default function NovaAdministradoraPage() {
   const [createUser, setCreateUser] = useState(true);
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
-  const [userPassword, setUserPassword] = useState("Heloisa100%");
+  const [userPassword, setUserPassword] = useState("");
 
 
 
   function onlyNumbers(value: string) {
     return value.replace(/\D/g, "");
+  }
+
+
+
+  function getPasswordChecklist(value: string) {
+    return [
+      {
+        label: "Mínimo de 8 caracteres",
+        valid: value.length >= 8,
+      },
+      {
+        label: "Pelo menos 1 letra maiúscula",
+        valid: /[A-Z]/.test(value),
+      },
+      {
+        label: "Pelo menos 1 letra minúscula",
+        valid: /[a-z]/.test(value),
+      },
+      {
+        label: "Pelo menos 1 número",
+        valid: /\d/.test(value),
+      },
+      {
+        label: "Pelo menos 1 caractere especial",
+        valid: /[^A-Za-z0-9]/.test(value),
+      },
+    ];
+  }
+
+
+
+  function StepBadge({
+    number,
+    title,
+    description,
+  }: {
+    number: string;
+    title: string;
+    description: string;
+  }) {
+    return (
+      <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#EAF7EE] text-xs font-bold text-[#256D3C]">
+            {number}
+          </span>
+
+          <div>
+            <p className="text-sm font-semibold text-[#17211B]">
+              {title}
+            </p>
+
+            <p className="mt-1 text-sm leading-6 text-[#64736A]">
+              {description}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
 
@@ -87,8 +150,13 @@ export default function NovaAdministradoraPage() {
         return;
       }
 
-      if (!userPassword || userPassword.length < 8) {
-        setError("A senha inicial deve ter pelo menos 8 caracteres.");
+      const passwordChecklist = getPasswordChecklist(userPassword);
+      const hasStrongPasswordBase = passwordChecklist.every((item) => item.valid);
+
+      if (!hasStrongPasswordBase) {
+        setError(
+          "A senha inicial deve ter no mínimo 8 caracteres, com letra maiúscula, letra minúscula, número e caractere especial."
+        );
         return;
       }
     }
@@ -148,8 +216,9 @@ export default function NovaAdministradoraPage() {
               </h1>
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
-                Cadastre uma nova administradora cliente da EloGest e, se desejar,
-                crie também o primeiro usuário administrador para acesso à plataforma.
+                Cadastre uma nova administradora cliente da EloGest. A administradora
+                será criada como ativa e, se desejar, você já pode criar o primeiro
+                responsável pelo acesso administrativo.
               </p>
             </div>
 
@@ -159,6 +228,40 @@ export default function NovaAdministradoraPage() {
             >
               Voltar
             </Link>
+          </div>
+        </section>
+
+        <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur sm:p-8">
+          <div className="mb-5">
+            <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#17211B]">
+              Fluxo de cadastro
+            </h2>
+
+            <p className="mt-1 text-sm leading-6 text-[#64736A]">
+              Este cadastro cria a administradora e prepara o primeiro acesso
+              para operação da carteira. O envio automático de convite por e-mail
+              poderá substituir a senha temporária em uma próxima etapa.
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <StepBadge
+              number="1"
+              title="Administradora"
+              description="Informe os dados principais da empresa cliente."
+            />
+
+            <StepBadge
+              number="2"
+              title="Primeiro acesso"
+              description="Crie o usuário responsável pelo início da operação."
+            />
+
+            <StepBadge
+              number="3"
+              title="Operação"
+              description="Após o cadastro, a administradora acessa a área administrativa."
+            />
           </div>
         </section>
 
@@ -284,11 +387,11 @@ export default function NovaAdministradoraPage() {
 
                 <div>
                   <p className="text-sm font-semibold text-[#17211B]">
-                    Criar primeiro usuário administrador
+                    Criar primeiro responsável pelo acesso
                   </p>
 
                   <p className="mt-1 text-sm leading-6 text-[#64736A]">
-                    Recomendado para que a administradora já consiga acessar a área administrativa.
+                    Recomendado para que a administradora já consiga acessar o painel administrativo após o cadastro.
                   </p>
                 </div>
               </label>
@@ -342,22 +445,50 @@ export default function NovaAdministradoraPage() {
                       htmlFor="userPassword"
                       className="mb-2 block text-sm font-semibold text-[#17211B]"
                     >
-                      Senha inicial
+                      Senha temporária
                     </label>
 
                     <input
                       id="userPassword"
-                      type="text"
+                      type="password"
                       value={userPassword}
                       onChange={(event) => {
                         setUserPassword(event.target.value);
                         setError("");
                       }}
+                      placeholder="Crie uma senha temporária forte"
+                      autoComplete="new-password"
                       className="h-12 w-full rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm text-[#17211B] outline-none transition placeholder:text-[#9AA7A0] focus:border-[#256D3C] focus:ring-4 focus:ring-[#256D3C]/10"
                     />
 
+                    <div className="mt-3 grid gap-2 rounded-2xl border border-[#DDE5DF] bg-white/70 p-4 sm:grid-cols-2">
+                      {getPasswordChecklist(userPassword).map((item) => (
+                        <div
+                          key={item.label}
+                          className={[
+                            "flex items-center gap-2 text-xs font-semibold",
+                            item.valid ? "text-[#256D3C]" : "text-[#7A877F]",
+                          ].join(" ")}
+                        >
+                          <span
+                            className={[
+                              "flex h-5 w-5 items-center justify-center rounded-full border text-[10px]",
+                              item.valid
+                                ? "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]"
+                                : "border-[#DDE5DF] bg-[#F7F9F8] text-[#9AA7A0]",
+                            ].join(" ")}
+                          >
+                            {item.valid ? "✓" : "•"}
+                          </span>
+                          {item.label}
+                        </div>
+                      ))}
+                    </div>
+
                     <p className="mt-2 text-xs leading-5 text-[#64736A]">
-                      Depois poderemos substituir isso por convite por e-mail e senha definida pelo usuário.
+                      A senha temporária deve ser forte e não deve conter partes
+                      do nome ou e-mail do usuário. Em uma próxima etapa, este
+                      processo poderá ser substituído por convite por e-mail.
                     </p>
                   </div>
                 </div>

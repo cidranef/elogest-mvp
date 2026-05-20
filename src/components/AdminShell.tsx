@@ -78,6 +78,14 @@ import NotificationBell from "@/components/NotificationBell";
    - Sidebar = marca, navegação e copyright discreto.
    - Topbar = identidade discreta e ações globais.
    - Página = título, explicação, ação principal e conteúdo.
+
+   ETAPA 43.1 — REFINAMENTO VISUAL DO CONTEXTO ATIVO
+
+   Ajustes desta revisão:
+   - Topbar passa a exibir melhor o perfil ativo e sua carteira.
+   - Em telas menores, o badge aparece em uma faixa secundária,
+     evitando que a administradora opere sem perceber qual
+     carteira/perfil está em uso.
    ========================================================= */
 
 
@@ -696,12 +704,16 @@ function AdminTopbar({
 
           <NotificationBell fallbackHref="/admin/dashboard" />
 
-          <div className="hidden xl:block">
+          <div className="hidden lg:block">
             <ActiveAccessBadge compact />
           </div>
 
           <LogoutButton />
         </div>
+      </div>
+
+      <div className="border-t border-[#DDE5DF] bg-[#F9FBFA] px-4 py-3 sm:px-6 lg:hidden">
+        <ActiveAccessBadge />
       </div>
 
       {actions && (

@@ -28,6 +28,16 @@ import ResponsiveSection from "@/components/ui/ResponsiveSection";
    - Reduzida a rolagem excessiva no celular.
    - Mantida toda a lógica funcional aprovada.
    - Títulos dos chamados passam a usar formatação visual consistente.
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - CONSELHEIRO passa a ser reconhecido como perfil de portal.
+   - No dashboard, CONSELHEIRO é tratado como perfil vinculado ao
+     condomínio, com visão de acompanhamento do condomínio ativo.
+   - A API /api/portal/chamados continua sendo a camada real de
+     segurança; esta página mantém uma segunda camada defensiva
+     baseada no perfil ativo retornado pela API.
    ========================================================= */
 
 
@@ -100,7 +110,12 @@ interface PortalUser {
 
 
 
-type PortalRole = "MORADOR" | "SINDICO" | "PROPRIETARIO" | string;
+type PortalRole =
+  | "MORADOR"
+  | "SINDICO"
+  | "PROPRIETARIO"
+  | "CONSELHEIRO"
+  | string;
 
 
 
@@ -153,6 +168,12 @@ function extractAccessCount(data: unknown) {
    HELPERS DE SEGURANÇA VISUAL DO DASHBOARD
    ========================================================= */
 
+function isCondominiumPortalRole(role?: string | null) {
+  return role === "SINDICO" || role === "CONSELHEIRO";
+}
+
+
+
 function isSindicoRole(role?: string | null) {
   return role === "SINDICO";
 }
@@ -187,7 +208,7 @@ function ticketBelongsToActivePortalContext({
     return false;
   }
 
-  if (isSindicoRole(role)) {
+  if (isCondominiumPortalRole(role)) {
     if (!user.condominiumId) {
       return false;
     }
@@ -482,6 +503,7 @@ export default function PortalDashboardPage() {
     if (currentRole === "SINDICO") return "Síndico";
     if (currentRole === "MORADOR") return "Morador";
     if (currentRole === "PROPRIETARIO") return "Proprietário";
+    if (currentRole === "CONSELHEIRO") return "Conselheiro";
     return currentRole || "-";
   }
 
@@ -678,6 +700,10 @@ export default function PortalDashboardPage() {
       return "Portal do proprietário";
     }
 
+    if (role === "CONSELHEIRO") {
+      return "Painel do conselho";
+    }
+
     return "Meu portal";
   }
 
@@ -692,6 +718,10 @@ export default function PortalDashboardPage() {
       return "Acompanhe os chamados vinculados à sua unidade, mensagens públicas e atualizações do atendimento.";
     }
 
+    if (role === "CONSELHEIRO") {
+      return "Acompanhe os chamados e movimentações públicas do condomínio vinculado ao seu perfil de conselho.";
+    }
+
     return "Acompanhe seus chamados, mensagens públicas, anexos e atualizações do atendimento.";
   }
 
@@ -704,6 +734,10 @@ export default function PortalDashboardPage() {
 
     if (role === "PROPRIETARIO") {
       return "Visão geral das solicitações vinculadas à sua unidade e das atualizações públicas do atendimento.";
+    }
+
+    if (role === "CONSELHEIRO") {
+      return "Visão geral dos chamados do condomínio para acompanhamento do conselho.";
     }
 
     return "Visão geral das suas solicitações, atualizações públicas e chamados em acompanhamento.";

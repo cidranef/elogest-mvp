@@ -13,22 +13,23 @@ import EloGestShell from "@/components/EloGestShell";
    Rota:
    /elogest/administradoras/[id]
 
-   ETAPA 42.2 — AMBIENTE SUPER ADMIN ELOGEST
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
    Objetivo:
    - Visualizar dados da administradora.
    - Editar dados principais.
    - Ativar/Inativar administradora.
    - Exibir condomínios e usuários vinculados.
+   - Deixar claro que administradora INACTIVE bloqueia
+     a área administrativa e as rotinas operacionais
    - Manter a área exclusiva da EloGest separada do AdminShell.
 
-   ETAPA 42.2.1 — USUÁRIOS DA ADMINISTRADORA
-
-   Ajuste desta revisão:
-   - Adicionado botão "Novo usuário" no card de usuários vinculados.
-   - O botão aponta para:
-     /elogest/administradoras/[id]/usuarios/novo
-   - Mantida a lógica funcional já aprovada.
+   Regras consolidadas:
+   - Esta página pertence à área interna da EloGest.
+   - A proteção principal fica no layout /elogest.
+   - Administradora ativa pode operar em /admin.
+   - Administradora inativa fica bloqueada operacionalmente,
+     mesmo que usuários e UserAccess continuem ativos.
    ========================================================= */
 
 
@@ -66,6 +67,10 @@ type AdministratorDetail = {
 
 
 
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
 function onlyNumbers(value: string) {
   return value.replace(/\D/g, "");
 }
@@ -75,7 +80,18 @@ function onlyNumbers(value: string) {
 function statusLabel(status: string) {
   if (status === "ACTIVE") return "Ativa";
   if (status === "INACTIVE") return "Inativa";
+
   return status;
+}
+
+
+
+function statusClasses(status: string) {
+  if (status === "ACTIVE") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
+  return "border-yellow-200 bg-yellow-50 text-yellow-800";
 }
 
 
@@ -92,17 +108,84 @@ function formatDate(value?: string | null) {
 
 
 
+function formatCnpj(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (digits.length !== 14) {
+    return value || "CNPJ não informado";
+  }
+
+  return digits.replace(
+    /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+    "$1.$2.$3/$4-$5"
+  );
+}
+
+
+
+function formatPhone(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+
+  if (!digits) {
+    return "Telefone não informado";
+  }
+
+  if (digits.length === 11) {
+    return digits.replace(/^(\d{2})(\d{5})(\d{4})$/, "($1) $2-$3");
+  }
+
+  if (digits.length === 10) {
+    return digits.replace(/^(\d{2})(\d{4})(\d{4})$/, "($1) $2-$3");
+  }
+
+  return value || digits;
+}
+
+
+
+function roleLabel(role: string) {
+  const labels: Record<string, string> = {
+    SUPER_ADMIN: "Super Admin",
+    ADMINISTRADORA: "Administradora",
+    SINDICO: "Síndico",
+    MORADOR: "Morador",
+    PROPRIETARIO: "Proprietário",
+    CONSELHEIRO: "Conselheiro",
+  };
+
+  return labels[role] || role;
+}
+
+
+
+/* =========================================================
+   COMPONENTES INTERNOS
+   ========================================================= */
+
 function InfoCard({
   title,
   value,
   description,
+  tone = "default",
 }: {
   title: string;
-  value: number;
+  value: string | number;
   description: string;
+  tone?: "default" | "success" | "warning";
 }) {
+  const toneClasses = {
+    default: "border-[#DDE5DF] bg-white/92",
+    success: "border-[#CFE6D4] bg-[#F7FBF8]",
+    warning: "border-yellow-200 bg-yellow-50",
+  };
+
   return (
-    <div className="rounded-[26px] border border-[#DDE5DF] bg-white/92 p-5 shadow-[0_16px_48px_rgba(23,33,27,0.06)]">
+    <div
+      className={[
+        "rounded-[26px] border p-5 shadow-[0_16px_48px_rgba(23,33,27,0.06)]",
+        toneClasses[tone],
+      ].join(" ")}
+    >
       <p className="text-sm font-semibold text-[#64736A]">
         {title}
       </p>
@@ -119,6 +202,97 @@ function InfoCard({
 }
 
 
+
+function AlertBox({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-yellow-200 bg-yellow-50 p-5 text-yellow-900">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white/70">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            aria-hidden="true"
+          >
+            <path
+              d="M12 9v4"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <path
+              d="M12 17h.01"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="2"
+            />
+            <path
+              d="M10.3 4.3 2.8 17.2A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.8L13.7 4.3a2 2 0 0 0-3.4 0Z"
+              fill="none"
+              stroke="currentColor"
+              strokeLinejoin="round"
+              strokeWidth="2"
+            />
+          </svg>
+        </div>
+
+        <div>
+          <p className="text-sm font-semibold">
+            {title}
+          </p>
+
+          <p className="mt-1 text-sm leading-6 opacity-80">
+            {description}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+function OperationRule({
+  title,
+  description,
+  active,
+}: {
+  title: string;
+  description: string;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={[
+        "rounded-2xl border p-4",
+        active
+          ? "border-[#CFE6D4] bg-[#F7FBF8]"
+          : "border-[#DDE5DF] bg-[#F7F9F8]",
+      ].join(" ")}
+    >
+      <p className="text-sm font-semibold text-[#17211B]">
+        {title}
+      </p>
+
+      <p className="mt-1 text-sm leading-6 text-[#64736A]">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+
+
+/* =========================================================
+   PÁGINA
+   ========================================================= */
 
 export default function EloGestAdministradoraDetalhePage() {
   const router = useRouter();
@@ -147,6 +321,11 @@ export default function EloGestAdministradoraDetalhePage() {
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+
+
+  const willBlockOperation = status === "INACTIVE";
+  const isCurrentlyInactive = administrator?.status === "INACTIVE";
 
 
 
@@ -247,7 +426,11 @@ export default function EloGestAdministradoraDetalhePage() {
       }
 
       setAdministrator(data.administrator);
-      setSuccess("Administradora atualizada com sucesso.");
+      setSuccess(
+        status === "INACTIVE"
+          ? "Administradora inativada. O acesso administrativo foi bloqueado."
+          : "Administradora atualizada com sucesso."
+      );
       router.refresh();
     } catch (err) {
       console.error(err);
@@ -272,8 +455,21 @@ export default function EloGestAdministradoraDetalhePage() {
         <section className="rounded-[34px] border border-[#DDE5DF] bg-white/90 p-6 shadow-[0_24px_80px_rgba(23,33,27,0.08)] backdrop-blur sm:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div className="inline-flex rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
-                Detalhe da administradora
+              <div className="flex flex-wrap gap-2">
+                <div className="inline-flex rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
+                  Detalhe da administradora
+                </div>
+
+                {administrator && (
+                  <span
+                    className={[
+                      "inline-flex rounded-full border px-3 py-1 text-xs font-semibold",
+                      statusClasses(administrator.status),
+                    ].join(" ")}
+                  >
+                    {statusLabel(administrator.status)}
+                  </span>
+                )}
               </div>
 
               <h1 className="mt-4 text-3xl font-semibold tracking-[-0.045em] text-[#17211B] sm:text-4xl">
@@ -282,7 +478,8 @@ export default function EloGestAdministradoraDetalhePage() {
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
                 Visualize e atualize os dados principais da administradora,
-                além de acompanhar os usuários e condomínios vinculados.
+                acompanhe usuários e condomínios vinculados e controle o status
+                operacional da carteira.
               </p>
             </div>
 
@@ -331,6 +528,19 @@ export default function EloGestAdministradoraDetalhePage() {
 
 
             {/* =================================================
+               ALERTA DE STATUS INATIVO
+               ================================================= */}
+
+            {isCurrentlyInactive && (
+              <AlertBox
+                title="Administradora inativa"
+                description="A operação administrativa desta administradora está bloqueada. Usuários vinculados não conseguem acessar /admin e as APIs administrativas retornam bloqueio até que a administradora seja reativada."
+              />
+            )}
+
+
+
+            {/* =================================================
                KPIS
                ================================================= */}
 
@@ -348,14 +558,63 @@ export default function EloGestAdministradoraDetalhePage() {
               />
 
               <InfoCard
-                title="Status"
-                value={administrator.status === "ACTIVE" ? 1 : 0}
+                title="Status operacional"
+                value={statusLabel(administrator.status)}
                 description={
                   administrator.status === "ACTIVE"
-                    ? "Administradora ativa para operação."
-                    : "Administradora inativa no momento."
+                    ? "Carteira liberada para operação administrativa."
+                    : "Carteira bloqueada para acesso administrativo."
                 }
+                tone={administrator.status === "ACTIVE" ? "success" : "warning"}
               />
+            </section>
+
+
+
+            {/* =================================================
+               REGRAS OPERACIONAIS
+               ================================================= */}
+
+            <section className="rounded-[30px] border border-[#DDE5DF] bg-white/92 p-6 shadow-[0_18px_55px_rgba(23,33,27,0.06)] backdrop-blur sm:p-8">
+              <div className="mb-5">
+                <h2 className="text-xl font-semibold tracking-[-0.025em] text-[#17211B]">
+                  Impacto do status
+                </h2>
+
+                <p className="mt-1 text-sm leading-6 text-[#64736A]">
+                  O status da administradora controla a operação da carteira.
+                  Usuários podem continuar cadastrados, mas a operação depende
+                  da administradora estar ativa.
+                </p>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <OperationRule
+                  active={administrator.status === "ACTIVE"}
+                  title="Área administrativa"
+                  description={
+                    administrator.status === "ACTIVE"
+                      ? "Usuários da administradora acessam o painel operacional da própria carteira."
+                      : "O painel operacional fica bloqueado para usuários vinculados."
+                  }
+                />
+
+                <OperationRule
+                  active={administrator.status === "ACTIVE"}
+                  title="Rotinas operacionais"
+                  description={
+                    administrator.status === "ACTIVE"
+                      ? "Chamados, cadastros, dashboards e demais operações seguem liberados."
+                      : "Chamados, cadastros, dashboards e demais operações ficam bloqueados."
+                  }
+                />
+
+                <OperationRule
+                  active
+                  title="Painel EloGest"
+                  description="A gestão global permanece disponível para o Super Admin."
+                />
+              </div>
             </section>
 
 
@@ -390,6 +649,14 @@ export default function EloGestAdministradoraDetalhePage() {
                   role="status"
                 >
                   {success}
+                </div>
+              )}
+
+              {willBlockOperation && administrator.status !== "INACTIVE" && (
+                <div className="mb-6 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm leading-6 text-yellow-900">
+                  Ao salvar como inativa, os usuários desta administradora
+                  deixarão de acessar o dashboard administrativo e as APIs
+                  operacionais da carteira serão bloqueadas.
                 </div>
               )}
 
@@ -437,6 +704,10 @@ export default function EloGestAdministradoraDetalhePage() {
                       placeholder="Somente números"
                       className="h-12 w-full rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] px-4 text-sm text-[#17211B] outline-none transition placeholder:text-[#9AA7A0] focus:border-[#256D3C] focus:bg-white focus:ring-4 focus:ring-[#256D3C]/10"
                     />
+
+                    <p className="mt-2 text-xs leading-5 text-[#7A877F]">
+                      Atual: {formatCnpj(administrator.cnpj)}
+                    </p>
                   </div>
 
                   <div>
@@ -459,6 +730,10 @@ export default function EloGestAdministradoraDetalhePage() {
                       placeholder="Ex.: 1132048800"
                       className="h-12 w-full rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] px-4 text-sm text-[#17211B] outline-none transition placeholder:text-[#9AA7A0] focus:border-[#256D3C] focus:bg-white focus:ring-4 focus:ring-[#256D3C]/10"
                     />
+
+                    <p className="mt-2 text-xs leading-5 text-[#7A877F]">
+                      Atual: {formatPhone(administrator.phone)}
+                    </p>
                   </div>
 
                   <div>
@@ -504,6 +779,10 @@ export default function EloGestAdministradoraDetalhePage() {
                       <option value="ACTIVE">Ativa</option>
                       <option value="INACTIVE">Inativa</option>
                     </select>
+
+                    <p className="mt-2 text-xs leading-5 text-[#7A877F]">
+                      Inativar bloqueia o painel administrativo e as rotinas operacionais desta carteira.
+                    </p>
                   </div>
                 </div>
 
@@ -518,9 +797,18 @@ export default function EloGestAdministradoraDetalhePage() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="inline-flex min-h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F5A32] disabled:cursor-not-allowed disabled:bg-[#9AA7A0]"
+                    className={[
+                      "inline-flex min-h-11 items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-[#9AA7A0]",
+                      willBlockOperation
+                        ? "bg-yellow-700 hover:bg-yellow-800"
+                        : "bg-[#256D3C] hover:bg-[#1F5A32]",
+                    ].join(" ")}
                   >
-                    {saving ? "Salvando..." : "Salvar alterações"}
+                    {saving
+                      ? "Salvando..."
+                      : willBlockOperation
+                        ? "Salvar e bloquear operação"
+                        : "Salvar alterações"}
                   </button>
                 </div>
               </form>
@@ -553,7 +841,7 @@ export default function EloGestAdministradoraDetalhePage() {
                   </Link>
                 </div>
 
-                <div className="mt-5 divide-y divide-[#EEF2EF]">
+                <div className="mt-5 max-h-[420px] divide-y divide-[#EEF2EF] overflow-y-auto">
                   {administrator.users.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-[#DDE5DF] bg-[#F7F9F8] px-4 py-8 text-center">
                       <p className="text-sm font-semibold text-[#17211B]">
@@ -571,6 +859,10 @@ export default function EloGestAdministradoraDetalhePage() {
 
                             <p className="mt-1 text-xs leading-5 text-[#64736A]">
                               {user.email}
+                            </p>
+
+                            <p className="mt-1 text-xs leading-5 text-[#7A877F]">
+                              {roleLabel(user.role)} • Criado em {formatDate(user.createdAt)}
                             </p>
                           </div>
 
@@ -600,7 +892,7 @@ export default function EloGestAdministradoraDetalhePage() {
                   Condomínios cadastrados na carteira desta administradora.
                 </p>
 
-                <div className="mt-5 divide-y divide-[#EEF2EF]">
+                <div className="mt-5 max-h-[420px] divide-y divide-[#EEF2EF] overflow-y-auto">
                   {administrator.condominiums.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-[#DDE5DF] bg-[#F7F9F8] px-4 py-8 text-center">
                       <p className="text-sm font-semibold text-[#17211B]">
@@ -623,6 +915,10 @@ export default function EloGestAdministradoraDetalhePage() {
                               {[condominium.city, condominium.state]
                                 .filter(Boolean)
                                 .join(" / ") || "Localização não informada"}
+                            </p>
+
+                            <p className="mt-1 text-xs leading-5 text-[#7A877F]">
+                              Criado em {formatDate(condominium.createdAt)}
                             </p>
                           </div>
 

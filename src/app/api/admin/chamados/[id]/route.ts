@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
+import { getAuthUser, type AuthUser } from "@/lib/auth-guard";
 import {
   sendNotification,
   notifyTicketPublicTargets,
@@ -10,48 +11,41 @@ import {
   canAssignTicket,
   canChangeTicketStatus,
   canCommentPublic,
-  isAdministradora,
-  isSuperAdmin,
 } from "@/lib/access-control";
 import { NextResponse } from "next/server";
 import {
   buildActorLabel,
   buildActorRole,
   getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
 } from "@/lib/user-access";
+import { Prisma, Role, TicketStatus } from "@prisma/client";
 
 
 
 /* =========================================================
    API ADMIN - CHAMADO INDIVIDUAL
 
-   ETAPA 35.7 - AJUSTE DE NOTIFICAÇÕES E ATRIBUIÇÃO
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
-   Ajustes aplicados:
-   - resposta pública da administradora passa a notificar
-     corretamente o morador/criador do chamado;
-   - mensagem de resolução também notifica o morador/criador;
-   - atribuição de responsável passa a notificar:
-     1. o responsável atribuído;
-     2. o morador/criador, com mensagem amigável;
-   - ASSIGNED continua salvo no histórico administrativo;
-   - o portal poderá exibir ASSIGNED de forma humanizada.
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
 
-   Regras preservadas:
-   - chamado RESOLVED ou CANCELED não permite alterar responsável;
-   - comentário público exige permissão;
-   - alteração de status exige permissão;
-   - atribuição exige permissão;
-   - contexto ativo continua sendo respeitado.
-
-   ETAPA 40.2 — AUDITORIA DE PERMISSÕES E CONTEXTO ATIVO NAS APIs
-
-   Ajustes desta revisão:
-   - Comparações de perfil passam a usar helpers da matriz central.
-   - Filtro de chamado fica defensivo contra contexto inválido.
-   - Normalização de parâmetros/body.
-   - Validação mais clara de contexto ADMINISTRADORA sem administratorId.
-   - Mantida regra de preservar histórico e notificar públicos corretos.
+   Objetivo desta revisão:
+   - A rota /admin/chamados/[id] passa a operar somente com
+     perfil ativo ADMINISTRADORA.
+   - SUPER_ADMIN não opera pela área /admin; deve usar rotas
+     próprias da área /elogest.
+   - Todas as consultas usam a carteira da administradora ativa.
+   - Logs e notificações usam o perfil ativo para actorRole,
+     actorLabel e accessId.
+   - Mantidas regras anteriores:
+     comentário público notifica morador/criador;
+     resolução notifica morador/criador;
+     atribuição notifica responsável e público do chamado;
+     chamados finalizados preservam histórico e bloqueiam edição.
    ========================================================= */
 
 
@@ -66,17 +60,39 @@ type RouteContext = {
   }>;
 };
 
+type AdminContextUser = Omit<AuthUser, "activeAccess"> & {
+  role: string | null;
+  administratorId: string | null;
+  condominiumId: string | null;
+  unitId: string | null;
+  residentId: string | null;
+  activeAccess: ActiveUserAccess | null;
+};
+
+type AssignedValidationResult = {
+  assignedToUserId: string | null;
+  assignedUser: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    role: Role;
+    isActive: boolean | null;
+  } | null;
+  error: string | null;
+  status: number;
+};
+
 
 
 /* =========================================================
    STATUS PERMITIDOS
    ========================================================= */
 
-const ALLOWED_TICKET_STATUS = [
-  "OPEN",
-  "IN_PROGRESS",
-  "RESOLVED",
-  "CANCELED",
+const ALLOWED_TICKET_STATUS: TicketStatus[] = [
+  TicketStatus.OPEN,
+  TicketStatus.IN_PROGRESS,
+  TicketStatus.RESOLVED,
+  TicketStatus.CANCELED,
 ];
 
 
@@ -95,6 +111,29 @@ function normalizeNullableText(value: unknown) {
   const text = normalizeText(value);
 
   return text ? text : null;
+}
+
+
+
+function normalizeTicketStatus(value: unknown): TicketStatus | null {
+  const status = normalizeNullableText(value);
+
+  if (!status) {
+    return null;
+  }
+
+  if (status === TicketStatus.OPEN) return TicketStatus.OPEN;
+  if (status === TicketStatus.IN_PROGRESS) return TicketStatus.IN_PROGRESS;
+  if (status === TicketStatus.RESOLVED) return TicketStatus.RESOLVED;
+  if (status === TicketStatus.CANCELED) return TicketStatus.CANCELED;
+
+  return null;
+}
+
+
+
+function getDatabaseAccessId(access?: ActiveUserAccess | null) {
+  return access?.source === "USER_ACCESS" ? access.accessId : null;
 }
 
 
@@ -179,25 +218,29 @@ function statusNotificationMessage({
 /* =========================================================
    USUÁRIO COM CONTEXTO ATIVO
 
-   A sessão base identifica quem está logado.
-   O contexto ativo define com qual papel/carteira ele está
-   operando naquele momento.
+   Etapa 43:
+   A área /admin exige perfil ativo ADMINISTRADORA.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = await getAuthUser();
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
+  const activeAccess = await getActiveUserAccessFromCookies({
     userId: sessionUser.id,
   });
 
   if (!activeAccess) {
     return {
       ...sessionUser,
+      role: sessionUser.role || null,
+      administratorId: sessionUser.administratorId || null,
+      condominiumId: sessionUser.condominiumId || null,
+      unitId: sessionUser.unitId || null,
+      residentId: sessionUser.residentId || null,
       activeAccess: null,
     };
   }
@@ -205,27 +248,27 @@ async function getAdminContextUser() {
   return {
     ...sessionUser,
 
-    role: activeAccess.role || sessionUser.role,
+    role: activeAccess.role || sessionUser.role || null,
 
     administratorId:
       activeAccess.administratorId !== undefined
         ? activeAccess.administratorId
-        : sessionUser.administratorId,
+        : sessionUser.administratorId || null,
 
     condominiumId:
       activeAccess.condominiumId !== undefined
         ? activeAccess.condominiumId
-        : sessionUser.condominiumId,
+        : sessionUser.condominiumId || null,
 
     unitId:
       activeAccess.unitId !== undefined
         ? activeAccess.unitId
-        : sessionUser.unitId,
+        : sessionUser.unitId || null,
 
     residentId:
       activeAccess.residentId !== undefined
         ? activeAccess.residentId
-        : sessionUser.residentId,
+        : sessionUser.residentId || null,
 
     activeAccess,
   };
@@ -236,13 +279,12 @@ async function getAdminContextUser() {
 /* =========================================================
    PERFIL ADMINISTRATIVO
 
-   Esta rota é exclusiva para:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
+   /admin é exclusivo da ADMINISTRADORA.
+   SUPER_ADMIN deve operar em /elogest.
    ========================================================= */
 
-function isAdminContext(user: any) {
-  return isSuperAdmin(user) || isAdministradora(user);
+function isAdminContext(user: AdminContextUser) {
+  return !!user.activeAccess && isAdministradoraAccess(user.activeAccess);
 }
 
 
@@ -314,11 +356,6 @@ function getTicketInclude() {
 
 /* =========================================================
    INCLUDE PARA NOTIFICAÇÕES
-
-   Usado para:
-   - notificar morador/criador em resposta pública;
-   - notificar responsável atribuído;
-   - notificar morador/criador quando responsável for definido.
    ========================================================= */
 
 function getTicketNotificationInclude() {
@@ -335,6 +372,8 @@ function getTicketNotificationInclude() {
       select: {
         id: true,
         name: true,
+        email: true,
+        phone: true,
         user: {
           select: {
             id: true,
@@ -374,24 +413,13 @@ function getTicketNotificationInclude() {
 /* =========================================================
    FILTRO DE ACESSO DO CHAMADO
 
-   SUPER_ADMIN:
-   - acessa qualquer chamado.
-
-   ADMINISTRADORA:
-   - acessa somente chamados de condomínios da sua carteira.
-
-   Defesa:
-   - contexto inválido retorna filtro impossível.
+   Etapa 43:
+   Administradora acessa somente chamados de condomínios da sua
+   carteira ativa.
    ========================================================= */
 
-function getAdminTicketWhere(user: any, ticketId: string) {
-  if (isSuperAdmin(user)) {
-    return {
-      id: ticketId,
-    };
-  }
-
-  if (isAdministradora(user) && user.administratorId) {
+function getAdminTicketWhere(user: AdminContextUser, ticketId: string) {
+  if (isAdminContext(user) && user.administratorId) {
     return {
       id: ticketId,
       condominium: {
@@ -411,17 +439,17 @@ function getAdminTicketWhere(user: any, ticketId: string) {
    VALIDAÇÃO DO CONTEXTO
    ========================================================= */
 
-function validateAdminContext(user: any) {
+function validateAdminContext(user: AdminContextUser) {
   if (!isAdminContext(user)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso à rota administrativa de chamados. Use o portal.",
+        "Este contexto não possui acesso à rota administrativa de chamados. Use o portal ou a área EloGest.",
     };
   }
 
-  if (isAdministradora(user) && !user.administratorId) {
+  if (!user.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -440,20 +468,6 @@ function validateAdminContext(user: any) {
 
 /* =========================================================
    VALIDA RESPONSÁVEL ATRIBUÍDO
-
-   Regras:
-   - Só valida se assignedToUserId foi informado.
-   - Usuário atual precisa ter permissão ASSIGN_TICKET.
-   - Responsável precisa estar ativo.
-   - Responsável permitido:
-     ADMINISTRADORA da mesma carteira;
-     SÍNDICO do mesmo condomínio.
-
-   Bloqueia:
-   - MORADOR;
-   - PROPRIETÁRIO;
-   - SÍNDICO de outro condomínio;
-   - ADMINISTRADORA de outra carteira.
    ========================================================= */
 
 async function validateAssignedUser({
@@ -462,21 +476,21 @@ async function validateAssignedUser({
   targetAdministratorId,
   targetCondominiumId,
 }: {
-  currentUser: any;
+  currentUser: AdminContextUser;
   assignedToUserId?: string | null;
   targetAdministratorId: string | null;
   targetCondominiumId: string;
-}) {
+}): Promise<AssignedValidationResult> {
   if (!assignedToUserId) {
     return {
-      assignedToUserId: null as string | null,
-      assignedUser: null as any,
-      error: null as string | null,
+      assignedToUserId: null,
+      assignedUser: null,
+      error: null,
       status: 200,
     };
   }
 
-  if (!canAssignTicket(currentUser)) {
+  if (!canAssignTicket(currentUser.activeAccess || currentUser)) {
     return {
       assignedToUserId: null,
       assignedUser: null,
@@ -499,6 +513,13 @@ async function validateAssignedUser({
           condominiumId: targetCondominiumId,
         },
       ],
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
     },
   });
 
@@ -528,7 +549,13 @@ async function validateAssignedUser({
 
 export async function GET(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
     const { id } = await context.params;
 
     const ticketId = normalizeText(id);
@@ -549,7 +576,7 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-    if (!canViewAdminTickets(user)) {
+    if (!canViewAdminTickets(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para acessar este chamado." },
         { status: 403 }
@@ -569,10 +596,10 @@ export async function GET(req: Request, context: RouteContext) {
     }
 
     return NextResponse.json(chamado);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO BUSCAR CHAMADO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -590,29 +617,17 @@ export async function GET(req: Request, context: RouteContext) {
 
 /* =========================================================
    PATCH - ATUALIZAR CHAMADO
-
-   Permissões:
-   - Visualizar detalhe:
-     VIEW_ADMIN_TICKETS.
-
-   - Comentário público:
-     COMMENT_PUBLIC.
-
-   - Alterar status:
-     CHANGE_TICKET_STATUS.
-
-   - Atribuir responsável:
-     ASSIGN_TICKET.
-
-   ETAPA 35.7:
-   - comentário público notifica morador/criador;
-   - resolução com mensagem pública notifica morador/criador;
-   - atribuição de responsável notifica responsável e morador/criador.
    ========================================================= */
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
     const body = await req.json();
 
     const { id } = await context.params;
@@ -634,18 +649,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-    if (!canViewAdminTickets(user)) {
+    if (!canViewAdminTickets(user.activeAccess || user)) {
       return NextResponse.json(
         { error: "Usuário sem permissão para atualizar este chamado." },
         { status: 403 }
       );
     }
-
-
-
-    /* =========================================================
-       CONTEXTO ATIVO DO USUÁRIO
-       ========================================================= */
 
     const activeAccess = user.activeAccess;
 
@@ -656,24 +665,14 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       BASE DOS LOGS DA ROTA
-       ========================================================= */
+    const dbAccessId = getDatabaseAccessId(activeAccess);
 
     const logActorData = {
       userId: user.id,
-      accessId: activeAccess.accessId,
+      accessId: dbAccessId,
       actorRole: buildActorRole(activeAccess),
       actorLabel: buildActorLabel(activeAccess),
     };
-
-
-
-    /* =========================================================
-       ATOR DAS NOTIFICAÇÕES
-       ========================================================= */
 
     const actorUser = {
       id: user.id,
@@ -681,12 +680,6 @@ export async function PATCH(req: Request, context: RouteContext) {
       email: user.email,
       role: user.role,
     };
-
-
-
-    /* =========================================================
-       BUSCA DO CHAMADO
-       ========================================================= */
 
     const chamado = await db.ticket.findFirst({
       where: getAdminTicketWhere(user, ticketId),
@@ -708,17 +701,13 @@ export async function PATCH(req: Request, context: RouteContext) {
 
 
     /* =========================================================
-       COMENTÁRIO DO CHAMADO - COMPATIBILIDADE ANTIGA
-
-       Comentário recebido via PATCH é tratado como comunicação pública.
-       Comentário interno deve ser criado apenas pela rota:
-       /api/admin/chamados/[id]/comentarios
+       COMENTÁRIO PÚBLICO
        ========================================================= */
 
     const publicComment = normalizeText(body.comment);
 
     if (publicComment) {
-      if (!canCommentPublic(user)) {
+      if (!canCommentPublic(activeAccess)) {
         return NextResponse.json(
           { error: "Usuário sem permissão para comentar neste chamado." },
           { status: 403 }
@@ -743,16 +732,6 @@ export async function PATCH(req: Request, context: RouteContext) {
           comment: publicComment,
         },
       });
-
-
-
-      /* =========================================================
-         NOTIFICAÇÃO - RESPOSTA PÚBLICA AO MORADOR/CRIADOR
-
-         Corrige o caso de usuário Síndico + Morador:
-         o morador/criador deve ser notificado da resposta pública,
-         mesmo que também possua contexto de síndico.
-       ========================================================= */
 
       const ticketForNotification = await db.ticket.findUnique({
         where: {
@@ -796,21 +775,30 @@ export async function PATCH(req: Request, context: RouteContext) {
        ATUALIZAÇÕES DE STATUS E RESPONSÁVEL
        ========================================================= */
 
-    const updateData: any = {};
-    const logs: any[] = [];
+    const updateData: Prisma.TicketUncheckedUpdateInput = {};
 
-    let responsavel: any = null;
+    const logs: Array<{
+      ticketId: string;
+      userId: string;
+      accessId: string | null;
+      actorRole: string | null;
+      actorLabel: string | null;
+      action: string;
+      fromValue?: string | null;
+      toValue?: string | null;
+      comment?: string | null;
+    }> = [];
+
+    let responsavel: AssignedValidationResult["assignedUser"] = null;
     let resolutionCommentForNotification = "";
 
 
 
     /* =========================================================
        ALTERAÇÃO DE STATUS
-
-       Exige CHANGE_TICKET_STATUS no contexto ativo.
        ========================================================= */
 
-    const requestedStatus = normalizeNullableText(body.status);
+    const requestedStatus = normalizeTicketStatus(body.status);
 
     if (requestedStatus && requestedStatus !== chamado.status) {
       const nextStatus = requestedStatus;
@@ -822,7 +810,7 @@ export async function PATCH(req: Request, context: RouteContext) {
         );
       }
 
-      if (!canChangeTicketStatus(user)) {
+      if (!canChangeTicketStatus(activeAccess)) {
         return NextResponse.json(
           { error: "Usuário sem permissão para alterar status do chamado." },
           { status: 403 }
@@ -895,14 +883,6 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        ALTERAÇÃO DE RESPONSÁVEL
-
-       REGRA:
-       O responsável precisa ser:
-       - ADMINISTRADORA da mesma administradora do condomínio; ou
-       - SÍNDICO do mesmo condomínio do chamado.
-
-       MORADOR / PROPRIETÁRIO não podem ser responsáveis pelo
-       atendimento administrativo.
        ========================================================= */
 
     const requestedAssignedToUserId = normalizeNullableText(body.assignedToUserId);
@@ -943,8 +923,10 @@ export async function PATCH(req: Request, context: RouteContext) {
         ...logActorData,
         action: "ASSIGNED",
         fromValue: chamado.assignedToUser?.name || null,
-        toValue: responsavel.name,
-        comment: `Responsável definido: ${responsavel.name}`,
+        toValue: responsavel?.name || null,
+        comment: responsavel?.name
+          ? `Responsável definido: ${responsavel.name}`
+          : null,
       });
     }
 
@@ -999,12 +981,6 @@ export async function PATCH(req: Request, context: RouteContext) {
       include: getTicketInclude(),
     });
 
-
-
-    /* =========================================================
-       CHAMADO PARA NOTIFICAÇÕES
-       ========================================================= */
-
     const ticketForNotification = await db.ticket.findUnique({
       where: {
         id: chamado.id,
@@ -1016,11 +992,6 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        NOTIFICAÇÃO - RESPONSÁVEL ATRIBUÍDO
-
-       Nova regra:
-       - responsável recebe notificação operacional;
-       - morador/criador recebe notificação amigável informando
-         quem acompanhará o chamado.
        ========================================================= */
 
     if (responsavel && ticketForNotification) {
@@ -1045,10 +1016,6 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        NOTIFICAÇÃO - RESOLUÇÃO / MENSAGEM PÚBLICA
-
-       A resolução cria uma COMMENT_PUBLIC.
-       Portanto, o morador/criador também precisa receber
-       notificação.
        ========================================================= */
 
     if (resolutionCommentForNotification && ticketForNotification) {
@@ -1075,9 +1042,6 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        NOTIFICAÇÃO - STATUS ATUALIZADO PARA RESPONSÁVEL
-
-       Mantida para avisar o responsável atribuído quando o
-       status do chamado mudar.
        ========================================================= */
 
     if (
@@ -1105,10 +1069,10 @@ export async function PATCH(req: Request, context: RouteContext) {
     }
 
     return NextResponse.json(updated);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO ATUALIZAR CHAMADO:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

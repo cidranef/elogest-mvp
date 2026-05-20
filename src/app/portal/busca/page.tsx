@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import PortalShell from "@/components/PortalShell";
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import { getActiveUserAccessFromCookies } from "@/lib/user-access";
 
 
 
@@ -31,6 +32,16 @@ import { getAuthUser } from "@/lib/auth-guard";
    - Corrigida a tipagem do filtro OR do Prisma.
    - Removido o uso de null dentro do array de filtros.
    - portalVisibilityFilters agora é montado como Prisma.TicketWhereInput[].
+
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Ajustes desta revisão:
+   - Busca passa a usar activeAccess como fonte de escopo.
+   - CONSELHEIRO é tratado como perfil de portal vinculado ao condomínio.
+   - Removido filtro amplo por createdByUserId sem contexto, evitando que
+     usuário movido de condomínio encontre chamados antigos.
+   - SÍNDICO / CONSELHEIRO buscam apenas no condomínio ativo.
+   - MORADOR / PROPRIETÁRIO buscam apenas no vínculo residencial ativo.
    ========================================================= */
 
 export const dynamic = "force-dynamic";
@@ -48,9 +59,16 @@ type PageProps = {
 type AuthUser = {
   id: string;
   role?: string | null;
-  residentId?: string | null;
-  unitId?: string | null;
+};
+
+
+
+type ActiveAccessSummary = {
+  role?: string | null;
+  administratorId?: string | null;
   condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
 };
 
 
@@ -75,7 +93,42 @@ function buildContainsFilter(term: string) {
 
 
 function isPortalRole(role?: string | null) {
-  return role === "SINDICO" || role === "MORADOR" || role === "PROPRIETARIO";
+  return (
+    role === "SINDICO" ||
+    role === "MORADOR" ||
+    role === "PROPRIETARIO" ||
+    role === "CONSELHEIRO"
+  );
+}
+
+
+
+function isCondominiumPortalRole(role?: string | null) {
+  return role === "SINDICO" || role === "CONSELHEIRO";
+}
+
+
+
+function isResidentialPortalRole(role?: string | null) {
+  return role === "MORADOR" || role === "PROPRIETARIO";
+}
+
+
+
+function getDefaultHomeByRole(role?: string | null) {
+  if (role === "SUPER_ADMIN") {
+    return "/elogest/dashboard";
+  }
+
+  if (role === "ADMINISTRADORA") {
+    return "/admin/dashboard";
+  }
+
+  if (isPortalRole(role)) {
+    return "/portal/dashboard";
+  }
+
+  return "/contexto";
 }
 
 
@@ -131,8 +184,18 @@ export default async function PortalBuscaPage({ searchParams }: PageProps) {
     redirect("/login");
   }
 
-  if (!isPortalRole(authUser.role)) {
-    redirect("/admin/dashboard");
+  const activeAccess = (await getActiveUserAccessFromCookies({
+    userId: authUser.id,
+  })) as ActiveAccessSummary | null;
+
+  if (!activeAccess) {
+    redirect("/contexto");
+  }
+
+  const effectiveRole = activeAccess.role || authUser.role || null;
+
+  if (!isPortalRole(effectiveRole)) {
+    redirect(getDefaultHomeByRole(effectiveRole));
   }
 
 
@@ -163,28 +226,40 @@ export default async function PortalBuscaPage({ searchParams }: PageProps) {
      - Isso evita erro de TypeScript no OR do Prisma.
    ========================================================= */
 
-  const portalVisibilityFilters: Prisma.TicketWhereInput[] = [
-    {
-      createdByUserId: authUser.id,
-    },
-  ];
+  const portalVisibilityFilters: Prisma.TicketWhereInput[] = [];
 
-  if (authUser.residentId) {
+  if (isCondominiumPortalRole(effectiveRole)) {
+    if (!activeAccess.condominiumId) {
+      redirect("/contexto");
+    }
+
     portalVisibilityFilters.push({
-      residentId: authUser.residentId,
+      condominiumId: activeAccess.condominiumId,
     });
   }
 
-  if (authUser.unitId) {
+  if (isResidentialPortalRole(effectiveRole)) {
+    if (!activeAccess.condominiumId || !activeAccess.unitId) {
+      redirect("/contexto");
+    }
+
+    if (activeAccess.residentId) {
+      portalVisibilityFilters.push({
+        residentId: activeAccess.residentId,
+      });
+    }
+
     portalVisibilityFilters.push({
-      unitId: authUser.unitId,
+      condominiumId: activeAccess.condominiumId,
+      unitId: activeAccess.unitId,
+      scope: {
+        not: "CONDOMINIUM",
+      },
     });
   }
 
-  if (authUser.role === "SINDICO" && authUser.condominiumId) {
-    portalVisibilityFilters.push({
-      condominiumId: authUser.condominiumId,
-    });
+  if (portalVisibilityFilters.length === 0) {
+    redirect("/contexto");
   }
 
 

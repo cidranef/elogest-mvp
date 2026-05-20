@@ -91,6 +91,7 @@ interface Morador {
   id: string;
   name: string;
   email?: string | null;
+  phone?: string | null;
   cpf?: string | null;
   condominiumId: string;
   unitId: string;
@@ -102,6 +103,10 @@ interface Usuario {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
+  phoneVerifiedAt?: string | null;
+  phoneOptInAt?: string | null;
+  phoneOptOutAt?: string | null;
   role: UserRole | string;
   isActive: boolean;
 
@@ -123,6 +128,7 @@ interface Usuario {
     id: string;
     name: string;
     email?: string | null;
+    phone?: string | null;
     condominium?: {
       id: string;
       name: string;
@@ -141,6 +147,7 @@ interface UserFormState {
   name: string;
   email: string;
   password: string;
+  phone: string;
   role: UserRole;
   administratorId: string;
   condominiumId: string;
@@ -154,6 +161,7 @@ const emptyCreateForm: UserFormState = {
   name: "",
   email: "",
   password: "",
+  phone: "",
   role: "MORADOR",
   administratorId: "",
   condominiumId: "",
@@ -167,6 +175,7 @@ const emptyEditForm: UserFormState = {
   name: "",
   email: "",
   password: "",
+  phone: "",
   role: "MORADOR",
   administratorId: "",
   condominiumId: "",
@@ -192,6 +201,49 @@ function isValidEmail(email: string) {
 
 function normalizeEmail(email: string) {
   return String(email || "").trim().toLowerCase();
+}
+
+
+
+function normalizePhoneForForm(phone: string) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+
+
+function isValidPhoneForForm(phone: string) {
+  const normalized = normalizePhoneForForm(phone);
+
+  if (!normalized) return true;
+
+  return (
+    normalized.length === 10 ||
+    normalized.length === 11 ||
+    normalized.length === 12 ||
+    normalized.length === 13
+  );
+}
+
+
+
+function formatPhoneDisplay(phone?: string | null) {
+  const normalized = normalizePhoneForForm(phone || "");
+
+  if (!normalized) return "-";
+
+  if (normalized.length === 13 && normalized.startsWith("55")) {
+    return `+55 (${normalized.slice(2, 4)}) ${normalized.slice(4, 9)}-${normalized.slice(9)}`;
+  }
+
+  if (normalized.length === 11) {
+    return `(${normalized.slice(0, 2)}) ${normalized.slice(2, 7)}-${normalized.slice(7)}`;
+  }
+
+  if (normalized.length === 10) {
+    return `(${normalized.slice(0, 2)}) ${normalized.slice(2, 6)}-${normalized.slice(6)}`;
+  }
+
+  return normalized;
 }
 
 
@@ -533,6 +585,7 @@ export default function UsuariosPage() {
       name: usuario.name || "",
       email: usuario.email || "",
       password: "",
+      phone: usuario.phone || "",
       role: usuario.role as UserRole,
       administratorId: usuario.administratorId || "",
       condominiumId: usuario.condominiumId || "",
@@ -725,6 +778,7 @@ export default function UsuariosPage() {
           name: existingUserByEmail.name || selectedResident.name || "",
           email: existingUserByEmail.email || selectedResident.email || "",
           password: "",
+          phone: existingUserByEmail.phone || selectedResident.phone || "",
           role: nextRole,
           administratorId: existingUserByEmail.administratorId || "",
           condominiumId:
@@ -752,6 +806,7 @@ export default function UsuariosPage() {
         name: selectedResident.name || "",
         email: selectedResident.email || "",
         password: "",
+        phone: selectedResident.phone || "",
         role: "MORADOR",
         administratorId: "",
         condominiumId: selectedResident.condominiumId || "",
@@ -795,6 +850,7 @@ export default function UsuariosPage() {
         name: usuario.name || selectedResident?.name || "",
         email: usuario.email || selectedResident?.email || "",
         password: "",
+        phone: usuario.phone || selectedResident?.phone || "",
         role: nextRole,
         administratorId: usuario.administratorId || "",
         condominiumId:
@@ -909,6 +965,7 @@ export default function UsuariosPage() {
     const payload: any = {
       name: source.name.trim(),
       email: normalizeEmail(source.email),
+      phone: normalizePhoneForForm(source.phone) || null,
       role: source.role,
       isActive: source.isActive,
     };
@@ -951,6 +1008,10 @@ export default function UsuariosPage() {
 
     if (!isValidEmail(source.email)) {
       return "Informe um e-mail válido.";
+    }
+
+    if (!isValidPhoneForForm(source.phone)) {
+      return "Informe um telefone válido com DDD para notificações/WhatsApp ou deixe o campo em branco.";
     }
 
     const passwordError = validatePasswordForForm(source.password, editing);
@@ -1004,6 +1065,7 @@ export default function UsuariosPage() {
           : prev.condominiumId,
       name: selectedResident?.name || prev.name,
       email: selectedResident?.email || prev.email,
+      phone: prev.phone || selectedResident?.phone || "",
     }));
   }
 
@@ -1045,6 +1107,7 @@ export default function UsuariosPage() {
             id: selectedUsuario.resident.id,
             name: selectedUsuario.resident.name,
             email: selectedUsuario.resident.email || null,
+            phone: selectedUsuario.resident.phone || null,
             cpf: null,
             condominiumId: selectedUsuario.resident.condominium?.id || "",
             unitId: selectedUsuario.resident.unit?.id || "",
@@ -1110,6 +1173,7 @@ export default function UsuariosPage() {
       const searchable = [
         usuario.name,
         usuario.email,
+        usuario.phone,
         usuario.role,
         usuario.administrator?.name,
         usuario.condominium?.name,
@@ -1399,6 +1463,7 @@ export default function UsuariosPage() {
 
                     <h2 className="break-words text-xl font-semibold tracking-tight text-[#17211B] md:text-2xl">{usuario.name}</h2>
                     <p className="mt-2 text-sm leading-6 text-[#5E6B63]">{usuario.email}</p>
+                    <p className="mt-1 text-sm leading-6 text-[#5E6B63]">Telefone: {formatPhoneDisplay(usuario.phone)}</p>
                     <p className="mt-2 text-xs text-[#7A877F]">Acesso vinculado a: {getUserLinkLabel(usuario)}</p>
                   </div>
 
@@ -1420,6 +1485,7 @@ export default function UsuariosPage() {
                     <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-4">
                       <InfoLine label="Perfil" value={roleLabel(usuario.role)} />
                       <InfoLine label="Status" value={statusLabel(usuario.isActive)} />
+                      <InfoLine label="Telefone" value={formatPhoneDisplay(usuario.phone)} />
                       <InfoLine label="Principal" value={getAccessMainLabel(usuario)} />
                       <InfoLine label="Detalhe" value={getAccessDetailLabel(usuario)} />
                       <InfoLine label="Administradora" value={usuario.administrator?.name || "-"} />
@@ -1732,6 +1798,31 @@ function UserModal({
             {emailInvalid && (
               <p className="mt-1 text-xs text-yellow-700">
                 Verifique o formato do e-mail.
+              </p>
+            )}
+          </FormField>
+
+          <FormField label="Telefone para notificações/WhatsApp">
+            <input
+              value={form.phone}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  phone: normalizePhoneForForm(e.target.value),
+                }))
+              }
+              className="form-input"
+              placeholder="11999999999"
+              inputMode="numeric"
+            />
+
+            <p className="mt-1 text-xs text-[#7A877F]">
+              Telefone pessoal usado para notificações do usuário, incluindo WhatsApp quando o canal estiver ativo. Para moradores, o telefone cadastral do morador pode ser usado como sugestão.
+            </p>
+
+            {!!form.phone && !isValidPhoneForForm(form.phone) && (
+              <p className="mt-1 text-xs text-yellow-700">
+                Informe um telefone com DDD. Exemplo: 11999999999.
               </p>
             )}
           </FormField>

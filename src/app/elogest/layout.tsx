@@ -25,6 +25,14 @@ import {
    - SUPER_ADMIN → permite
    - Outros perfis → redireciona para sua área correta
 
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   Revisão final:
+   - /elogest permanece exclusivo para perfil ativo SUPER_ADMIN.
+   - ADMINISTRADORA é redirecionada para /admin.
+   - Perfis de portal são redirecionados para /portal.
+   - Sem perfil ativo, o usuário volta para /contexto.
+
    Observação:
    /elogest é a área interna da dona da plataforma.
    Administradoras devem usar /admin.

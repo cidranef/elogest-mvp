@@ -1,43 +1,25 @@
 /* =========================================================
-   ETAPA 26.1 / 26.4 - MATRIZ CENTRAL DE PERMISSÕES - ELOGEST
+   ETAPA 43 - MATRIZ CENTRAL DE PERMISSÕES - ELOGEST
 
-   Este arquivo centraliza regras básicas de acesso por perfil.
+   Este arquivo centraliza regras de acesso por perfil, vínculo
+   e escopo operacional.
 
-   Objetivo:
-   - evitar regras espalhadas;
-   - padronizar permissões;
-   - facilitar auditoria de segurança;
-   - permitir que páginas, APIs e componentes consultem
-     permissões de forma consistente.
+   Objetivo desta revisão:
+   - manter compatibilidade com as funções existentes;
+   - consolidar a separação entre identidade do usuário e vínculo;
+   - preparar a arquitetura para múltiplos perfis por usuário;
+   - diferenciar proprietário, morador, inquilino, dependente e autorizado;
+   - reforçar o uso do perfil ativo nas APIs;
+   - evitar vazamento de dados entre administradoras, condomínios e unidades.
 
-   Perfis existentes:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
-   - SINDICO
-   - MORADOR
-   - PROPRIETARIO
-   - CONSELHEIRO
+   Importante:
+   - O User representa a identidade da pessoa.
+   - O UserAccess representa o perfil ativo daquela pessoa em um contexto.
+   - O UnitPersonLink representa o vínculo formal da pessoa com uma unidade.
 
-   ETAPA 35.7.5:
-   - Adicionado suporte explícito ao perfil PROPRIETARIO.
-   - Corrige bloqueio em /api/notifications quando o usuário
-     está operando no contexto de proprietário/morador.
-   - PROPRIETARIO passa a ter as mesmas permissões operacionais
-     básicas do MORADOR no portal.
-
-   ETAPA 40.2 — AUDITORIA DE PERMISSÕES E CONTEXTO ATIVO NAS APIs
-
-   Ajustes desta revisão:
-   - AuthUserLike passa a incluir unitId e source.
-   - Adicionado suporte explícito ao perfil CONSELHEIRO.
-   - Adicionados helpers de escopo por administradora, condomínio,
-     unidade e morador.
-   - Adicionados helpers para validar área usando o perfil ativo.
-   - Separada a área ELOGEST da área ADMIN para evitar que
-     SUPER_ADMIN opere dentro da área da administradora.
-   - Documentado que APIs devem preferir o activeAccess, não apenas
-     session.user.role.
-   - Mantida compatibilidade com funções já existentes.
+   Regra de ouro:
+   APIs revisadas devem preferir o activeAccess/contexto ativo e não apenas
+   session.user.role.
    ========================================================= */
 
 
@@ -66,6 +48,16 @@ export type AppArea =
 
 
 
+export type UnitPersonLinkType =
+  | "OWNER"
+  | "RESIDENT"
+  | "TENANT"
+  | "DEPENDENT"
+  | "AUTHORIZED"
+  | string;
+
+
+
 export type PermissionKey =
   | "ACCESS_ELOGEST"
   | "ACCESS_ADMIN"
@@ -77,6 +69,7 @@ export type PermissionKey =
   | "MANAGE_UNITS"
   | "MANAGE_RESIDENTS"
   | "MANAGE_USERS"
+  | "MANAGE_UNIT_PERSON_LINKS"
 
   | "VIEW_ALL_TICKETS"
   | "VIEW_ADMIN_TICKETS"
@@ -99,28 +92,37 @@ export type PermissionKey =
   | "VIEW_REPORTS"
   | "VIEW_DASHBOARDS"
 
+  | "VOTE_ASSEMBLY"
+  | "VIEW_ASSEMBLY"
+  | "VIEW_FINANCIAL_SUMMARY"
+
   | "MANAGE_OWN_NOTIFICATION_PREFERENCES";
 
 
 
+export type PermissionOverrideLike = unknown;
+
+
+
 /* =========================================================
-   AUTH USER LIKE
+   AUTH USER LIKE / ACTIVE ACCESS LIKE
 
-   Importante:
-   Para APIs novas ou revisadas, prefira enviar o activeAccess
-   como parâmetro destas funções.
+   Este tipo aceita tanto session.user quanto objetos vindos de
+   UserAccess/activeAccess.
 
-   Exemplo recomendado:
-   const activeAccess = await getActiveUserAccessFromCookies({ userId });
-   canAccessPortal(activeAccess)
-
-   Evite depender apenas de session.user.role em APIs que precisam
-   respeitar troca de perfil, contexto ativo e usuário com múltiplos
-   vínculos.
+   Campos novos da Etapa 43:
+   - unitPersonLinkId
+   - linkType
+   - canVote
+   - canOpenTickets
+   - receivesNotifications
+   - permissionsOverride
+   - revokedAt / revokedReason
    ========================================================= */
 
 export type AuthUserLike = {
   id?: string | null;
+  userId?: string | null;
   name?: string | null;
   email?: string | null;
   role?: AppRole | null;
@@ -129,18 +131,36 @@ export type AuthUserLike = {
   condominiumId?: string | null;
   unitId?: string | null;
   residentId?: string | null;
+  unitPersonLinkId?: string | null;
+
+  linkType?: UnitPersonLinkType | null;
+  canVote?: boolean | null;
+  canOpenTickets?: boolean | null;
+  receivesNotifications?: boolean | null;
 
   accessId?: string | null;
   label?: string | null;
   source?: string | null;
   isDefault?: boolean | null;
   isActive?: boolean | null;
+
+  /*
+     ETAPA 43.1 — Compatibilidade com Prisma Json
+
+     O banco pode retornar permissionsOverride como JsonValue/JsonLike.
+     Por isso este campo precisa aceitar unknown, e a validação deve
+     acontecer somente dentro de getPermissionOverrideRules().
+  */
+  permissionsOverride?: PermissionOverrideLike;
+  lastUsedAt?: Date | string | null;
+  revokedAt?: Date | string | null;
+  revokedReason?: string | null;
 };
 
 
 
 /* =========================================================
-   LABELS DOS PERFIS
+   LABELS DOS PERFIS E VÍNCULOS
    ========================================================= */
 
 export function getRoleLabel(role?: AppRole | null) {
@@ -158,12 +178,36 @@ export function getRoleLabel(role?: AppRole | null) {
 
 
 
+export function getUnitPersonLinkTypeLabel(
+  linkType?: UnitPersonLinkType | null
+) {
+  const labels: Record<string, string> = {
+    OWNER: "Proprietário",
+    RESIDENT: "Morador",
+    TENANT: "Inquilino",
+    DEPENDENT: "Dependente",
+    AUTHORIZED: "Autorizado",
+  };
+
+  return labels[String(linkType || "")] || linkType || "Vínculo não informado";
+}
+
+
+
 /* =========================================================
    NORMALIZAÇÃO BÁSICA
    ========================================================= */
 
 export function normalizeRole(role?: AppRole | null) {
   return String(role || "").trim().toUpperCase();
+}
+
+
+
+export function normalizeUnitPersonLinkType(
+  linkType?: UnitPersonLinkType | null
+) {
+  return String(linkType || "").trim().toUpperCase();
 }
 
 
@@ -183,6 +227,24 @@ export function sameId(
 
 export function hasId(value?: string | null) {
   return !!String(value || "").trim();
+}
+
+
+
+export function getEffectiveUserId(user?: AuthUserLike | null) {
+  return user?.userId || user?.id || null;
+}
+
+
+
+export function isActiveAccess(user?: AuthUserLike | null) {
+  if (!user) return false;
+
+  if (user.revokedAt) return false;
+
+  if (user.isActive === false) return false;
+
+  return true;
 }
 
 
@@ -251,17 +313,50 @@ export function isResidentialRole(user?: AuthUserLike | null) {
 
 
 /* =========================================================
+   GRUPOS DE VÍNCULO COM UNIDADE
+   ========================================================= */
+
+export function isOwnerLink(user?: AuthUserLike | null) {
+  return normalizeUnitPersonLinkType(user?.linkType) === "OWNER";
+}
+
+
+
+export function isResidentLink(user?: AuthUserLike | null) {
+  return normalizeUnitPersonLinkType(user?.linkType) === "RESIDENT";
+}
+
+
+
+export function isTenantLink(user?: AuthUserLike | null) {
+  return normalizeUnitPersonLinkType(user?.linkType) === "TENANT";
+}
+
+
+
+export function isDependentLink(user?: AuthUserLike | null) {
+  return normalizeUnitPersonLinkType(user?.linkType) === "DEPENDENT";
+}
+
+
+
+export function isAuthorizedLink(user?: AuthUserLike | null) {
+  return normalizeUnitPersonLinkType(user?.linkType) === "AUTHORIZED";
+}
+
+
+
+export function isOccupantLink(user?: AuthUserLike | null) {
+  return isResidentLink(user) || isTenantLink(user) || isDependentLink(user);
+}
+
+
+
+/* =========================================================
    MATRIZ DE PERMISSÕES POR PERFIL
 
-   Regras específicas de escopo continuam sendo validadas nas APIs:
-   - administradora vê apenas sua carteira;
-   - síndico vê apenas seu condomínio;
-   - morador/proprietário vê apenas seus chamados/unidade;
-   - super admin vê tudo.
-
-   Observação:
-   CONSELHEIRO fica com permissões mínimas de portal por enquanto.
-   O escopo operacional específico pode ser expandido depois.
+   Regras de escopo continuam sendo validadas nas APIs.
+   Esta matriz responde apenas: este perfil pode executar esta ação?
    ========================================================= */
 
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
@@ -274,11 +369,15 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "MANAGE_UNITS",
     "MANAGE_RESIDENTS",
     "MANAGE_USERS",
+    "MANAGE_UNIT_PERSON_LINKS",
 
     "VIEW_ALL_TICKETS",
     "VIEW_ADMIN_TICKETS",
+    "VIEW_CONDOMINIUM_TICKETS",
+    "VIEW_OWN_TICKETS",
 
     "CREATE_ADMIN_TICKET",
+    "CREATE_PORTAL_TICKET",
 
     "ASSIGN_TICKET",
     "CHANGE_TICKET_STATUS",
@@ -288,8 +387,14 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "UPLOAD_ATTACHMENT",
     "DELETE_ATTACHMENT",
 
+    "RATE_TICKET",
+
     "VIEW_REPORTS",
     "VIEW_DASHBOARDS",
+
+    "VOTE_ASSEMBLY",
+    "VIEW_ASSEMBLY",
+    "VIEW_FINANCIAL_SUMMARY",
 
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
@@ -302,6 +407,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "MANAGE_UNITS",
     "MANAGE_RESIDENTS",
     "MANAGE_USERS",
+    "MANAGE_UNIT_PERSON_LINKS",
 
     "VIEW_ADMIN_TICKETS",
 
@@ -317,6 +423,8 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
 
     "VIEW_REPORTS",
     "VIEW_DASHBOARDS",
+
+    "VIEW_FINANCIAL_SUMMARY",
 
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
@@ -336,6 +444,8 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "RATE_TICKET",
 
     "VIEW_DASHBOARDS",
+    "VIEW_ASSEMBLY",
+    "VIEW_FINANCIAL_SUMMARY",
 
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
@@ -354,6 +464,8 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
 
     "RATE_TICKET",
 
+    "VIEW_ASSEMBLY",
+
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
 
@@ -371,6 +483,10 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
 
     "RATE_TICKET",
 
+    "VOTE_ASSEMBLY",
+    "VIEW_ASSEMBLY",
+    "VIEW_FINANCIAL_SUMMARY",
+
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
 
@@ -385,10 +501,69 @@ export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
     "UPLOAD_ATTACHMENT",
 
     "VIEW_DASHBOARDS",
+    "VIEW_ASSEMBLY",
+    "VIEW_FINANCIAL_SUMMARY",
 
     "MANAGE_OWN_NOTIFICATION_PREFERENCES",
   ],
 };
+
+
+
+/* =========================================================
+   PERMISSIONS OVERRIDE
+
+   Formatos aceitos:
+   - ["PERMISSION_A", "PERMISSION_B"]
+   - { allow: ["PERMISSION_A"], deny: ["PERMISSION_B"] }
+
+   deny tem prioridade sobre allow.
+   ========================================================= */
+
+function normalizePermissionKeyArray(value: unknown): PermissionKey[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is PermissionKey => {
+    return typeof item === "string" && item.trim().length > 0;
+  });
+}
+
+
+
+function getPermissionOverrideRules(override?: PermissionOverrideLike) {
+  if (!override) {
+    return {
+      allow: [] as PermissionKey[],
+      deny: [] as PermissionKey[],
+    };
+  }
+
+  if (Array.isArray(override)) {
+    return {
+      allow: normalizePermissionKeyArray(override),
+      deny: [] as PermissionKey[],
+    };
+  }
+
+  if (typeof override === "object" && override !== null) {
+    const record = override as {
+      allow?: unknown;
+      deny?: unknown;
+    };
+
+    return {
+      allow: normalizePermissionKeyArray(record.allow),
+      deny: normalizePermissionKeyArray(record.deny),
+    };
+  }
+
+  return {
+    allow: [] as PermissionKey[],
+    deny: [] as PermissionKey[],
+  };
+}
 
 
 
@@ -400,9 +575,21 @@ export function hasPermission(
   user: AuthUserLike | null | undefined,
   permission: PermissionKey
 ) {
+  if (!isActiveAccess(user)) return false;
+
   const role = normalizeRole(user?.role);
 
   if (!role) return false;
+
+  const overrideRules = getPermissionOverrideRules(user?.permissionsOverride);
+
+  if (overrideRules.deny.includes(permission)) {
+    return false;
+  }
+
+  if (overrideRules.allow.includes(permission)) {
+    return true;
+  }
 
   const permissions = ROLE_PERMISSIONS[role] || [];
 
@@ -445,13 +632,13 @@ export function canAccessEloGest(user?: AuthUserLike | null) {
 
 
 export function canAccessAdmin(user?: AuthUserLike | null) {
-  return hasPermission(user, "ACCESS_ADMIN");
+  return hasPermission(user, "ACCESS_ADMIN") && hasId(user?.administratorId);
 }
 
 
 
 export function canAccessPortal(user?: AuthUserLike | null) {
-  return hasPermission(user, "ACCESS_PORTAL");
+  return hasPermission(user, "ACCESS_PORTAL") && hasId(user?.condominiumId);
 }
 
 
@@ -528,13 +715,21 @@ export function canViewOwnTickets(user?: AuthUserLike | null) {
 
 
 export function canCreateAdminTicket(user?: AuthUserLike | null) {
-  return hasPermission(user, "CREATE_ADMIN_TICKET");
+  return hasPermission(user, "CREATE_ADMIN_TICKET") && hasId(user?.administratorId);
 }
 
 
 
 export function canCreatePortalTicket(user?: AuthUserLike | null) {
-  return hasPermission(user, "CREATE_PORTAL_TICKET");
+  if (!hasPermission(user, "CREATE_PORTAL_TICKET")) {
+    return false;
+  }
+
+  if (user?.canOpenTickets === false) {
+    return false;
+  }
+
+  return hasId(user?.condominiumId);
 }
 
 
@@ -615,6 +810,12 @@ export function canManageUsers(user?: AuthUserLike | null) {
 
 
 
+export function canManageUnitPersonLinks(user?: AuthUserLike | null) {
+  return hasPermission(user, "MANAGE_UNIT_PERSON_LINKS");
+}
+
+
+
 export function canViewReports(user?: AuthUserLike | null) {
   return hasPermission(user, "VIEW_REPORTS");
 }
@@ -628,30 +829,97 @@ export function canViewDashboards(user?: AuthUserLike | null) {
 
 
 /* =========================================================
+   VALIDADORES FUTUROS: ASSEMBLEIA / FINANCEIRO
+   ========================================================= */
+
+export function canViewAssembly(user?: AuthUserLike | null) {
+  return hasPermission(user, "VIEW_ASSEMBLY");
+}
+
+
+
+export function canVoteAssembly(user?: AuthUserLike | null) {
+  if (!hasPermission(user, "VOTE_ASSEMBLY")) {
+    return false;
+  }
+
+  if (typeof user?.canVote === "boolean") {
+    return user.canVote;
+  }
+
+  return isProprietario(user) || isOwnerLink(user);
+}
+
+
+
+export function canViewFinancialSummary(user?: AuthUserLike | null) {
+  return hasPermission(user, "VIEW_FINANCIAL_SUMMARY");
+}
+
+
+
+export function canReceiveNotificationsInContext(
+  user?: AuthUserLike | null
+) {
+  if (!canAccessNotifications(user)) {
+    return false;
+  }
+
+  if (typeof user?.receivesNotifications === "boolean") {
+    return user.receivesNotifications;
+  }
+
+  return true;
+}
+
+
+
+/* =========================================================
    VALIDADORES DE ESCOPO
 
-   Estes helpers não substituem o filtro Prisma das APIs.
-   Eles servem para padronizar comparações e deixar as regras
-   explícitas.
-
-   Exemplos de uso:
-   - Administradora só acessa condomínios de sua carteira.
-   - Síndico só acessa seu condomínio.
-   - Morador/proprietário só acessa sua unidade/residentId.
+   Estes helpers não substituem filtros Prisma nas APIs.
+   Eles apenas padronizam comparações e deixam as regras explícitas.
    ========================================================= */
+
+export type CondominiumScopeLike = {
+  id?: string | null;
+  condominiumId?: string | null;
+  administratorId?: string | null;
+};
+
+
+
+export type UnitScopeLike = {
+  id?: string | null;
+  unitId?: string | null;
+  condominiumId?: string | null;
+  administratorId?: string | null;
+};
+
+
+
+export type ResidentScopeLike = {
+  id?: string | null;
+  residentId?: string | null;
+  unitId?: string | null;
+  condominiumId?: string | null;
+  administratorId?: string | null;
+};
+
+
 
 export function canAccessAdministratorScope(
   user: AuthUserLike | null | undefined,
   administratorId?: string | null
 ) {
-  if (!user) return false;
+  if (!isActiveAccess(user)) return false;
 
   if (isSuperAdmin(user)) {
     return true;
   }
 
   if (isAdministradora(user)) {
-    return sameId(user.administratorId, administratorId);
+    return sameId(user?.administratorId, administratorId);
   }
 
   return false;
@@ -661,47 +929,85 @@ export function canAccessAdministratorScope(
 
 export function canAccessCondominiumScope(
   user: AuthUserLike | null | undefined,
-  condominiumId?: string | null
+  condominiumId?: string | null,
+  administratorId?: string | null
 ) {
-  if (!user) return false;
+  if (!isActiveAccess(user)) return false;
 
   if (isSuperAdmin(user)) {
     return true;
   }
 
   if (isAdministradora(user)) {
-    return true;
+    if (administratorId) {
+      return sameId(user?.administratorId, administratorId);
+    }
+
+    /*
+       Compatibilidade:
+       quando a rota antiga ainda não envia administratorId do condomínio,
+       permitimos a avaliação pelo perfil. APIs novas devem usar
+       canAccessCondominiumRecordScope para validar carteira com segurança.
+    */
+    return hasId(user?.administratorId) && hasId(condominiumId);
   }
 
-  if (isSindico(user) || isConselheiro(user)) {
-    return sameId(user.condominiumId, condominiumId);
-  }
-
-  if (isResidentialRole(user)) {
-    return sameId(user.condominiumId, condominiumId);
+  if (isSindico(user) || isConselheiro(user) || isResidentialRole(user)) {
+    return sameId(user?.condominiumId, condominiumId);
   }
 
   return false;
+}
+
+
+
+export function canAccessCondominiumRecordScope(
+  user: AuthUserLike | null | undefined,
+  condominium?: CondominiumScopeLike | null
+) {
+  if (!isActiveAccess(user) || !condominium) return false;
+
+  const condominiumId = condominium.id || condominium.condominiumId || null;
+
+  return canAccessCondominiumScope(
+    user,
+    condominiumId,
+    condominium.administratorId || null
+  );
 }
 
 
 
 export function canAccessUnitScope(
   user: AuthUserLike | null | undefined,
-  unitId?: string | null
+  unitId?: string | null,
+  condominiumId?: string | null,
+  administratorId?: string | null
 ) {
-  if (!user) return false;
+  if (!isActiveAccess(user)) return false;
 
-  if (isSuperAdmin(user) || isAdministradora(user)) {
+  if (isSuperAdmin(user)) {
     return true;
+  }
+
+  if (isAdministradora(user)) {
+    if (administratorId) {
+      return sameId(user?.administratorId, administratorId);
+    }
+
+    return hasId(user?.administratorId) && hasId(unitId);
   }
 
   if (isSindico(user) || isConselheiro(user)) {
-    return true;
+    if (condominiumId) {
+      return sameId(user?.condominiumId, condominiumId);
+    }
+
+    return sameId(user?.unitId, unitId) || hasId(user?.condominiumId);
   }
 
   if (isResidentialRole(user)) {
-    return sameId(user.unitId, unitId);
+    return sameId(user?.unitId, unitId);
   }
 
   return false;
@@ -709,25 +1015,83 @@ export function canAccessUnitScope(
 
 
 
+export function canAccessUnitRecordScope(
+  user: AuthUserLike | null | undefined,
+  unit?: UnitScopeLike | null
+) {
+  if (!isActiveAccess(user) || !unit) return false;
+
+  const unitId = unit.id || unit.unitId || null;
+
+  return canAccessUnitScope(
+    user,
+    unitId,
+    unit.condominiumId || null,
+    unit.administratorId || null
+  );
+}
+
+
+
 export function canAccessResidentScope(
   user: AuthUserLike | null | undefined,
-  residentId?: string | null
+  residentId?: string | null,
+  unitId?: string | null,
+  condominiumId?: string | null,
+  administratorId?: string | null
 ) {
-  if (!user) return false;
+  if (!isActiveAccess(user)) return false;
 
-  if (isSuperAdmin(user) || isAdministradora(user)) {
+  if (isSuperAdmin(user)) {
     return true;
+  }
+
+  if (isAdministradora(user)) {
+    if (administratorId) {
+      return sameId(user?.administratorId, administratorId);
+    }
+
+    return hasId(user?.administratorId) && hasId(residentId);
   }
 
   if (isSindico(user) || isConselheiro(user)) {
-    return true;
+    if (condominiumId) {
+      return sameId(user?.condominiumId, condominiumId);
+    }
+
+    return hasId(user?.condominiumId);
   }
 
   if (isResidentialRole(user)) {
-    return sameId(user.residentId, residentId);
+    if (residentId && user?.residentId) {
+      return sameId(user.residentId, residentId);
+    }
+
+    if (unitId && user?.unitId) {
+      return sameId(user.unitId, unitId);
+    }
   }
 
   return false;
+}
+
+
+
+export function canAccessResidentRecordScope(
+  user: AuthUserLike | null | undefined,
+  resident?: ResidentScopeLike | null
+) {
+  if (!isActiveAccess(user) || !resident) return false;
+
+  const residentId = resident.id || resident.residentId || null;
+
+  return canAccessResidentScope(
+    user,
+    residentId,
+    resident.unitId || null,
+    resident.condominiumId || null,
+    resident.administratorId || null
+  );
 }
 
 
@@ -745,6 +1109,7 @@ export type TicketScopeLike = {
   unitId?: string | null;
   residentId?: string | null;
   createdByUserId?: string | null;
+  createdByAccessId?: string | null;
   assignedToUserId?: string | null;
 };
 
@@ -754,7 +1119,7 @@ export function canAccessTicketScope(
   user: AuthUserLike | null | undefined,
   ticket?: TicketScopeLike | null
 ) {
-  if (!user || !ticket) {
+  if (!isActiveAccess(user) || !ticket) {
     return false;
   }
 
@@ -763,28 +1128,32 @@ export function canAccessTicketScope(
   }
 
   if (isAdministradora(user)) {
-    if (ticket.administratorId && user.administratorId) {
+    if (ticket.administratorId && user?.administratorId) {
       return sameId(user.administratorId, ticket.administratorId);
     }
 
-    return canViewAdminTickets(user);
+    return canViewAdminTickets(user) && hasId(user?.administratorId);
   }
 
   if (isSindico(user) || isConselheiro(user)) {
-    return sameId(user.condominiumId, ticket.condominiumId);
+    return sameId(user?.condominiumId, ticket.condominiumId);
   }
 
   if (isResidentialRole(user)) {
-    if (ticket.residentId && user.residentId) {
+    if (ticket.createdByAccessId && user?.accessId) {
+      return sameId(user.accessId, ticket.createdByAccessId);
+    }
+
+    if (ticket.residentId && user?.residentId) {
       return sameId(user.residentId, ticket.residentId);
     }
 
-    if (ticket.unitId && user.unitId) {
+    if (ticket.unitId && user?.unitId) {
       return sameId(user.unitId, ticket.unitId);
     }
 
-    if (ticket.createdByUserId && user.id) {
-      return sameId(user.id, ticket.createdByUserId);
+    if (ticket.createdByUserId && getEffectiveUserId(user)) {
+      return sameId(getEffectiveUserId(user), ticket.createdByUserId);
     }
 
     return false;
@@ -801,15 +1170,10 @@ export function canAccessTicketScope(
    Estes helpers retornam objetos de filtro básicos para uso em
    findMany. Em rotas específicas, eles podem ser combinados com
    filtros adicionais.
-
-   Observação:
-   Para administradora, quando o ticket não tem administratorId
-   direto, a API pode precisar filtrar via relacionamento com
-   condominium.administratorId.
    ========================================================= */
 
 export function buildAdminScopeWhere(user?: AuthUserLike | null) {
-  if (!user) {
+  if (!isActiveAccess(user)) {
     return {
       id: "__NO_ACCESS__",
     };
@@ -822,7 +1186,27 @@ export function buildAdminScopeWhere(user?: AuthUserLike | null) {
   */
   if (isAdministradora(user)) {
     return {
-      administratorId: user.administratorId || "__NO_ACCESS__",
+      administratorId: user?.administratorId || "__NO_ACCESS__",
+    };
+  }
+
+  return {
+    id: "__NO_ACCESS__",
+  };
+}
+
+
+
+export function buildAdminCondominiumScopeWhere(user?: AuthUserLike | null) {
+  if (!isActiveAccess(user)) {
+    return {
+      id: "__NO_ACCESS__",
+    };
+  }
+
+  if (isAdministradora(user)) {
+    return {
+      administratorId: user?.administratorId || "__NO_ACCESS__",
     };
   }
 
@@ -834,7 +1218,7 @@ export function buildAdminScopeWhere(user?: AuthUserLike | null) {
 
 
 export function buildPortalTicketScopeWhere(user?: AuthUserLike | null) {
-  if (!user) {
+  if (!isActiveAccess(user)) {
     return {
       id: "__NO_ACCESS__",
     };
@@ -842,7 +1226,7 @@ export function buildPortalTicketScopeWhere(user?: AuthUserLike | null) {
 
   if (isSindico(user) || isConselheiro(user)) {
     return {
-      condominiumId: user.condominiumId || "__NO_ACCESS__",
+      condominiumId: user?.condominiumId || "__NO_ACCESS__",
     };
   }
 
@@ -850,13 +1234,67 @@ export function buildPortalTicketScopeWhere(user?: AuthUserLike | null) {
     return {
       OR: [
         {
-          residentId: user.residentId || "__NO_ACCESS__",
+          createdByAccessId: user?.accessId || "__NO_ACCESS__",
         },
         {
-          unitId: user.unitId || "__NO_ACCESS__",
+          residentId: user?.residentId || "__NO_ACCESS__",
         },
         {
-          createdByUserId: user.id || "__NO_ACCESS__",
+          unitId: user?.unitId || "__NO_ACCESS__",
+        },
+        {
+          createdByUserId: getEffectiveUserId(user) || "__NO_ACCESS__",
+        },
+      ],
+    };
+  }
+
+  return {
+    id: "__NO_ACCESS__",
+  };
+}
+
+
+
+export function buildUnitPersonLinkScopeWhere(user?: AuthUserLike | null) {
+  if (!isActiveAccess(user)) {
+    return {
+      id: "__NO_ACCESS__",
+    };
+  }
+
+  if (isSuperAdmin(user)) {
+    return {};
+  }
+
+  if (isAdministradora(user)) {
+    return {
+      condominium: {
+        administratorId: user?.administratorId || "__NO_ACCESS__",
+      },
+    };
+  }
+
+  if (isSindico(user) || isConselheiro(user)) {
+    return {
+      condominiumId: user?.condominiumId || "__NO_ACCESS__",
+    };
+  }
+
+  if (isResidentialRole(user)) {
+    return {
+      OR: [
+        {
+          id: user?.unitPersonLinkId || "__NO_ACCESS__",
+        },
+        {
+          userId: getEffectiveUserId(user) || "__NO_ACCESS__",
+        },
+        {
+          residentId: user?.residentId || "__NO_ACCESS__",
+        },
+        {
+          unitId: user?.unitId || "__NO_ACCESS__",
         },
       ],
     };

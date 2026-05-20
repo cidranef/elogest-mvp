@@ -1,5 +1,8 @@
 import { db } from "@/lib/db";
-import { dispatchNotificationEmail } from "@/lib/notification-dispatcher";
+import {
+  dispatchNotificationEmail,
+  dispatchNotificationWhatsApp,
+} from "@/lib/notification-dispatcher";
 import {
   getNotificationAvailableChannels,
   getNotificationEnabledChannels,
@@ -17,49 +20,21 @@ import { isNotificationChannelEnabledForUser } from "@/lib/notification-preferen
 /* =========================================================
    ETAPA 22.7 - CENTRAL DE NOTIFICAÇÕES INTERNAS
 
-   ETAPA 35.7.2 - AJUSTE FINAL DE ATRIBUIÇÃO
+   ETAPA 42.10.5 — USER.PHONE PARA WHATSAPP
 
-   Correção:
-   - notifySingleUser agora aceita allowNotifyActor.
-   - Por padrão continua NÃO notificando quem executou a ação.
-   - Para notificação pública de responsável definido, liberamos
-     allowNotifyActor: true para proteger cenários de múltiplos
-     contextos, como Síndico + Morador.
-
-   ETAPA 35.7.4 - EVENTO PÚBLICO DE ATRIBUIÇÃO
-
-   Ajuste:
-   - TICKET_ASSIGNED continua sendo usado para notificar o
-     responsável operacional.
-   - TICKET_ASSIGNED_PUBLIC passa a ser usado para notificar
-     o morador/criador do chamado.
-   - Isso evita que a notificação pública caia como GENERAL.
-   - Mantém título e mensagem humanizados para o morador:
-     "Responsável definido para seu chamado".
-
-   ETAPA 40.4 — AUDITORIA DAS NOTIFICAÇÕES E CENTRAL DE NOTIFICAÇÕES
-
-   Regra consolidada:
-   - COMMENT_INTERNAL / Comunicado interno é ferramenta exclusiva
-     de comunicação entre usuários da ADMINISTRADORA.
-   - Não notifica SÍNDICO.
-   - Não notifica MORADOR.
-   - Não notifica PROPRIETÁRIO.
-   - Não aparece no portal.
-   - Pode notificar usuários ADMINISTRADORA da carteira e SUPER_ADMIN.
-   - Se o responsável atribuído for ADMINISTRADORA ou SUPER_ADMIN,
-     também pode receber o comentário interno.
-   - Se o responsável atribuído for SÍNDICO, ele NÃO recebe
-     comentário interno.
-
-   Melhorias desta revisão:
-   - Normalização de role com trim().toUpperCase().
-   - Metadados de comentário interno agora indicam explicitamente
-     internalOnly e notificationGroup ADMIN_INTERNAL_COMMUNICATION.
-   - Mantida separação entre:
-     1. notificação operacional do responsável;
-     2. notificação pública do morador/criador;
-     3. notificação interna da administradora.
+   Ajustes desta revisão:
+   - resolveNotificationUser() agora busca phone do User.
+   - notifyAdministradoraUsers() agora busca phone do User.
+   - notifyCondominiumSyndics() agora busca phone do User.
+   - BasicUser passa a aceitar phoneOptInAt / phoneOptOutAt.
+   - resolveWhatsAppPhone() mantém prioridade:
+       1. input.toPhone
+       2. metadata.toPhone / whatsappPhone / phone / celular
+       3. User.phone
+       4. Resident.phone
+   - Com isso, TICKET_CREATED pode disparar WhatsApp dev para
+     administradora, atendimento, síndico e super admin quando
+     esses usuários possuírem User.phone.
    ========================================================= */
 
 
@@ -73,6 +48,7 @@ type SendNotificationInput = {
 
   to?: string | null;
   toName?: string | null;
+  toPhone?: string | null;
 
   type?: string;
   title: string;
@@ -92,6 +68,18 @@ type BasicUser = {
   email?: string | null;
   role?: string | null;
   isActive?: boolean | null;
+
+  phone?: string | null;
+  phoneVerifiedAt?: Date | string | null;
+  phoneOptInAt?: Date | string | null;
+  phoneOptOutAt?: Date | string | null;
+
+  phoneNumber?: string | null;
+  mobilePhone?: string | null;
+  cellphone?: string | null;
+  celular?: string | null;
+  whatsapp?: string | null;
+  whatsappPhone?: string | null;
 };
 
 type BasicActor = {
@@ -115,12 +103,42 @@ type TicketForNotification = {
   resident?: {
     id?: string | null;
     name?: string | null;
+    phone?: string | null;
+    phoneNumber?: string | null;
+    mobilePhone?: string | null;
+    cellphone?: string | null;
+    celular?: string | null;
+    whatsapp?: string | null;
+    whatsappPhone?: string | null;
     user?: BasicUser | null;
   } | null;
 
   createdByUser?: BasicUser | null;
   assignedToUser?: BasicUser | null;
 };
+
+
+
+/* =========================================================
+   SELECT PADRÃO DE USUÁRIO PARA NOTIFICAÇÕES
+
+   Importante:
+   Todos os fluxos que podem disparar WhatsApp precisam carregar
+   User.phone. Caso contrário, o dispatcher entende que o usuário
+   não possui telefone e faz skip silencioso.
+   ========================================================= */
+
+const userNotificationSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  isActive: true,
+  phone: true,
+  phoneVerifiedAt: true,
+  phoneOptInAt: true,
+  phoneOptOutAt: true,
+} as const;
 
 
 
@@ -142,21 +160,6 @@ function isResidentialUser(user?: BasicUser | null) {
 
 
 
-function isSyndicUser(user?: BasicUser | null) {
-  return normalizeRole(user?.role) === "SINDICO";
-}
-
-
-
-/* =========================================================
-   USUÁRIO ADMINISTRATIVO INTERNO
-
-   Regra importante:
-   - Comentário interno é exclusivo da administradora.
-   - SÍNDICO não é considerado usuário interno da administradora.
-   - MORADOR e PROPRIETÁRIO também não são.
-   ========================================================= */
-
 function isInternalAdministrativeUser(user?: BasicUser | null) {
   const role = normalizeRole(user?.role);
 
@@ -164,17 +167,6 @@ function isInternalAdministrativeUser(user?: BasicUser | null) {
 }
 
 
-
-/* =========================================================
-   USUÁRIO OPERACIONAL PARA ATRIBUIÇÃO
-
-   Usado para notificação operacional de responsável atribuído.
-
-   Aqui SÍNDICO pode receber notificação operacional quando for
-   definido como responsável pelo chamado.
-
-   Isso NÃO se aplica ao COMMENT_INTERNAL.
-   ========================================================= */
 
 function isOperationalResponsibleUser(user?: BasicUser | null) {
   const role = normalizeRole(user?.role);
@@ -253,12 +245,106 @@ function buildEventMetadata({
 
 
 /* =========================================================
-   LINK DO CHAMADO POR PERFIL
+   TELEFONE PARA WHATSAPP
 
-   Observação:
-   - SÍNDICO acessa chamado pelo portal.
-   - MORADOR e PROPRIETÁRIO acessam pelo portal.
-   - ADMINISTRADORA e SUPER_ADMIN acessam pelo admin.
+   Ordem de busca:
+   1. input.toPhone;
+   2. metadata.toPhone / whatsappPhone / phone / celular;
+   3. User.phone;
+   4. Resident.phone.
+   ========================================================= */
+
+function getValueAsString(value: unknown) {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+
+  return trimmed || null;
+}
+
+
+
+function extractPhoneFromAny(source: any) {
+  if (!source) return null;
+
+  return (
+    getValueAsString(source.toPhone) ||
+    getValueAsString(source.whatsappPhone) ||
+    getValueAsString(source.whatsapp) ||
+    getValueAsString(source.phone) ||
+    getValueAsString(source.phoneNumber) ||
+    getValueAsString(source.mobilePhone) ||
+    getValueAsString(source.cellphone) ||
+    getValueAsString(source.celular) ||
+    null
+  );
+}
+
+
+
+function resolveWhatsAppPhone({
+  inputPhone,
+  user,
+  resident,
+  metadata,
+}: {
+  inputPhone?: string | null;
+  user?: BasicUser | null;
+  resident?: TicketForNotification["resident"];
+  metadata?: any;
+}) {
+  return (
+    getValueAsString(inputPhone) ||
+    extractPhoneFromAny(metadata) ||
+    extractPhoneFromAny(user) ||
+    extractPhoneFromAny(resident) ||
+    null
+  );
+}
+
+
+
+/* =========================================================
+   WHATSAPP DEV — DISPARO AUTOMÁTICO CONTROLADO
+   ========================================================= */
+
+const WHATSAPP_DEV_AUTO_EVENTS = new Set<NotificationEventType>([
+  "TICKET_CREATED",
+  "TICKET_PUBLIC_COMMENT",
+  "TICKET_ASSIGNED_PUBLIC",
+  "TICKET_RESOLVED",
+]);
+
+
+
+function isWhatsAppAutoDispatchEnabled() {
+  if (process.env.WHATSAPP_AUTO_DISPATCH_ENABLED !== "true") {
+    return false;
+  }
+
+  const provider = process.env.WHATSAPP_PROVIDER || "dev";
+
+  if (process.env.NODE_ENV === "production" && provider === "dev") {
+    return false;
+  }
+
+  return true;
+}
+
+
+
+function shouldAutoDispatchWhatsApp(type: NotificationEventType) {
+  if (!isWhatsAppAutoDispatchEnabled()) {
+    return false;
+  }
+
+  return WHATSAPP_DEV_AUTO_EVENTS.has(type);
+}
+
+
+
+/* =========================================================
+   LINK DO CHAMADO POR PERFIL
    ========================================================= */
 
 export function getTicketHrefForUser(targetUser: any, ticketId: string) {
@@ -292,12 +378,7 @@ async function resolveNotificationUser(input: SendNotificationInput) {
         id: input.userId,
         isActive: true,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-      },
+      select: userNotificationSelect,
     });
   }
 
@@ -312,12 +393,7 @@ async function resolveNotificationUser(input: SendNotificationInput) {
       email,
       isActive: true,
     },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-    },
+    select: userNotificationSelect,
   });
 }
 
@@ -367,65 +443,95 @@ async function createSystemNotification(input: SendNotificationInput) {
   const requestedChannel = input.channel || "SYSTEM";
 
   const notification = await db.notification.create({
-  data: {
+    data: {
+      userId: user.id,
+      ticketId: input.ticketId || null,
+      channel: "SYSTEM",
+      status: "UNREAD",
+      type,
+      title: input.title,
+      message: input.message,
+      href,
+      metadata: buildEventMetadata({
+        type,
+        requestedChannel,
+        metadata: input.metadata,
+        userPreference: {
+          checked: true,
+          channelAllowed: systemAllowed,
+        },
+      }),
+    },
+  });
+
+
+
+  /* =========================================================
+     DISPATCH EXTERNO — E-MAIL
+     ========================================================= */
+
+  void dispatchNotificationEmail({
     userId: user.id,
-    ticketId: input.ticketId || null,
-    channel: "SYSTEM",
-    status: "UNREAD",
+    to: user.email || input.to || null,
+    toName: user.name || input.toName || null,
     type,
     title: input.title,
     message: input.message,
+    ticketId: input.ticketId || null,
     href,
-    metadata: buildEventMetadata({
-      type,
-      requestedChannel,
+    metadata: input.metadata,
+  }).then((result) => {
+    if (!result?.ok) {
+      console.error("[EloGest] E-mail de notificação não enviado:", {
+        userId: user.id,
+        type,
+        title: input.title,
+        result,
+      });
+    }
+  });
+
+
+
+  /* =========================================================
+     DISPATCH EXTERNO — WHATSAPP DEV CONTROLADO
+
+     Agora User.phone é carregado no select do usuário.
+     ========================================================= */
+
+  if (shouldAutoDispatchWhatsApp(type)) {
+    const whatsAppPhone = resolveWhatsAppPhone({
+      inputPhone: input.toPhone || null,
+      user: user as BasicUser,
       metadata: input.metadata,
-      userPreference: {
-        checked: true,
-        channelAllowed: systemAllowed,
-      },
-    }),
-  },
-});
+    });
 
-
-
-/* =========================================================
-   DISPATCH EXTERNO — E-MAIL
-
-   A notificação interna continua sendo a fonte principal.
-   O e-mail é enviado em paralelo quando:
-   - o evento permite e-mail;
-   - o usuário tem e-mail;
-   - a preferência do usuário permite;
-   - EMAIL_NOTIFICATIONS_ENABLED não está false.
-
-   Falha no e-mail não impede a criação da notificação interna.
-   ========================================================= */
-
-void dispatchNotificationEmail({
-  userId: user.id,
-  to: user.email || input.to || null,
-  toName: user.name || input.toName || null,
-  type,
-  title: input.title,
-  message: input.message,
-  ticketId: input.ticketId || null,
-  href,
-  metadata: input.metadata,
-}).then((result) => {
-  if (!result?.ok) {
-    console.error("[EloGest] E-mail de notificação não enviado:", {
+    void dispatchNotificationWhatsApp({
       userId: user.id,
+      toPhone: whatsAppPhone,
+      toName: user.name || input.toName || null,
       type,
       title: input.title,
-      result,
+      message: input.message,
+      ticketId: input.ticketId || null,
+      href,
+      metadata: {
+        ...(input.metadata || {}),
+        toPhone: whatsAppPhone,
+      },
+    }).then((result) => {
+      if (!result?.ok && !result?.skipped) {
+        console.error("[EloGest] WhatsApp dev de notificação não processado:", {
+          userId: user.id,
+          type,
+          title: input.title,
+          result,
+        });
+      }
     });
   }
-});
 
-return notification;
-
+  return notification;
 }
 
 
@@ -494,20 +600,24 @@ export async function sendNotification(input: SendNotificationInput) {
           requestedExternalDelivery: true,
           externalChannelEnabledNow: channelEnabled,
           externalDeliveryStatus: channelEnabled
-            ? "READY_BUT_PROVIDER_NOT_IMPLEMENTED"
+            ? channel === "WHATSAPP"
+              ? "READY_FOR_DEV_DISPATCH_AUTO_CONTROLLED"
+              : "READY_FOR_EMAIL_DISPATCH"
             : "CHANNEL_NOT_ENABLED_FOR_EVENT",
           to: input.to || null,
           toName: input.toName || null,
+          toPhone: input.toPhone || input.metadata?.toPhone || null,
         },
       });
 
       console.info(
-        `Canal ${channel} ainda não implementado. Evento salvo como SYSTEM quando permitido.`,
+        `Canal ${channel} solicitado. Evento salvo como SYSTEM e dispatcher externo processado quando permitido.`,
         {
           type,
           eventLabel,
           channelEnabled,
           to: input.to || null,
+          toPhone: input.toPhone || input.metadata?.toPhone || null,
           title: input.title,
         }
       );
@@ -531,11 +641,6 @@ export async function sendNotification(input: SendNotificationInput) {
 
 /* =========================================================
    ENVIA NOTIFICAÇÃO PARA UM USUÁRIO ESPECÍFICO
-
-   allowNotifyActor:
-   - false/padrão: não notifica quem executou a ação.
-   - true: permite notificar o próprio usuário quando o evento
-     tem finalidade diferente, como no caso Síndico + Morador.
    ========================================================= */
 
 export async function notifySingleUser({
@@ -577,17 +682,26 @@ export async function notifySingleUser({
 
   notifiedUserIds?.add(targetUser.id);
 
+  const whatsAppPhone = resolveWhatsAppPhone({
+    user: targetUser,
+    metadata,
+  });
+
   return sendNotification({
     channel: "SYSTEM",
     userId: targetUser.id,
     to: targetUser.email || null,
     toName: targetUser.name || null,
+    toPhone: whatsAppPhone,
     ticketId,
     type,
     title,
     message,
     href: href || (ticketId ? getTicketHrefForUser(targetUser, ticketId) : null),
-    metadata,
+    metadata: {
+      ...(metadata || {}),
+      toPhone: whatsAppPhone,
+    },
   });
 }
 
@@ -641,12 +755,8 @@ export async function notifyAdministradoraUsers({
       ],
     },
     select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
+      ...userNotificationSelect,
       administratorId: true,
-      isActive: true,
     },
     orderBy: {
       name: "asc",
@@ -683,9 +793,6 @@ export async function notifyAdministradoraUsers({
 
 /* =========================================================
    NOTIFICAR SÍNDICOS DO CONDOMÍNIO
-
-   Usado para notificações operacionais do portal/condomínio,
-   não para comunicado interno da administradora.
    ========================================================= */
 
 export async function notifyCondominiumSyndics({
@@ -725,13 +832,7 @@ export async function notifyCondominiumSyndics({
         role: "SINDICO",
         condominiumId,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-      },
+      select: userNotificationSelect,
       orderBy: {
         name: "asc",
       },
@@ -748,13 +849,7 @@ export async function notifyCondominiumSyndics({
       },
       include: {
         user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-            isActive: true,
-          },
+          select: userNotificationSelect,
         },
       },
       orderBy: {
@@ -807,14 +902,6 @@ export async function notifyCondominiumSyndics({
 
 /* =========================================================
    NOTIFICAR ALVOS PÚBLICOS DO CHAMADO
-
-   Usado para:
-   - resposta pública;
-   - resolução;
-   - mensagens públicas destinadas ao criador/morador.
-
-   Observação:
-   Por padrão, não notifica quem executou a ação.
    ========================================================= */
 
 export async function notifyTicketPublicTargets({
@@ -841,6 +928,12 @@ export async function notifyTicketPublicTargets({
   ].filter(Boolean) as BasicUser[];
 
   for (const targetUser of possibleTargets) {
+    const whatsAppPhone = resolveWhatsAppPhone({
+      user: targetUser,
+      resident: ticket.resident,
+      metadata,
+    });
+
     const notification = await notifySingleUser({
       targetUser,
       actorUser,
@@ -854,6 +947,7 @@ export async function notifyTicketPublicTargets({
         ticketTitle: ticket.title,
         condominiumName: ticket.condominium?.name || null,
         notificationScope: "TICKET_PUBLIC_TARGETS",
+        toPhone: whatsAppPhone,
       },
     });
 
@@ -869,18 +963,6 @@ export async function notifyTicketPublicTargets({
 
 /* =========================================================
    NOTIFICAR ALVOS INTERNOS DO CHAMADO
-
-   COMMENT_INTERNAL / Comunicado interno:
-   - comunicação exclusiva entre usuários da ADMINISTRADORA;
-   - notifica ADMINISTRADORA da carteira;
-   - notifica SUPER_ADMIN;
-   - se o responsável atribuído for ADMINISTRADORA ou SUPER_ADMIN,
-     também pode ser notificado;
-   - não notifica SÍNDICO;
-   - não notifica MORADOR;
-   - não notifica PROPRIETÁRIO;
-   - evita duplicidade;
-   - evita notificar quem executou a ação.
    ========================================================= */
 
 export async function notifyTicketInternalTargets({
@@ -923,19 +1005,6 @@ export async function notifyTicketInternalTargets({
 
   createdNotifications.push(...adminNotifications);
 
-
-
-  /* =========================================================
-     RESPONSÁVEL ATRIBUÍDO
-
-     Só recebe comunicado interno se também for usuário interno
-     da administradora:
-     - ADMINISTRADORA
-     - SUPER_ADMIN
-
-     SÍNDICO não recebe comunicado interno.
-     ========================================================= */
-
   if (
     ticket.assignedToUser &&
     isInternalAdministrativeUser(ticket.assignedToUser)
@@ -972,13 +1041,6 @@ export async function notifyTicketInternalTargets({
 
 /* =========================================================
    NOTIFICAR RESPONSÁVEL ATRIBUÍDO
-
-   Notificação operacional:
-   - usada para quem foi definido como responsável;
-   - pode ir para ADMINISTRADORA, SUPER_ADMIN ou SÍNDICO;
-   - não deve ir para MORADOR/PROPRIETÁRIO como responsável
-     operacional;
-   - não substitui comunicado interno.
    ========================================================= */
 
 export async function notifyAssignedResponsible({
@@ -1030,13 +1092,6 @@ export async function notifyAssignedResponsible({
 
 /* =========================================================
    NOTIFICAR MORADOR/CRIADOR SOBRE RESPONSÁVEL DEFINIDO
-
-   Notificação pública:
-   - usada para informar ao morador/criador quem acompanhará
-     o chamado;
-   - usa evento TICKET_ASSIGNED_PUBLIC;
-   - permite notificar o próprio usuário quando ele tem múltiplos
-     contextos, por exemplo Síndico + Morador.
    ========================================================= */
 
 export async function notifyTicketAssignedPublicTargets({
@@ -1068,6 +1123,12 @@ export async function notifyTicketAssignedPublicTargets({
   ].filter(Boolean) as BasicUser[];
 
   for (const targetUser of possibleTargets) {
+    const whatsAppPhone = resolveWhatsAppPhone({
+      user: targetUser,
+      resident: ticket.resident,
+      metadata,
+    });
+
     const notification = await notifySingleUser({
       targetUser,
       actorUser,
@@ -1087,6 +1148,7 @@ export async function notifyTicketAssignedPublicTargets({
         notificationGroup: "PUBLIC_TICKET_OWNER",
         allowNotifyActorReason:
           "Permite notificar usuário com múltiplos contextos, como Síndico + Morador.",
+        toPhone: whatsAppPhone,
       },
     });
 
@@ -1102,20 +1164,6 @@ export async function notifyTicketAssignedPublicTargets({
 
 /* =========================================================
    NOTIFICAR ATRIBUIÇÃO COMPLETA
-
-   Cria duas notificações separadas:
-
-   1. Operacional:
-      - para o responsável atribuído;
-      - TICKET_ASSIGNED.
-
-   2. Pública:
-      - para o morador/criador;
-      - TICKET_ASSIGNED_PUBLIC.
-
-   Sets separados:
-   - permitem que o mesmo usuário receba as duas notificações
-     quando atua em contextos diferentes.
    ========================================================= */
 
 export async function notifyTicketAssignedTargets({
@@ -1138,15 +1186,6 @@ export async function notifyTicketAssignedTargets({
 
   const createdNotifications = [];
 
-
-
-  /* =========================================================
-     1. NOTIFICAÇÃO OPERACIONAL DO RESPONSÁVEL
-
-     Exemplo:
-     "Você foi atribuído a um chamado"
-     ========================================================= */
-
   const responsibleNotification = await notifyAssignedResponsible({
     ticket,
     assignedUser,
@@ -1163,19 +1202,6 @@ export async function notifyTicketAssignedTargets({
   if (responsibleNotification) {
     createdNotifications.push(responsibleNotification);
   }
-
-
-
-  /* =========================================================
-     2. NOTIFICAÇÃO PÚBLICA DO MORADOR/CRIADOR
-
-     Exemplo:
-     "Responsável definido para seu chamado"
-
-     Usa Set separado para permitir o caso Síndico + Morador:
-     o mesmo usuário pode receber uma notificação operacional
-     e uma notificação pública.
-   ========================================================= */
 
   const publicNotifications = await notifyTicketAssignedPublicTargets({
     ticket,
@@ -1229,6 +1255,9 @@ export async function sendTicketNotification({
     userId,
     to,
     toName,
+    toPhone: resolveWhatsAppPhone({
+      metadata,
+    }),
     ticketId,
     type,
     title,

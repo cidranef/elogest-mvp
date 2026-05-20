@@ -93,6 +93,26 @@ enum AccessRole {
 }
 
 // =========================================================
+// ETAPA 43 - TIPO DE VÍNCULO COM A UNIDADE
+//
+// Este enum separa claramente quem é proprietário,
+// quem mora/ocupa a unidade e quem possui autorização
+// operacional.
+//
+// Isso evita tratar todo mundo como "morador" e prepara
+// o EloGest para assembleias, votação, comunicados formais,
+// permissões por unidade e vínculos múltiplos.
+// =========================================================
+
+enum UnitPersonLinkType {
+  OWNER
+  RESIDENT
+  TENANT
+  DEPENDENT
+  AUTHORIZED
+}
+
+// =========================================================
 // ETAPA 11.1 - ESCOPO DO CHAMADO
 //
 // UNIT:
@@ -114,10 +134,10 @@ enum TicketScope {
 // Notificação interna exibida dentro da plataforma.
 //
 // EMAIL:
-// Reservado para a próxima etapa de envio por e-mail.
+// Canal externo de e-mail.
 //
 // WHATSAPP:
-// Reservado para etapa futura de WhatsApp.
+// Canal externo de WhatsApp.
 // =========================================================
 
 enum NotificationChannel {
@@ -211,6 +231,14 @@ model Condominium {
   // =========================================================
   ratingsByContext TicketRating[] @relation("RatingsByCondominiumContext")
 
+  // =========================================================
+  // ETAPA 43 - VÍNCULOS DE PESSOAS COM UNIDADES
+  //
+  // Permite mapear proprietários, moradores, inquilinos,
+  // dependentes e autorizados dentro deste condomínio.
+  // =========================================================
+  unitPersonLinks UnitPersonLink[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -234,6 +262,11 @@ model Unit {
   // unidades, inclusive em condomínios diferentes.
   // =========================================================
   accesses UserAccess[]
+
+  // =========================================================
+  // ETAPA 43 - VÍNCULOS DE PESSOAS COM ESTA UNIDADE
+  // =========================================================
+  unitPersonLinks UnitPersonLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -291,14 +324,52 @@ model Resident {
   // =========================================================
   accesses UserAccess[]
 
+  // =========================================================
+  // ETAPA 43 - VÍNCULOS DE PESSOAS COM ESTA UNIDADE
+  // =========================================================
+  unitPersonLinks UnitPersonLink[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model User {
-  id           String @id @default(cuid())
-  name         String
-  email        String @unique
+  id    String @id @default(cuid())
+  name  String
+  email String @unique
+
+  // =========================================================
+  // ETAPA 42.10.5 - TELEFONE DO USUÁRIO PARA NOTIFICAÇÕES
+  //
+  // Estratégia:
+  // - User.phone é o telefone preferencial da pessoa usuária
+  //   para notificações pessoais, incluindo WhatsApp.
+  //
+  // - Resident.phone continua existindo como telefone cadastral
+  //   do vínculo morador/proprietário/unidade.
+  //
+  // - Administrator.phone e Condominium.phone continuam existindo
+  //   como telefones institucionais.
+  //
+  // Regra futura de envio:
+  // 1. metadata.toPhone
+  // 2. User.phone
+  // 3. Resident.phone como fallback para morador/proprietário
+  //
+  // phoneVerifiedAt:
+  // preparado para futura validação/confirmação do número.
+  //
+  // phoneOptInAt:
+  // preparado para registrar consentimento para WhatsApp.
+  //
+  // phoneOptOutAt:
+  // preparado para descadastramento futuro do canal.
+  // =========================================================
+  phone           String?
+  phoneVerifiedAt DateTime?
+  phoneOptInAt    DateTime?
+  phoneOptOutAt   DateTime?
+
   passwordHash String
 
   // =========================================================
@@ -351,6 +422,15 @@ model User {
   // =========================================================
   accesses UserAccess[]
 
+  // =========================================================
+  // ETAPA 43 - VÍNCULOS FORMAIS COM UNIDADES
+  //
+  // Permite que a mesma identidade tenha múltiplos vínculos:
+  // proprietário de uma unidade, morador de outra, inquilino,
+  // dependente ou autorizado.
+  // =========================================================
+  unitPersonLinks UnitPersonLink[]
+
   createdTickets  Ticket[]    @relation("CreatedTickets")
   assignedTickets Ticket[]    @relation("AssignedTickets")
   ticketLogs      TicketLog[]
@@ -384,11 +464,6 @@ model User {
   //
   // Define quais canais o usuário deseja receber para cada
   // tipo de evento.
-  //
-  // Nesta etapa:
-  // - SYSTEM fica ativo por padrão;
-  // - EMAIL fica preparado, mas desativado;
-  // - WHATSAPP fica preparado, mas desativado.
   // =========================================================
   notificationPreferences NotificationPreference[]
 
@@ -435,17 +510,49 @@ model UserAccess {
   unitId          String?
   residentId      String?
 
+  // =========================================================
+  // ETAPA 43 - VÍNCULO FORMAL COM A UNIDADE
+  //
+  // Campo opcional nesta fase para compatibilidade.
+  // Quando preenchido, aponta para o vínculo formal
+  // OWNER / RESIDENT / TENANT / DEPENDENT / AUTHORIZED.
+  // =========================================================
+  unitPersonLinkId String?
+
   role  AccessRole
   label String?
 
   isDefault Boolean @default(false)
   isActive  Boolean @default(true)
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  administrator Administrator? @relation(fields: [administratorId], references: [id])
-  condominium   Condominium?   @relation(fields: [condominiumId], references: [id])
-  unit          Unit?          @relation(fields: [unitId], references: [id])
-  resident      Resident?      @relation(fields: [residentId], references: [id])
+  // =========================================================
+  // ETAPA 43 - GOVERNANÇA DO PERFIL DE ACESSO
+  //
+  // permissionsOverride:
+  // reservado para exceções controladas de permissão.
+  // A regra principal continua no código central de acesso.
+  //
+  // metadata:
+  // guarda contexto flexível sem exigir migration a cada ajuste.
+  //
+  // lastUsedAt:
+  // ajuda a controlar o último perfil utilizado.
+  //
+  // revokedAt / revokedReason:
+  // permitem desativar vínculos mantendo histórico.
+  // =========================================================
+  permissionsOverride Json?
+  metadata            Json?
+  lastUsedAt          DateTime?
+  revokedAt           DateTime?
+  revokedReason       String?
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  administrator  Administrator?  @relation(fields: [administratorId], references: [id])
+  condominium    Condominium?    @relation(fields: [condominiumId], references: [id])
+  unit           Unit?           @relation(fields: [unitId], references: [id])
+  resident       Resident?       @relation(fields: [residentId], references: [id])
+  unitPersonLink UnitPersonLink? @relation(fields: [unitPersonLinkId], references: [id])
 
   // =========================================================
   // ETAPA 27.1 - CONTEXTO DOS CHAMADOS
@@ -466,9 +573,101 @@ model UserAccess {
   @@index([condominiumId])
   @@index([unitId])
   @@index([residentId])
+  @@index([unitPersonLinkId])
   @@index([role])
   @@index([isActive])
   @@index([isDefault])
+}
+
+// =========================================================
+// ETAPA 43 - VÍNCULO FORMAL ENTRE PESSOA, UNIDADE E CONDOMÍNIO
+//
+// Esta tabela é a base para separar corretamente:
+//
+// - PROPRIETÁRIO:
+//   vínculo patrimonial, pode ter direito a voto e receber
+//   comunicados formais;
+//
+// - MORADOR / OCUPANTE:
+//   usa a unidade e pode abrir chamados, receber comunicados
+//   operacionais e interagir com o portal;
+//
+// - INQUILINO:
+//   ocupa a unidade por locação, com permissões próprias;
+//
+// - DEPENDENTE:
+//   pessoa vinculada a um responsável principal;
+//
+// - AUTORIZADO:
+//   pessoa autorizada para rotinas específicas.
+//
+// Observação importante:
+// Esta tabela NÃO substitui UserAccess imediatamente.
+// Ela complementa a arquitetura e permite uma migração segura,
+// sem quebrar o que já está funcionando no MVP.
+// =========================================================
+
+model UnitPersonLink {
+  id String @id @default(cuid())
+
+  userId        String?
+  residentId    String?
+  condominiumId String
+  unitId        String
+
+  linkType UnitPersonLinkType
+
+  // =========================================================
+  // ETAPA 43 - REGRAS DO VÍNCULO
+  //
+  // isPrimary:
+  // identifica o vínculo principal da pessoa naquela unidade.
+  //
+  // canVote:
+  // indica se este vínculo pode participar de votações.
+  // Por padrão, somente OWNER tende a receber true.
+  //
+  // canOpenTickets:
+  // indica se o vínculo pode abrir chamados pelo portal.
+  //
+  // receivesNotifications:
+  // indica se recebe comunicados/notificações daquele contexto.
+  // =========================================================
+  isPrimary             Boolean @default(false)
+  canVote               Boolean @default(false)
+  canOpenTickets        Boolean @default(true)
+  receivesNotifications Boolean @default(true)
+
+  status Status @default(ACTIVE)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  notes    String?
+  metadata Json?
+
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  resident    Resident?   @relation(fields: [residentId], references: [id], onDelete: SetNull)
+  condominium Condominium @relation(fields: [condominiumId], references: [id])
+  unit        Unit        @relation(fields: [unitId], references: [id])
+
+  accesses UserAccess[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([residentId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([linkType])
+  @@index([status])
+  @@index([canVote])
+  @@index([canOpenTickets])
+  @@index([receivesNotifications])
+  @@index([userId, condominiumId])
+  @@index([userId, unitId])
+  @@index([condominiumId, unitId])
 }
 
 model Ticket {
@@ -638,7 +837,6 @@ model TicketLog {
   @@index([ticketId])
   @@index([userId])
   @@index([accessId])
-
   // =========================================================
   // ETAPA 18.1 - ÍNDICE PARA FILTRAR COMUNICAÇÕES
   //
@@ -769,10 +967,6 @@ model TicketRating {
 // Esta tabela registra notificações direcionadas aos usuários
 // dentro da plataforma.
 //
-// Nesta etapa, o foco é o canal SYSTEM.
-// Os canais EMAIL e WHATSAPP ficam preparados para as próximas
-// etapas, mas ainda não serão disparados automaticamente.
-//
 // Exemplos de eventos:
 // - novo chamado aberto;
 // - chamado atribuído;
@@ -828,8 +1022,8 @@ model Notification {
 // =========================================================
 // ETAPA 25.3 - PREFERÊNCIAS DE NOTIFICAÇÃO POR USUÁRIO
 //
-// Esta tabela prepara o sistema para permitir que cada usuário
-// configure como deseja receber notificações por tipo de evento.
+// Esta tabela permite que cada usuário configure como deseja
+// receber notificações por tipo de evento.
 //
 // Exemplo de eventType:
 // - TICKET_CREATED
@@ -840,15 +1034,11 @@ model Notification {
 // - TICKET_RESOLVED
 // - TICKET_RATED
 //
-// Nesta etapa, ainda não enviaremos EMAIL nem WHATSAPP reais.
-// Apenas deixaremos a estrutura preparada.
-//
 // Regras:
 // - cada usuário terá no máximo uma preferência por eventType;
-// - SYSTEM começa ativo por padrão;
-// - EMAIL começa desativado;
-// - WHATSAPP começa desativado;
-// - futuramente a tela de preferências poderá editar esses campos.
+// - SYSTEM, EMAIL e WHATSAPP são controlados por evento na
+//   matriz src/lib/notification-events.ts;
+// - a preferência salva pelo usuário é respeitada pelo dispatcher.
 // =========================================================
 
 model NotificationPreference {

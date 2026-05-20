@@ -1,30 +1,37 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
+import { canManageResidents } from "@/lib/access-control";
 import { NextResponse } from "next/server";
+import { Status } from "@prisma/client";
 
 
 
 /* =========================================================
    MORADORES - API DE ATUALIZAÇÃO
 
-   ETAPA 35.3 — CADASTRO DE MORADORES
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
    PATCH:
-   - Editar morador
-   - Alterar unidade
-   - Alterar nome, CPF, e-mail, telefone, tipo e status
-   - Ativar / inativar morador
+   - ADMINISTRADORA edita apenas moradores da própria carteira.
+   - ADMINISTRADORA só pode mover morador para unidade da própria
+     carteira.
+   - CPF é normalizado e validado.
+   - CPF duplicado é bloqueado.
+   - E-mail é validado quando informado.
+   - Status é validado.
+   - Tipo de morador é validado.
 
-   Regras aplicadas:
-
-   1. SUPER_ADMIN pode editar qualquer morador
-   2. ADMINISTRADORA só pode editar moradores da própria carteira
-   3. ADMINISTRADORA só pode mover morador para unidade da própria carteira
-   4. CPF é normalizado e validado
-   5. CPF duplicado é bloqueado
-   6. E-mail é validado quando informado
-   7. Status é validado
-   8. Tipo de morador é validado
+   Regras consolidadas:
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO são bloqueados.
+   - Todas as consultas usam administratorId do activeAccess.
+   - A permissão MANAGE_RESIDENTS é validada no perfil ativo.
 
    PADRÃO BRASIL:
    Tipos de morador mantidos em português sem acento:
@@ -81,8 +88,20 @@ function isValidCpfFormat(cpf: string) {
 
 
 
-function isValidStatus(status: string) {
-  return ["ACTIVE", "INACTIVE"].includes(status);
+function normalizeStatus(value?: string | null): Status {
+  const status = String(value || Status.ACTIVE).trim().toUpperCase();
+
+  if (status === Status.INACTIVE) {
+    return Status.INACTIVE;
+  }
+
+  return Status.ACTIVE;
+}
+
+
+
+function isValidStatus(status: Status) {
+  return [Status.ACTIVE, Status.INACTIVE].includes(status);
 }
 
 
@@ -140,51 +159,159 @@ function formatMoradorResponse(morador: any) {
 
 
 /* =========================================================
+   USUÁRIO COM CONTEXTO ADMINISTRATIVO
+   ========================================================= */
+
+async function getAdminContextUser() {
+  const sessionUser: any = await getAuthUser();
+
+  if (!sessionUser?.id) {
+    throw new Error("UNAUTHORIZED");
+  }
+
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
+
+  if (!activeAccess) {
+    return {
+      ...sessionUser,
+      activeAccess: null,
+    };
+  }
+
+  return {
+    ...sessionUser,
+
+    role: activeAccess.role || sessionUser.role,
+
+    administratorId:
+      activeAccess.administratorId !== undefined
+        ? activeAccess.administratorId
+        : sessionUser.administratorId,
+
+    condominiumId:
+      activeAccess.condominiumId !== undefined
+        ? activeAccess.condominiumId
+        : sessionUser.condominiumId,
+
+    unitId:
+      activeAccess.unitId !== undefined
+        ? activeAccess.unitId
+        : sessionUser.unitId,
+
+    residentId:
+      activeAccess.residentId !== undefined
+        ? activeAccess.residentId
+        : sessionUser.residentId,
+
+    activeAccess,
+  };
+}
+
+
+
+/* =========================================================
+   VALIDA CONTEXTO ADMINISTRATIVO
+   ========================================================= */
+
+function validateAdminContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Este contexto não possui acesso ao cadastro administrativo de moradores. Use o portal ou a área EloGest.",
+    };
+  }
+
+  if (!activeAccess.administratorId) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Contexto de administradora sem vínculo com administradora.",
+    };
+  }
+
+  if (!canManageResidents(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Usuário sem permissão para gerenciar moradores.",
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    message: "",
+  };
+}
+
+
+
+function getAdministratorIdFromContext(user: any) {
+  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+
+  return activeAccess?.administratorId || null;
+}
+
+
+
+/* =========================================================
    PATCH - ATUALIZAR MORADOR
    ========================================================= */
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAuthUser();
+    const user: any = await getAdminContextUser();
     const { id } = await context.params;
     const body = await req.json();
 
+    const residentId = String(id || "").trim();
 
-
-    /* =========================================================
-       AUTORIZAÇÃO
-       ========================================================= */
-
-    if (user.role !== "SUPER_ADMIN" && user.role !== "ADMINISTRADORA") {
+    if (!residentId) {
       return NextResponse.json(
-        { error: "Não autorizado." },
-        { status: 401 }
+        { error: "ID do morador não informado." },
+        { status: 400 }
       );
     }
 
+    const contextValidation = validateAdminContext(user);
 
+    if (!contextValidation.ok) {
+      return NextResponse.json(
+        { error: contextValidation.message },
+        { status: contextValidation.status }
+      );
+    }
 
-    /* =========================================================
-       VALIDAR ACESSO AO MORADOR ATUAL
+    const administratorId = getAdministratorIdFromContext(user);
 
-       SUPER_ADMIN:
-       - pode localizar qualquer morador
-
-       ADMINISTRADORA:
-       - só localiza morador vinculado a condomínio
-         da própria carteira
-       ========================================================= */
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
 
     const moradorAtual = await db.resident.findFirst({
       where: {
-        id,
-        ...(user.role === "SUPER_ADMIN"
-          ? {}
-          : {
-              condominium: {
-                administratorId: user.administratorId,
-              },
-            }),
+        id: residentId,
+        condominium: {
+          administratorId,
+        },
       },
       include: {
         condominium: true,
@@ -201,8 +328,6 @@ export async function PATCH(req: Request, context: RouteContext) {
       },
     });
 
-
-
     if (!moradorAtual) {
       return NextResponse.json(
         { error: "Morador não encontrado ou acesso negado." },
@@ -215,18 +340,12 @@ export async function PATCH(req: Request, context: RouteContext) {
     /* =========================================================
        DEFINIR UNIDADE FINAL
 
-       Regra importante:
-       - O frontend não decide livremente o condomínio.
-       - O condomínio final sempre vem da unidade validada.
-
-       Isso evita que alguém altere manualmente o payload
-       e vincule o morador a uma unidade/condomínio indevido.
+       O frontend não decide livremente o condomínio.
+       O condomínio final sempre vem da unidade validada.
        ========================================================= */
 
     let unitId = moradorAtual.unitId;
     let condominiumId = moradorAtual.condominiumId;
-
-
 
     if (body.unitId !== undefined) {
       if (!body.unitId) {
@@ -236,25 +355,17 @@ export async function PATCH(req: Request, context: RouteContext) {
         );
       }
 
-
-
       const unidade = await db.unit.findFirst({
         where: {
           id: body.unitId,
-          ...(user.role === "SUPER_ADMIN"
-            ? {}
-            : {
-                condominium: {
-                  administratorId: user.administratorId,
-                },
-              }),
+          condominium: {
+            administratorId,
+          },
         },
         include: {
           condominium: true,
         },
       });
-
-
 
       if (!unidade) {
         return NextResponse.json(
@@ -263,24 +374,14 @@ export async function PATCH(req: Request, context: RouteContext) {
         );
       }
 
-
-
       unitId = unidade.id;
       condominiumId = unidade.condominiumId;
     }
-
-
-
-    /* =========================================================
-       NOME
-       ========================================================= */
 
     const name =
       body.name !== undefined
         ? normalizeText(body.name)
         : moradorAtual.name;
-
-
 
     if (!name) {
       return NextResponse.json(
@@ -289,25 +390,6 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       NORMALIZAÇÃO DOS CAMPOS
-
-       CPF:
-       - remove pontos, traços e demais caracteres
-       - salva somente números
-
-       E-mail:
-       - trim + lowercase
-
-       Telefone:
-       - salva somente números
-
-       Tipo de morador:
-       - mantém padrão brasileiro sem acento
-       ========================================================= */
-
     const cpf =
       body.cpf !== undefined
         ? body.cpf
@@ -315,14 +397,10 @@ export async function PATCH(req: Request, context: RouteContext) {
           : null
         : moradorAtual.cpf;
 
-
-
     const email =
       body.email !== undefined
         ? normalizeEmail(body.email)
         : moradorAtual.email;
-
-
 
     const phone =
       body.phone !== undefined
@@ -331,25 +409,15 @@ export async function PATCH(req: Request, context: RouteContext) {
           : null
         : moradorAtual.phone;
 
-
-
     const residentType =
       body.residentType !== undefined
         ? normalizeText(body.residentType)
         : moradorAtual.residentType;
 
-
-
     const status =
       body.status !== undefined
-        ? body.status || "ACTIVE"
+        ? normalizeStatus(body.status)
         : moradorAtual.status;
-
-
-
-    /* =========================================================
-       VALIDAÇÃO DE CPF
-       ========================================================= */
 
     if (cpf && !isValidCpfFormat(cpf)) {
       return NextResponse.json(
@@ -358,24 +426,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       VALIDAÇÃO DE E-MAIL
-       ========================================================= */
-
     if (email && !isValidEmail(email)) {
       return NextResponse.json(
         { error: "E-mail inválido." },
         { status: 400 }
       );
     }
-
-
-
-    /* =========================================================
-       VALIDAÇÃO DE STATUS
-       ========================================================= */
 
     if (!isValidStatus(status)) {
       return NextResponse.json(
@@ -384,19 +440,6 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       VALIDAÇÃO DE TIPO DE MORADOR
-
-       Valores permitidos:
-       PROPRIETARIO
-       INQUILINO
-       FAMILIAR
-       RESPONSAVEL
-       OUTRO
-       ========================================================= */
-
     if (!isValidResidentType(residentType)) {
       return NextResponse.json(
         { error: "Tipo de morador inválido." },
@@ -404,29 +447,18 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       VALIDAR CPF DUPLICADO, QUANDO INFORMADO
-
-       Permite manter o próprio CPF do morador atual,
-       mas bloqueia se outro morador já possuir o CPF.
-       ========================================================= */
-
     if (cpf) {
       const existing = await db.resident.findFirst({
         where: {
           cpf,
           NOT: {
-            id,
+            id: residentId,
           },
         },
         select: {
           id: true,
         },
       });
-
-
 
       if (existing) {
         return NextResponse.json(
@@ -436,21 +468,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
     }
 
-
-
-    /* =========================================================
-       ATUALIZAÇÃO DO MORADOR
-
-       Observação:
-       - Inativar o morador não apaga histórico.
-       - O filtro para remover moradores inativos dos selects
-         operacionais deve ser aplicado nas APIs/listagens
-         operacionais usando status: "ACTIVE".
-       ========================================================= */
-
     const morador = await db.resident.update({
       where: {
-        id,
+        id: residentId,
       },
       data: {
         condominiumId,
@@ -484,31 +504,28 @@ export async function PATCH(req: Request, context: RouteContext) {
       },
     });
 
-
-
     return NextResponse.json(formatMoradorResponse(morador));
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO ATUALIZAR MORADOR:", error);
 
-
-
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
       );
     }
 
-
-
-    if (error.code === "P2002") {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002"
+    ) {
       return NextResponse.json(
         { error: "Já existe um morador cadastrado com esses dados." },
         { status: 409 }
       );
     }
-
-
 
     return NextResponse.json(
       { error: "Erro ao atualizar morador." },
