@@ -31,6 +31,39 @@ import EloGestShell from "@/components/EloGestShell";
 
 
 
+function StepBadge({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
+      <div className="flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#EAF7EE] text-xs font-bold text-[#256D3C]">
+          {number}
+        </span>
+
+        <div>
+          <p className="text-sm font-semibold text-[#17211B]">
+            {title}
+          </p>
+
+          <p className="mt-1 text-sm leading-6 text-[#64736A]">
+            {description}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
 export default function NovaAdministradoraPage() {
   const router = useRouter();
 
@@ -82,35 +115,6 @@ export default function NovaAdministradoraPage() {
 
 
 
-  function StepBadge({
-    number,
-    title,
-    description,
-  }: {
-    number: string;
-    title: string;
-    description: string;
-  }) {
-    return (
-      <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
-        <div className="flex items-start gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#EAF7EE] text-xs font-bold text-[#256D3C]">
-            {number}
-          </span>
-
-          <div>
-            <p className="text-sm font-semibold text-[#17211B]">
-              {title}
-            </p>
-
-            <p className="mt-1 text-sm leading-6 text-[#64736A]">
-              {description}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
 
 

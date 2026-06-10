@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 360" role="img" aria-labelledby="title desc">
+<title id="title">EloGest</title>
+<desc id="desc">Logotipo horizontal EloGest com ícone geométrico e wordmark.</desc>
+<defs>
+  <linearGradient id="frameGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+    <stop offset="0%" stop-color="#174828"/>
+    <stop offset="48%" stop-color="#256D3C"/>
+    <stop offset="100%" stop-color="#8ED08E"/>
+  </linearGradient>
+  <linearGradient id="barGradient" x1="0%" y1="100%" x2="0%" y2="0%">
+    <stop offset="0%" stop-color="#174828"/>
+    <stop offset="100%" stop-color="#256D3C"/>
+  </linearGradient>
+</defs>
+<g transform="translate(40 18) scale(0.63)">
+  <path fill="url(#frameGradient)" fill-rule="evenodd" d="
+  M256 36 L445 145 L445 367 L256 476 L67 367 L67 145 Z
+  M256 82 L405 168 L405 344 L256 430 L107 344 L107 168 Z"/>
+  <path fill="url(#barGradient)" d="M147 321 L147 260 L205 226 L205 355 Z"/>
+  <path fill="#17211B" d="M226 355 L226 171 L286 136 L286 390 Z"/>
+  <path fill="#8ED08E" d="M307 355 L307 226 L365 260 L365 321 Z"/>
+</g>
+<text x="400" y="235" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="188" letter-spacing="-8">
+  <tspan fill="#256D3C">Elo</tspan><tspan fill="#17211B">Gest</tspan>
+</text>
+</svg>

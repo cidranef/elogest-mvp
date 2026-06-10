@@ -4,6 +4,12 @@ import { AccessRole, Role } from "@prisma/client";
 import { db } from "@/lib/db";
 import { validateStrongPassword } from "@/lib/password-policy";
 import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
+import {
+  getPlanErrorPayload,
+  isPlanAccessError,
+  isPlanLimitError,
+  requireCanCreateUser,
+} from "@/lib/plan-limits";
 
 
 
@@ -16,13 +22,10 @@ import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
 
    ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
-   Objetivo:
-   - Listar responsáveis pelo acesso administrativo de uma administradora.
-   - Criar novo usuário vinculado à administradora.
-   - Criar User com role ADMINISTRADORA.
-   - Criar UserAccess ADMINISTRADORA.
-   - Manter endpoint exclusivo para SUPER_ADMIN.
-   - Preparar o fluxo futuro de convite por e-mail.
+   ETAPA 47 — PLANOS, MÓDULOS E LIMITES
+   - POST passa a respeitar o limite maxUsers do plano atual.
+   - A validação usa a mesma regra central aplicada nas APIs /admin.
+   - Mantém endpoint exclusivo para SUPER_ADMIN.
 
    Segurança:
    - A rota usa requireEloGestSuperAdmin().
@@ -117,6 +120,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         id: true,
         name: true,
         status: true,
+        planId: true,
+        planStatus: true,
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            maxUsers: true,
+          },
+        },
       },
     });
 
@@ -163,6 +176,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         id: administrator.id,
         name: administrator.name,
         status: administrator.status,
+        planId: administrator.planId,
+        planStatus: administrator.planStatus,
+        plan: administrator.plan,
       },
       users,
     });
@@ -286,6 +302,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
+
+
+    /* =======================================================
+       ETAPA 47 - LIMITE DE USUÁRIOS
+
+       Super Admin também respeita o limite comercial ao criar
+       novos responsáveis pelo acesso da administradora.
+       ======================================================= */
+
+    await requireCanCreateUser(administrator.id);
+
     const existingUser = await db.user.findFirst({
       where: {
         email: {
@@ -357,6 +384,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
   } catch (error) {
     console.error("Erro ao criar responsável da administradora:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
 
     return NextResponse.json(
       {

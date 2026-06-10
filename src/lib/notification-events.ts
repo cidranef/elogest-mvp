@@ -68,6 +68,31 @@
    - Essa separação reduz risco antes do Railway/provedor real:
        availableChannels -> canais possíveis/futuros;
        enabledChannels   -> canais ativos agora no MVP.
+
+   ETAPA 49 — REUNIÕES DE CONSELHO
+
+   Ajustes desta revisão:
+   - Adicionados eventos de reunião de conselho.
+   - Eventos principais usam SYSTEM + EMAIL no MVP.
+   - WHATSAPP fica disponível para evolução futura, mas não ativo
+     automaticamente nesses eventos.
+   - Confirmação/recusa de presença ficam somente internas no MVP para
+     evitar excesso de e-mails.
+
+   ETAPA 50 — ENQUETES
+
+   Ajustes desta revisão:
+   - Adicionados eventos de publicação, prorrogação de prazo e
+     publicação oficial de resultados de enquetes.
+   - Eventos de enquetes usam notificação interna SYSTEM no MVP.
+   - EMAIL e WHATSAPP permanecem disponíveis para evolução futura,
+     mas não são ativados automaticamente nesta etapa.
+   - O contador de pendências no menu do portal continua independente
+     da notificação interna e considera apenas enquetes abertas ainda
+     não respondidas pelo perfil ativo.
+   - Adicionado POLL_EXPIRED_ADMIN_REMINDER como aviso operacional interno
+     para a administradora revisar enquete com prazo encerrado.
+
    ========================================================= */
 
 
@@ -97,6 +122,22 @@ export type NotificationEventType =
   | "TICKET_STATUS_CHANGED"
   | "TICKET_RESOLVED"
   | "TICKET_RATED"
+  | "COUNCIL_MEETING_CREATED"
+  | "COUNCIL_MEETING_UPDATED"
+  | "COUNCIL_MEETING_CANCELED"
+  | "COUNCIL_MEETING_ROOM_OPENED"
+  | "COUNCIL_MEETING_ROOM_CLOSED"
+  | "COUNCIL_MEETING_RECORD_KEEPER_ASSIGNED"
+  | "COUNCIL_MEETING_ATTENDANCE_CONFIRMED"
+  | "COUNCIL_MEETING_ATTENDANCE_DECLINED"
+  | "POLL_PUBLISHED"
+  | "POLL_EXTENDED"
+  | "POLL_RESULTS_PUBLISHED"
+  | "POLL_EXPIRED_ADMIN_REMINDER"
+  | "ASSEMBLY_CONVOCATION_PUBLISHED"
+  | "ASSEMBLY_VOTING_REMINDER"
+  | "ASSEMBLY_VOTING_DEADLINE_EXTENDED"
+  | "ASSEMBLY_RESULTS_PUBLISHED"
   | "EMAIL_PENDING"
   | "WHATSAPP_PENDING";
 
@@ -267,6 +308,183 @@ export const NOTIFICATION_EVENTS: Record<
     description:
       "Gerada quando o morador, proprietário ou perfil permitido avalia o atendimento de um chamado resolvido.",
     availableChannels: SYSTEM_AND_EMAIL,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_CREATED: {
+    type: "COUNCIL_MEETING_CREATED",
+    label: "Reunião de conselho criada",
+    description:
+      "Gerada quando uma nova reunião de conselho é criada ou agendada pela administradora.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_UPDATED: {
+    type: "COUNCIL_MEETING_UPDATED",
+    label: "Reunião de conselho alterada",
+    description:
+      "Gerada quando uma reunião de conselho tem dados importantes alterados.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_CANCELED: {
+    type: "COUNCIL_MEETING_CANCELED",
+    label: "Reunião de conselho cancelada",
+    description:
+      "Gerada quando uma reunião de conselho é cancelada pela administradora.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_ROOM_OPENED: {
+    type: "COUNCIL_MEETING_ROOM_OPENED",
+    label: "Sala da reunião aberta",
+    description:
+      "Gerada quando a Sala De Reunião EloGest de uma reunião de conselho é aberta.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_ROOM_CLOSED: {
+    type: "COUNCIL_MEETING_ROOM_CLOSED",
+    label: "Sala da reunião encerrada",
+    description:
+      "Gerada quando a Sala De Reunião EloGest de uma reunião de conselho é encerrada.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_RECORD_KEEPER_ASSIGNED: {
+    type: "COUNCIL_MEETING_RECORD_KEEPER_ASSIGNED",
+    label: "Responsável pelo registro definido",
+    description:
+      "Gerada quando um participante é escolhido como responsável por registrar as informações oficiais da reunião de conselho.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_ATTENDANCE_CONFIRMED: {
+    type: "COUNCIL_MEETING_ATTENDANCE_CONFIRMED",
+    label: "Presença confirmada",
+    description:
+      "Gerada quando um participante confirma presença em uma reunião de conselho.",
+    availableChannels: SYSTEM_AND_EMAIL,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  COUNCIL_MEETING_ATTENDANCE_DECLINED: {
+    type: "COUNCIL_MEETING_ATTENDANCE_DECLINED",
+    label: "Presença recusada",
+    description:
+      "Gerada quando um participante informa que não participará de uma reunião de conselho.",
+    availableChannels: SYSTEM_AND_EMAIL,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  POLL_PUBLISHED: {
+    type: "POLL_PUBLISHED",
+    label: "Nova enquete disponível",
+    description:
+      "Gerada quando uma enquete é publicada e fica disponível para participação no portal.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  POLL_EXTENDED: {
+    type: "POLL_EXTENDED",
+    label: "Prazo de enquete prorrogado",
+    description:
+      "Gerada quando o prazo final de uma enquete publicada é prorrogado ou quando uma enquete encerrada é reaberta com novo prazo.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  POLL_RESULTS_PUBLISHED: {
+    type: "POLL_RESULTS_PUBLISHED",
+    label: "Resultado de enquete publicado",
+    description:
+      "Gerada quando a administradora publica oficialmente o resultado de uma enquete encerrada.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  POLL_EXPIRED_ADMIN_REMINDER: {
+    type: "POLL_EXPIRED_ADMIN_REMINDER",
+    label: "Prazo da enquete encerrado",
+    description:
+      "Lembrete operacional interno enviado à administradora quando uma enquete publicada atinge o prazo final e precisa ser revisada.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
+  },
+
+
+  ASSEMBLY_CONVOCATION_PUBLISHED: {
+    type: "ASSEMBLY_CONVOCATION_PUBLISHED",
+    label: "Convocação de assembleia publicada",
+    description:
+      "Gerada quando a administradora publica oficialmente a convocação de uma assembleia.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  ASSEMBLY_VOTING_REMINDER: {
+    type: "ASSEMBLY_VOTING_REMINDER",
+    label: "Lembrete de votação da assembleia",
+    description:
+      "Gerada quando a administradora envia um lembrete para unidades com votação pendente em uma assembleia publicada.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  ASSEMBLY_VOTING_DEADLINE_EXTENDED: {
+    type: "ASSEMBLY_VOTING_DEADLINE_EXTENDED",
+    label: "Prazo da votação da assembleia prorrogado",
+    description:
+      "Gerada quando a administradora amplia o prazo final da votação de uma assembleia publicada.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
+    enabledChannels: SYSTEM_AND_EMAIL,
+    externalReady: true,
+    userPreferenceEnabled: true,
+  },
+
+  ASSEMBLY_RESULTS_PUBLISHED: {
+    type: "ASSEMBLY_RESULTS_PUBLISHED",
+    label: "Resultados da assembleia publicados",
+    description:
+      "Gerada quando a administradora publica oficialmente a apuração de uma assembleia encerrada.",
+    availableChannels: SYSTEM_EMAIL_WHATSAPP,
     enabledChannels: SYSTEM_AND_EMAIL,
     externalReady: true,
     userPreferenceEnabled: true,

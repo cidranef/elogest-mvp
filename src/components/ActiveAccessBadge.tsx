@@ -3,8 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-
-
 /* =========================================================
    ACTIVE ACCESS BADGE - ELOGEST
 
@@ -40,7 +38,30 @@ import { useEffect, useRef, useState } from "react";
    - Incluídos campos formais de vínculo no tipo ActiveAccess.
    ========================================================= */
 
+interface PlanLimitValue {
+  currentUsage: number;
+  limit: number | null;
+  remaining: number | null;
+  reached: boolean;
+}
 
+interface AdminPlanLimitResponse {
+  error?: string;
+  plan?: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  nextPlan?: {
+    id: string;
+    name: string;
+    slug: string;
+    maxProviders?: number | null;
+  } | null;
+  limits?: {
+    providers?: PlanLimitValue;
+  };
+}
 
 interface ActiveAccess {
   accessId?: string | null;
@@ -58,8 +79,6 @@ interface ActiveAccess {
   source?: string | null;
 }
 
-
-
 function roleLabel(role?: string | null) {
   if (role === "SUPER_ADMIN") return "Super Admin";
   if (role === "ADMINISTRADORA") return "Administradora";
@@ -70,8 +89,6 @@ function roleLabel(role?: string | null) {
 
   return "Usuário";
 }
-
-
 
 function roleTone(role?: string | null) {
   if (role === "SUPER_ADMIN") {
@@ -122,7 +139,46 @@ function roleTone(role?: string | null) {
   };
 }
 
+function formatLimitValue(value?: number | null) {
+  if (value === null || value === undefined) {
+    return "Ilimitado";
+  }
 
+  return new Intl.NumberFormat("pt-BR").format(value);
+}
+
+function getProviderLimit(planLimitData: AdminPlanLimitResponse | null) {
+  return planLimitData?.limits?.providers || null;
+}
+
+function getPlanTone(slug?: string | null) {
+  if (slug === "premium") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (slug === "enterprise") {
+    return "border-slate-300 bg-slate-50 text-slate-800";
+  }
+
+  if (slug === "professional") {
+    return "border-blue-200 bg-blue-50 text-blue-800";
+  }
+
+  if (slug === "essential") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
+  return "border-[#DDE5DF] bg-[#F6F8F7] text-[#5E6B63]";
+}
+
+function getPlanIconType(slug?: string | null) {
+  if (slug === "premium") return "star";
+  if (slug === "enterprise") return "network";
+  if (slug === "professional") return "chart";
+  if (slug === "essential") return "building";
+
+  return "leaf";
+}
 
 function normalizeContextLabel(value?: string | null) {
   const text = String(value || "").trim();
@@ -133,8 +189,6 @@ function normalizeContextLabel(value?: string | null) {
 
   return text;
 }
-
-
 
 function removeRolePrefixFromLabel({
   role,
@@ -150,7 +204,12 @@ function removeRolePrefixFromLabel({
     ADMINISTRADORA: ["ADMINISTRADORA", "Administradora"],
     SINDICO: ["SINDICO", "SÍNDICO", "Sindico", "Síndico"],
     MORADOR: ["MORADOR", "Morador"],
-    PROPRIETARIO: ["PROPRIETARIO", "PROPRIETÁRIO", "Proprietario", "Proprietário"],
+    PROPRIETARIO: [
+      "PROPRIETARIO",
+      "PROPRIETÁRIO",
+      "Proprietario",
+      "Proprietário",
+    ],
     CONSELHEIRO: ["CONSELHEIRO", "Conselheiro"],
   };
 
@@ -166,8 +225,6 @@ function removeRolePrefixFromLabel({
   return text || normalizeContextLabel(label);
 }
 
-
-
 function getAccessSummary(role?: string | null, label?: string | null) {
   const roleText = roleLabel(role);
   const contextText = removeRolePrefixFromLabel({ role, label });
@@ -178,8 +235,6 @@ function getAccessSummary(role?: string | null, label?: string | null) {
 
   return `${roleText} · ${contextText}`;
 }
-
-
 
 function getAccessExplanation({
   role,
@@ -217,11 +272,17 @@ function getAccessExplanation({
   return `Você está acessando ${contextText}.`;
 }
 
-
-
 /* =========================================================
    EXTRAIR QUANTIDADE DE PERFIS DISPONÍVEIS
    ========================================================= */
+
+function isActiveAccessItem(item: unknown) {
+  if (typeof item !== "object" || item === null) {
+    return false;
+  }
+
+  return (item as { isActive?: boolean | null }).isActive !== false;
+}
 
 function extractAccessCount(data: unknown) {
   const value = data as {
@@ -234,25 +295,23 @@ function extractAccessCount(data: unknown) {
   };
 
   if (Array.isArray(value?.accesses)) {
-    return value.accesses.filter((item: any) => item?.isActive !== false).length;
+    return value.accesses.filter(isActiveAccessItem).length;
   }
 
   if (Array.isArray(value?.user?.accesses)) {
-    return value.user.accesses.filter((item: any) => item?.isActive !== false).length;
+    return value.user.accesses.filter(isActiveAccessItem).length;
   }
 
   if (Array.isArray(value?.availableAccesses)) {
-    return value.availableAccesses.filter((item: any) => item?.isActive !== false).length;
+    return value.availableAccesses.filter(isActiveAccessItem).length;
   }
 
   if (Array.isArray(value?.items)) {
-    return value.items.filter((item: any) => item?.isActive !== false).length;
+    return value.items.filter(isActiveAccessItem).length;
   }
 
   return 0;
 }
-
-
 
 /* =========================================================
    ÍCONE
@@ -283,8 +342,6 @@ function ProfileIcon({ className = "" }: { className?: string }) {
   );
 }
 
-
-
 function ChevronIcon({ className = "" }: { className?: string }) {
   return (
     <svg
@@ -304,7 +361,145 @@ function ChevronIcon({ className = "" }: { className?: string }) {
   );
 }
 
+function PlanIcon({
+  type,
+  className = "",
+}: {
+  type: "leaf" | "building" | "chart" | "star" | "network";
+  className?: string;
+}) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
 
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className || "h-4 w-4"}
+      fill="none"
+      aria-hidden="true"
+    >
+      {type === "leaf" && (
+        <>
+          <path {...common} d="M12 20V10" />
+          <path
+            {...common}
+            d="M12 10c-3.8-3.4-7.2-3.4-9.2-1.8 1 4.2 4.6 6.5 9.2 5.4"
+          />
+          <path
+            {...common}
+            d="M12 10c3.8-3.4 7.2-3.4 9.2-1.8-1 4.2-4.6 6.5-9.2 5.4"
+          />
+          <path
+            {...common}
+            d="M5.5 18.5c2.1 1 4.2 1.5 6.5 1.5s4.4-.5 6.5-1.5"
+          />
+          <path {...common} d="M8 10.7c1.2.1 2.5.7 4 1.8" />
+          <path {...common} d="M16 10.7c-1.2.1-2.5.7-4 1.8" />
+        </>
+      )}
+
+      {type === "building" && (
+        <>
+          <path {...common} d="M4 20h16" />
+          <path {...common} d="M6 20V7.2c0-.7.5-1.2 1.2-1.2h7.1V20" />
+          <path {...common} d="M14.3 11h3.5c.7 0 1.2.5 1.2 1.2V20" />
+          <path {...common} d="M8.8 9h2" />
+          <path {...common} d="M8.8 12.5h2" />
+          <path {...common} d="M8.8 16h2" />
+          <path {...common} d="M15.8 14h1.1" />
+          <path {...common} d="M15.8 17h1.1" />
+          <path {...common} d="M8.5 6V4.5h5V6" />
+          <path {...common} d="M10 20v-2.8h3.2V20" />
+        </>
+      )}
+
+      {type === "chart" && (
+        <>
+          <path {...common} d="M4 19V5" />
+          <path {...common} d="M4 19h16" />
+          <path {...common} d="M7 19v-4" />
+          <path {...common} d="M11 19v-7" />
+          <path {...common} d="M15 19v-10" />
+          <path {...common} d="M19 19V7" />
+          <path {...common} d="M7 13.5l3.5-3 3 2 5.5-6.5" />
+          <path {...common} d="M16.5 6h2.5v2.5" />
+        </>
+      )}
+
+      {type === "star" && (
+        <>
+          <path
+            {...common}
+            d="m12 3.2 2.5 5.1 5.6.8-4.1 4 1 5.6-5-2.6-5 2.6 1-5.6-4.1-4 5.6-.8L12 3.2Z"
+          />
+          <path {...common} d="M12 6.8v7.5" />
+          <path {...common} d="M8.8 18.1c2.1.8 4.3.8 6.4 0" />
+          <path {...common} d="M4.5 5.5h.1" />
+          <path {...common} d="M19.4 5.5h.1" />
+          <path {...common} d="M5.8 20.2h.1" />
+          <path {...common} d="M18.1 20.2h.1" />
+        </>
+      )}
+
+      {type === "network" && (
+        <>
+          <circle {...common} cx="12" cy="12" r="2.4" />
+          <circle {...common} cx="5" cy="12" r="2" />
+          <circle {...common} cx="19" cy="7" r="2" />
+          <circle {...common} cx="19" cy="17" r="2" />
+          <circle {...common} cx="8" cy="5" r="1.6" />
+          <circle {...common} cx="8" cy="19" r="1.6" />
+          <path {...common} d="M7 12h2.6" />
+          <path {...common} d="M13.9 10.7 17.2 8.2" />
+          <path {...common} d="M13.9 13.3 17.2 15.8" />
+          <path {...common} d="M9.1 6.2 11 9.8" />
+          <path {...common} d="M9.1 17.8 11 14.2" />
+          <path {...common} d="M8.5 5c2.6-1.1 5.6-.9 8 .6" />
+          <path {...common} d="M8.5 19c2.6 1.1 5.6.9 8-.6" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function PlanBadge({
+  planLimitData,
+  compact = false,
+}: {
+  planLimitData: AdminPlanLimitResponse | null;
+  compact?: boolean;
+}) {
+  if (!planLimitData?.plan) {
+    return null;
+  }
+
+  const providerLimit = getProviderLimit(planLimitData);
+  const planSlug = planLimitData.plan.slug;
+  const planName = planLimitData.plan.name;
+  const planTone = getPlanTone(planSlug);
+  const planIcon = getPlanIconType(planSlug);
+  const reached = Boolean(providerLimit?.reached);
+
+  return (
+    <span
+      className={[
+        "inline-flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+        reached ? "border-yellow-200 bg-yellow-50 text-yellow-800" : planTone,
+      ].join(" ")}
+      title={`Plano ${planName}`}
+    >
+      <PlanIcon type={planIcon} className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">
+        {compact ? planName : `Plano ${planName}`}
+      </span>
+    </span>
+  );
+}
 
 /* =========================================================
    COMPONENTE
@@ -316,13 +511,13 @@ export default function ActiveAccessBadge({
   compact?: boolean;
 }) {
   const [activeAccess, setActiveAccess] = useState<ActiveAccess | null>(null);
+  const [planLimitData, setPlanLimitData] =
+    useState<AdminPlanLimitResponse | null>(null);
   const [accessCount, setAccessCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-
-
 
   /* =========================================================
      CARREGAR PERFIL ATIVO + QUANTIDADE DE PERFIS
@@ -346,9 +541,29 @@ export default function ActiveAccessBadge({
         const activeAccessData = await activeAccessResponse.json();
 
         if (activeAccessResponse.ok) {
-          setActiveAccess(activeAccessData?.activeAccess || null);
+          const nextActiveAccess = activeAccessData?.activeAccess || null;
+
+          setActiveAccess(nextActiveAccess);
+
+          if (nextActiveAccess?.role === "ADMINISTRADORA") {
+            const limitsResponse = await fetch("/api/admin/limites", {
+              cache: "no-store",
+            });
+
+            if (limitsResponse.ok) {
+              const limitsData =
+                (await limitsResponse.json()) as AdminPlanLimitResponse;
+
+              setPlanLimitData(limitsData);
+            } else {
+              setPlanLimitData(null);
+            }
+          } else {
+            setPlanLimitData(null);
+          }
         } else {
           setActiveAccess(null);
+          setPlanLimitData(null);
         }
       } else {
         setActiveAccess(null);
@@ -369,19 +584,16 @@ export default function ActiveAccessBadge({
     } catch (err) {
       console.error(err);
       setActiveAccess(null);
+      setPlanLimitData(null);
       setAccessCount(0);
     } finally {
       setLoading(false);
     }
   }
 
-
-
   useEffect(() => {
     loadActiveAccess();
   }, []);
-
-
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -401,8 +613,6 @@ export default function ActiveAccessBadge({
     };
   }, [open]);
 
-
-
   const canSwitchProfile = accessCount > 1;
   const tone = roleTone(activeAccess?.role);
   const currentRoleLabel = roleLabel(activeAccess?.role);
@@ -410,24 +620,31 @@ export default function ActiveAccessBadge({
     role: activeAccess?.role,
     label: activeAccess?.label,
   });
-  const accessSummary = getAccessSummary(activeAccess?.role, activeAccess?.label);
+  const accessSummary = getAccessSummary(
+    activeAccess?.role,
+    activeAccess?.label,
+  );
   const accessExplanation = getAccessExplanation({
     role: activeAccess?.role,
     label: activeAccess?.label,
   });
-
-
+  const providerLimit = getProviderLimit(planLimitData);
+  const hasPlanInfo =
+    activeAccess?.role === "ADMINISTRADORA" && Boolean(planLimitData?.plan);
+  const shouldHighlightUpgrade = Boolean(
+    providerLimit?.reached && planLimitData?.nextPlan,
+  );
 
   if (loading) {
     return (
       <div className="inline-flex h-12 max-w-[280px] items-center gap-3 rounded-2xl border border-[#DDE5DF] bg-white px-3 text-sm text-[#7A877F] shadow-sm">
         <span className="h-8 w-8 animate-pulse rounded-xl bg-[#EAF7EE]" />
-        <span className="hidden animate-pulse sm:inline">Carregando perfil...</span>
+        <span className="hidden animate-pulse sm:inline">
+          Carregando perfil...
+        </span>
       </div>
     );
   }
-
-
 
   if (!activeAccess) {
     return (
@@ -450,8 +667,6 @@ export default function ActiveAccessBadge({
     );
   }
 
-
-
   return (
     <div ref={wrapperRef} className="relative">
       <button
@@ -460,14 +675,34 @@ export default function ActiveAccessBadge({
         className={[
           "inline-flex h-12 items-center gap-3 rounded-2xl border border-[#DDE5DF] bg-white px-3 shadow-sm transition",
           "hover:border-[#256D3C] hover:shadow-md focus:outline-none focus:ring-4 focus:ring-[#256D3C]/10",
-          compact ? "max-w-[280px]" : "max-w-[360px]",
+          compact ? "max-w-[320px]" : "max-w-[420px]",
         ].join(" ")}
-        title={accessSummary}
+        title={
+          hasPlanInfo
+            ? `${accessSummary} · Plano ${planLimitData?.plan?.name}`
+            : accessSummary
+        }
       >
         <span
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${tone.icon}`}
+          className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${tone.icon}`}
         >
           <ProfileIcon className="h-4 w-4" />
+
+          {hasPlanInfo && (
+            <span
+              className={[
+                "absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full border bg-white shadow-sm",
+                providerLimit?.reached
+                  ? "border-yellow-200 text-yellow-800"
+                  : getPlanTone(planLimitData?.plan?.slug),
+              ].join(" ")}
+            >
+              <PlanIcon
+                type={getPlanIconType(planLimitData?.plan?.slug)}
+                className="h-2.5 w-2.5"
+              />
+            </span>
+          )}
         </span>
 
         <span className="min-w-0 text-left">
@@ -478,6 +713,7 @@ export default function ActiveAccessBadge({
           {activeAccess.label && (
             <span className="block max-w-[190px] truncate text-[11px] font-medium leading-4 text-[#5E6B63]">
               {contextLabel}
+              {hasPlanInfo ? ` · ${planLimitData?.plan?.name}` : ""}
             </span>
           )}
         </span>
@@ -524,11 +760,73 @@ export default function ActiveAccessBadge({
             <span className="inline-flex rounded-full border border-[#DDE5DF] bg-[#F6F8F7] px-3 py-1 text-xs font-semibold text-[#5E6B63]">
               Perfil de acesso
             </span>
+
+            <PlanBadge planLimitData={planLimitData} compact />
           </div>
 
           <p className="mt-3 rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] p-3 text-xs leading-5 text-[#5E6B63]">
             {accessExplanation}
           </p>
+
+          {hasPlanInfo && (
+            <div className="mt-3 rounded-2xl border border-[#DDE5DF] bg-white p-3">
+              <div className="flex items-start gap-3">
+                <span
+                  className={[
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border",
+                    providerLimit?.reached
+                      ? "border-yellow-200 bg-yellow-50 text-yellow-800"
+                      : getPlanTone(planLimitData?.plan?.slug),
+                  ].join(" ")}
+                >
+                  <PlanIcon
+                    type={getPlanIconType(planLimitData?.plan?.slug)}
+                    className="h-4 w-4"
+                  />
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7A877F]">
+                    Plano da carteira
+                  </p>
+
+                  <p className="mt-1 text-sm font-semibold text-[#17211B]">
+                    Plano {planLimitData?.plan?.name}
+                  </p>
+
+                  {providerLimit && (
+                    <p
+                      className={[
+                        "mt-1 text-xs leading-5",
+                        providerLimit.reached
+                          ? "font-semibold text-yellow-800"
+                          : "text-[#5E6B63]",
+                      ].join(" ")}
+                    >
+                      {formatLimitValue(providerLimit.currentUsage)} de{" "}
+                      {formatLimitValue(providerLimit.limit)} fornecedores
+                      {providerLimit.reached
+                        ? " · limite atingido"
+                        : " disponíveis no plano"}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <Link
+                href="/admin/configuracoes"
+                onClick={() => setOpen(false)}
+                className={[
+                  "mt-3 inline-flex h-10 w-full items-center justify-center rounded-2xl px-4 text-xs font-semibold transition",
+                  shouldHighlightUpgrade
+                    ? "bg-[#256D3C] text-white hover:bg-[#1F5A32]"
+                    : "border border-[#DDE5DF] bg-[#F9FBFA] text-[#17211B] hover:border-[#256D3C] hover:text-[#256D3C]",
+                ].join(" ")}
+              >
+                Ver planos disponíveis
+              </Link>
+            </div>
+          )}
 
           {canSwitchProfile && (
             <Link

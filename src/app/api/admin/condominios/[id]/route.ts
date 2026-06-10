@@ -1,4 +1,14 @@
+import {
+  CondominiumType,
+  type Administrator,
+  type Condominium,
+  type Resident,
+  type Ticket,
+  type Unit,
+  Prisma,
+} from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -15,6 +25,22 @@ import { NextResponse } from "next/server";
 
    ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO
+   - Edição dos novos campos cadastrais, institucionais,
+     operacionais e administrativos do condomínio.
+   - Preparação para fornecedores, comunicados, assembleias,
+     financeiro, relatórios e governança condominial.
+   - Removidos tipos any para compatibilidade com lint/TypeScript.
+
+   ETAPA 45.2 — IMAGEM DA FACHADA
+   - Adicionado facadeImagePath no retorno e na edição.
+   - Neste primeiro momento o campo aceita URL/caminho da imagem.
+   - Upload real pode ser evoluído depois em API própria.
+
    PATCH:
    - ADMINISTRADORA edita apenas condomínios vinculados à
      administradora do perfil ativo.
@@ -28,6 +54,7 @@ import { NextResponse } from "next/server";
    - CNPJ duplicado recebe mensagem amigável.
    - Status é validado.
    - Campos são normalizados antes de salvar.
+   - administratorId enviado no body é ignorado por segurança.
    ========================================================= */
 
 
@@ -37,6 +64,66 @@ interface RouteContext {
     id: string;
   }>;
 }
+
+
+
+/* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type RequestBody = Record<string, unknown>;
+
+
+
+type RelatedUnit = Pick<Unit, "id" | "status">;
+
+
+
+type RelatedResident = Pick<Resident, "id" | "status">;
+
+
+
+type RelatedTicket = Pick<Ticket, "id" | "status">;
+
+
+
+type CondominiumWithRelations = Condominium & {
+  administrator: Administrator;
+  units: RelatedUnit[];
+  residents: RelatedResident[];
+  tickets: RelatedTicket[];
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
 
 
 
@@ -58,7 +145,7 @@ function cleanOptionalText(value: unknown) {
 
 
 
-function normalizeStatus(value: unknown) {
+function normalizeStatus(value: unknown): "ACTIVE" | "INACTIVE" | null {
   const status = cleanText(value).toUpperCase();
 
   if (status === "ACTIVE" || status === "INACTIVE") {
@@ -86,6 +173,86 @@ function normalizeCnpj(value: unknown) {
 
 
 
+function normalizeCondominiumType(value: unknown): CondominiumType | null {
+  const type = cleanText(value).toUpperCase();
+
+  if (
+    type === "RESIDENTIAL" ||
+    type === "COMMERCIAL" ||
+    type === "MIXED" ||
+    type === "HORIZONTAL" ||
+    type === "OTHER"
+  ) {
+    return type as CondominiumType;
+  }
+
+  return null;
+}
+
+
+
+function normalizeOptionalInteger(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.floor(parsed);
+}
+
+
+
+function normalizeOptionalDate(value: unknown) {
+  const text = cleanText(value);
+
+  if (!text) {
+    return null;
+  }
+
+  const date = new Date(text);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+
+
+function normalizeOptionalJson(
+  value: unknown
+): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  if (value === null || value === undefined || value === "") {
+    return Prisma.JsonNull;
+  }
+
+  if (typeof value === "object") {
+    return value as Prisma.InputJsonValue;
+  }
+
+  try {
+    return JSON.parse(String(value)) as Prisma.InputJsonValue;
+  } catch {
+    return Prisma.JsonNull;
+  }
+}
+
+
+
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ADMINISTRATIVO
 
@@ -93,8 +260,8 @@ function normalizeCnpj(value: unknown) {
    O contexto ativo define o papel/carteira em uso.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -151,8 +318,8 @@ async function getAdminContextUser() {
    SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -196,10 +363,8 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return activeAccess?.administratorId || null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
 }
 
 
@@ -232,16 +397,58 @@ function getCondominiumWhereByContext({
    Só atualiza campos presentes no body.
    ========================================================= */
 
-function buildUpdateData(body: any) {
-  const data: any = {};
+function buildUpdateData(body: RequestBody) {
+  const data: Prisma.CondominiumUncheckedUpdateInput = {};
+
+
+
+  /* =========================================================
+     ETAPA 45 - DADOS CADASTRAIS
+     ========================================================= */
 
   if (body.name !== undefined) {
     data.name = cleanText(body.name);
   }
 
+  if (body.legalName !== undefined) {
+    data.legalName = cleanOptionalText(body.legalName);
+  }
+
   if (body.cnpj !== undefined) {
     data.cnpj = normalizeCnpj(body.cnpj);
   }
+
+  if (body.type !== undefined) {
+    const type = normalizeCondominiumType(body.type);
+
+    if (type) {
+      data.type = type;
+    }
+  }
+
+  if (body.status !== undefined) {
+    const status = normalizeStatus(body.status);
+
+    if (status) {
+      data.status = status;
+    }
+  }
+
+
+
+  /* =========================================================
+     ETAPA 45.2 - IMAGEM DA FACHADA
+     ========================================================= */
+
+  if (body.facadeImagePath !== undefined) {
+    data.facadeImagePath = cleanOptionalText(body.facadeImagePath);
+  }
+
+
+
+  /* =========================================================
+     ETAPA 45 - CONTATO
+     ========================================================= */
 
   if (body.email !== undefined) {
     data.email = cleanOptionalText(body.email);
@@ -250,6 +457,30 @@ function buildUpdateData(body: any) {
   if (body.phone !== undefined) {
     data.phone = cleanOptionalText(body.phone);
   }
+
+  if (body.administrativeContactName !== undefined) {
+    data.administrativeContactName = cleanOptionalText(
+      body.administrativeContactName
+    );
+  }
+
+  if (body.administrativeContactEmail !== undefined) {
+    data.administrativeContactEmail = cleanOptionalText(
+      body.administrativeContactEmail
+    );
+  }
+
+  if (body.administrativeContactPhone !== undefined) {
+    data.administrativeContactPhone = cleanOptionalText(
+      body.administrativeContactPhone
+    );
+  }
+
+
+
+  /* =========================================================
+     ETAPA 45 - ENDEREÇO
+     ========================================================= */
 
   if (body.cep !== undefined) {
     data.cep = cleanOptionalText(body.cep);
@@ -279,8 +510,34 @@ function buildUpdateData(body: any) {
     data.state = normalizeUf(body.state);
   }
 
-  if (body.status !== undefined) {
-    data.status = normalizeStatus(body.status);
+
+
+  /* =========================================================
+     ETAPA 45 - DADOS OPERACIONAIS
+     ========================================================= */
+
+  if (body.unitsCount !== undefined) {
+    data.unitsCount = normalizeOptionalInteger(body.unitsCount);
+  }
+
+  if (body.blocksCount !== undefined) {
+    data.blocksCount = normalizeOptionalInteger(body.blocksCount);
+  }
+
+  if (body.managementStartDate !== undefined) {
+    data.managementStartDate = normalizeOptionalDate(body.managementStartDate);
+  }
+
+  if (body.managementEndDate !== undefined) {
+    data.managementEndDate = normalizeOptionalDate(body.managementEndDate);
+  }
+
+  if (body.notes !== undefined) {
+    data.notes = cleanOptionalText(body.notes);
+  }
+
+  if (body.metadata !== undefined) {
+    data.metadata = normalizeOptionalJson(body.metadata);
   }
 
   return data;
@@ -292,17 +549,17 @@ function buildUpdateData(body: any) {
    RESPOSTA PADRONIZADA
    ========================================================= */
 
-function buildCondominiumResponse(condominio: any) {
+function buildCondominiumResponse(condominio: CondominiumWithRelations) {
   const chamadosAbertos = condominio.tickets.filter(
-    (ticket: any) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
+    (ticket) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
   ).length;
 
   const unidadesAtivas = condominio.units.filter(
-    (unit: any) => unit.status === "ACTIVE"
+    (unit) => unit.status === "ACTIVE"
   ).length;
 
   const moradoresAtivos = condominio.residents.filter(
-    (resident: any) => resident.status === "ACTIVE"
+    (resident) => resident.status === "ACTIVE"
   ).length;
 
   return {
@@ -310,10 +567,44 @@ function buildCondominiumResponse(condominio: any) {
     administratorId: condominio.administratorId,
     administrator: condominio.administrator,
 
+
+
+    /* =========================================================
+       ETAPA 45 - DADOS CADASTRAIS
+       ========================================================= */
+
     name: condominio.name,
+    legalName: condominio.legalName,
     cnpj: condominio.cnpj,
+    type: condominio.type,
+    status: condominio.status,
+
+
+
+    /* =========================================================
+       ETAPA 45.2 - IMAGEM DA FACHADA
+       ========================================================= */
+
+    facadeImagePath: condominio.facadeImagePath,
+
+
+
+    /* =========================================================
+       ETAPA 45 - CONTATO
+       ========================================================= */
+
     email: condominio.email,
     phone: condominio.phone,
+    administrativeContactName: condominio.administrativeContactName,
+    administrativeContactEmail: condominio.administrativeContactEmail,
+    administrativeContactPhone: condominio.administrativeContactPhone,
+
+
+
+    /* =========================================================
+       ETAPA 45 - ENDEREÇO
+       ========================================================= */
+
     cep: condominio.cep,
     address: condominio.address,
     number: condominio.number,
@@ -321,10 +612,34 @@ function buildCondominiumResponse(condominio: any) {
     district: condominio.district,
     city: condominio.city,
     state: condominio.state,
-    status: condominio.status,
+
+
+
+    /* =========================================================
+       ETAPA 45 - DADOS OPERACIONAIS
+       ========================================================= */
+
+    unitsCount: condominio.unitsCount,
+    blocksCount: condominio.blocksCount,
+    managementStartDate: condominio.managementStartDate,
+    managementEndDate: condominio.managementEndDate,
+    notes: condominio.notes,
+    metadata: condominio.metadata,
 
     createdAt: condominio.createdAt,
     updatedAt: condominio.updatedAt,
+
+
+
+    /* =========================================================
+       INDICADORES CALCULADOS
+
+       totalUnits:
+       quantidade real de unidades cadastradas.
+
+       unitsCount:
+       quantidade informada no cadastro avançado.
+       ========================================================= */
 
     totalUnits: condominio.units.length,
     activeUnits: unidadesAtivas,
@@ -345,9 +660,15 @@ function buildCondominiumResponse(condominio: any) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
     const { id } = await context.params;
-    const body = await req.json();
+    const body = (await req.json()) as RequestBody;
 
     const condominiumId = cleanText(id);
 
@@ -380,6 +701,11 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        VALIDAR ACESSO AO CONDOMÍNIO
+
+       Etapa 45:
+       Mantém o isolamento por carteira. Mesmo que o usuário envie
+       um ID válido de outro condomínio, a busca exige administratorId
+       do perfil ativo.
        ========================================================= */
 
     const condominioAtual = await db.condominium.findFirst({
@@ -425,6 +751,106 @@ export async function PATCH(req: Request, context: RouteContext) {
 
 
     /* =========================================================
+       VALIDAÇÃO DE TIPO DE CONDOMÍNIO
+       ========================================================= */
+
+    if (body.type !== undefined && !normalizeCondominiumType(body.type)) {
+      return NextResponse.json(
+        {
+          error:
+            "Tipo de condomínio inválido. Use RESIDENTIAL, COMMERCIAL, MIXED, HORIZONTAL ou OTHER.",
+        },
+        { status: 400 }
+      );
+    }
+
+
+
+    /* =========================================================
+       VALIDAÇÃO DE QUANTIDADES
+       ========================================================= */
+
+    if (
+      body.unitsCount !== undefined &&
+      body.unitsCount !== null &&
+      body.unitsCount !== "" &&
+      normalizeOptionalInteger(body.unitsCount) === null
+    ) {
+      return NextResponse.json(
+        { error: "Quantidade de unidades inválida." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.blocksCount !== undefined &&
+      body.blocksCount !== null &&
+      body.blocksCount !== "" &&
+      normalizeOptionalInteger(body.blocksCount) === null
+    ) {
+      return NextResponse.json(
+        { error: "Quantidade de blocos/torres inválida." },
+        { status: 400 }
+      );
+    }
+
+
+
+    /* =========================================================
+       VALIDAÇÃO DE DATAS DE GESTÃO
+       ========================================================= */
+
+    const managementStartDate =
+      body.managementStartDate !== undefined
+        ? normalizeOptionalDate(body.managementStartDate)
+        : condominioAtual.managementStartDate;
+
+    const managementEndDate =
+      body.managementEndDate !== undefined
+        ? normalizeOptionalDate(body.managementEndDate)
+        : condominioAtual.managementEndDate;
+
+    if (
+      body.managementStartDate !== undefined &&
+      body.managementStartDate !== null &&
+      body.managementStartDate !== "" &&
+      !managementStartDate
+    ) {
+      return NextResponse.json(
+        { error: "Data de início da gestão inválida." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.managementEndDate !== undefined &&
+      body.managementEndDate !== null &&
+      body.managementEndDate !== "" &&
+      !managementEndDate
+    ) {
+      return NextResponse.json(
+        { error: "Data de encerramento da gestão inválida." },
+        { status: 400 }
+      );
+    }
+
+    if (
+      managementStartDate &&
+      managementEndDate &&
+      managementEndDate < managementStartDate
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "A data de encerramento da gestão não pode ser anterior à data de início.",
+        },
+        { status: 400 }
+      );
+    }
+
+
+
+    /* =========================================================
        VALIDAR CNPJ DUPLICADO, QUANDO ALTERADO
        ========================================================= */
 
@@ -450,6 +876,12 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        ATUALIZAÇÃO
+
+       Etapa 45:
+       Atualiza somente campos enviados no body.
+
+       Etapa 45.2:
+       Atualiza facadeImagePath quando enviado no body.
        ========================================================= */
 
     const updateData = buildUpdateData(body);
@@ -531,12 +963,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownRequestError(error) && error.code === "P2002") {
       return NextResponse.json(
         { error: "Já existe um condomínio cadastrado com este dado único." },
         { status: 409 }

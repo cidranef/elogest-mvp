@@ -1,6 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
+import { useSearchParams } from "next/navigation";
 import AdminShell from "@/components/AdminShell";
 import ResponsiveSection from "@/components/ui/ResponsiveSection";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
@@ -24,43 +34,48 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    ETAPA 35.2:
    Refinamento do cadastro base de unidades.
 
-   Ajustes aplicados:
-   - mensagens de sucesso/erro;
-   - validação visual antes de enviar;
-   - reset seguro dos formulários;
-   - fechamento de modal bloqueado durante envio;
-   - normalização visual de bloco e número;
-   - KPIs passam a considerar activeResidents quando a API retornar;
-   - seleção de condomínio mostra apenas condomínios ativos quando
-     essa informação estiver disponível;
-   - componente MetricCard reutilizável.
-
    ETAPA 39.8 — NOVO VISUAL COM ADMINSHELL
-
-   Atualização:
-   - Página passa a usar AdminShell.
-   - Removido AdminTopActions da própria página.
-   - Topbar, sidebar, sino, logout e footer ficam no shell.
-   - Layout migrado do tema escuro antigo para o padrão claro EloGest.
-   - Cards, filtros, listagem, modais e formulários recebem visual novo.
-   - Mantida toda a lógica funcional já existente.
 
    ETAPA 39.17.9 — PADRONIZAÇÃO DO CARREGAMENTO
 
-   Atualização:
-   - Loading inicial passa a usar EloGestLoadingScreen.
-   - Evita montar AdminShell durante carregamento inicial.
-   - Mantém AdminShell apenas após os dados principais carregarem.
-   - Mantidas listagem, filtros, métricas, modais e ações existentes.
+   ETAPA 45.4 — FILTRO AUTOMÁTICO POR CONDOMÍNIO
+   - Página passa a ler /admin/unidades?condominio=ID.
+   - O filtro de condomínio é aplicado automaticamente ao abrir a tela.
+   - O botão Nova unidade já pré-seleciona o condomínio filtrado.
+   - Adicionado aviso visual de filtro vindo do detalhe do condomínio.
+   - Adicionado botão para limpar filtro.
+
+   ETAPA 45.6 — PAGINAÇÃO SERVER-SIDE
+   - Página passa a consumir /api/admin/unidades?page=1&limit=50.
+   - Quando houver condomínio filtrado, consome:
+     /api/admin/unidades?condominio=ID&page=1&limit=50.
+   - Lista deixa de depender de carregar toda a carteira de uma vez.
+   - Adicionados controles de página anterior/próxima.
+   - Mantido filtro de busca local sobre a página atual.
+   - Mantido cadastro com condomínio pré-selecionado quando aplicável.
+   - Mantido padrão sem any.
+
+   CORREÇÃO LINT / REACT COMPILER
+   - Removido setState síncrono de listLoading dentro do useEffect.
+   - listLoading passa a ser ativado em eventos de usuário:
+     troca de filtro, página anterior/próxima e recarregamentos manuais.
+   - useEffect fica responsável apenas por sincronizar dados externos
+     via callbacks assíncronas.
    ========================================================= */
 
 
+
+/* =========================================================
+   TYPES
+   ========================================================= */
 
 interface Condominio {
   id: string;
   name: string;
   status?: string | null;
 }
+
+
 
 interface Unidade {
   id: string;
@@ -81,6 +96,8 @@ interface Unidade {
   openTickets?: number;
 }
 
+
+
 interface UnidadeFormState {
   condominiumId: string;
   block: string;
@@ -91,12 +108,55 @@ interface UnidadeFormState {
 
 
 
+interface ApiErrorResponse {
+  error?: string;
+}
+
+
+
+interface PaginationState {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+
+
+interface PaginatedUnidadesResponse {
+  items?: Unidade[];
+  pagination?: Partial<PaginationState>;
+}
+
+
+
+type ApiListResponse = Unidade[] | PaginatedUnidadesResponse;
+
+
+
 const emptyForm: UnidadeFormState = {
   condominiumId: "",
   block: "",
   unitNumber: "",
   unitType: "Apartamento",
   status: "ACTIVE",
+};
+
+
+
+const DEFAULT_PAGE_SIZE = 50;
+
+
+
+const emptyPagination: PaginationState = {
+  page: 1,
+  limit: DEFAULT_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasNextPage: false,
+  hasPreviousPage: false,
 };
 
 
@@ -181,9 +241,97 @@ function getUnitLabel(unidade: Unidade) {
 }
 
 
+
 function getUnitContextLine(unidade: Unidade) {
-  const condominiumName = unidade.condominium?.name || "Condomínio não informado";
+  const condominiumName =
+    unidade.condominium?.name || "Condomínio não informado";
+
   return `${condominiumName} • ${getUnitLabel(unidade)}`;
+}
+
+
+
+function getApiErrorMessage(data: unknown, fallback: string) {
+  if (typeof data === "object" && data !== null && "error" in data) {
+    const error = (data as ApiErrorResponse).error;
+
+    if (error) {
+      return error;
+    }
+  }
+
+  return fallback;
+}
+
+
+
+function isValidCondominioFilter(value: string, condominios: Condominio[]) {
+  if (value === "ALL") {
+    return true;
+  }
+
+  return condominios.some((condominio) => condominio.id === value);
+}
+
+
+
+function isPaginatedUnidadesResponse(
+  data: unknown
+): data is PaginatedUnidadesResponse {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "items" in data &&
+    Array.isArray((data as PaginatedUnidadesResponse).items)
+  );
+}
+
+
+
+function normalizePagination(
+  pagination?: Partial<PaginationState>
+): PaginationState {
+  return {
+    page: Number(pagination?.page || 1),
+    limit: Number(pagination?.limit || DEFAULT_PAGE_SIZE),
+    total: Number(pagination?.total || 0),
+    totalPages: Math.max(1, Number(pagination?.totalPages || 1)),
+    hasNextPage: Boolean(pagination?.hasNextPage),
+    hasPreviousPage: Boolean(pagination?.hasPreviousPage),
+  };
+}
+
+
+
+function buildUnidadesUrl({
+  condominioFilter,
+  page,
+  limit,
+}: {
+  condominioFilter: string;
+  page: number;
+  limit: number;
+}) {
+  const params = new URLSearchParams();
+
+  if (condominioFilter !== "ALL") {
+    params.set("condominio", condominioFilter);
+  }
+
+  params.set("page", String(page));
+  params.set("limit", String(limit));
+
+  return `/api/admin/unidades?${params.toString()}`;
+}
+
+
+
+function buildCleanAdminUnidadesUrl(condominioFilter: string) {
+  if (condominioFilter === "ALL") {
+    return "/admin/unidades";
+  }
+
+  return `/admin/unidades?condominio=${encodeURIComponent(condominioFilter)}`;
 }
 
 
@@ -193,12 +341,22 @@ function getUnitContextLine(unidade: Unidade) {
    ========================================================= */
 
 export default function UnidadesPage() {
+  const searchParams = useSearchParams();
+  const initialCondominioFilter = searchParams.get("condominio") || "ALL";
+
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [condominios, setCondominios] = useState<Condominio[]>([]);
+
+  const [pagination, setPagination] =
+    useState<PaginationState>(emptyPagination);
+
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(DEFAULT_PAGE_SIZE);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -210,9 +368,16 @@ export default function UnidadesPage() {
   const [selectedUnidade, setSelectedUnidade] = useState<Unidade | null>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
-  const [condominioFilter, setCondominioFilter] = useState("ALL");
+  const [condominioFilter, setCondominioFilter] = useState(
+    initialCondominioFilter
+  );
 
-  const [form, setForm] = useState<UnidadeFormState>(emptyForm);
+  const [form, setForm] = useState<UnidadeFormState>({
+    ...emptyForm,
+    condominiumId:
+      initialCondominioFilter !== "ALL" ? initialCondominioFilter : "",
+  });
+
   const [editForm, setEditForm] = useState<UnidadeFormState>(emptyForm);
 
 
@@ -221,21 +386,61 @@ export default function UnidadesPage() {
      MENSAGENS
      ========================================================= */
 
-  function showSuccess(message: string) {
+  const showSuccess = useCallback((message: string) => {
     setSuccess(message);
     setError("");
 
     window.setTimeout(() => {
       setSuccess("");
     }, 4500);
-  }
+  }, []);
 
 
 
-  function showError(message: string) {
+  const showError = useCallback((message: string) => {
     setError(message);
     setSuccess("");
-  }
+  }, []);
+
+
+
+  /* =========================================================
+     APLICAR RESPOSTA DE UNIDADES
+
+     Compatibilidade:
+     - Se a API retornar array, mantém funcionamento legado.
+     - Se retornar { items, pagination }, usa paginação server-side.
+     ========================================================= */
+
+  const applyUnidadesResponse = useCallback(
+    (data: ApiListResponse | unknown) => {
+      if (Array.isArray(data)) {
+        setUnidades(data);
+        setPagination({
+          page: 1,
+          limit: data.length || DEFAULT_PAGE_SIZE,
+          total: data.length,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        });
+        return;
+      }
+
+      if (isPaginatedUnidadesResponse(data)) {
+        const items = data.items || [];
+
+        setUnidades(items);
+        setPagination(normalizePagination(data.pagination));
+        return;
+      }
+
+      showError("Resposta inválida da API.");
+      setUnidades([]);
+      setPagination(emptyPagination);
+    },
+    [showError]
+  );
 
 
 
@@ -243,70 +448,63 @@ export default function UnidadesPage() {
      CARREGAR UNIDADES
      ========================================================= */
 
-  async function loadUnidades() {
-    try {
-      setLoading(true);
-      setError("");
+  const loadUnidades = useCallback(
+    async ({
+      showLoading = true,
+      targetPage = page,
+      targetCondominioFilter = condominioFilter,
+    }: {
+      showLoading?: boolean;
+      targetPage?: number;
+      targetCondominioFilter?: string;
+    } = {}) => {
+      try {
+        if (showLoading) {
+          setListLoading(true);
+        }
 
-      const res = await fetch("/api/admin/unidades", {
-        cache: "no-store",
-      });
+        setError("");
 
-      const data = await res.json();
+        const res = await fetch(
+          buildUnidadesUrl({
+            condominioFilter: targetCondominioFilter,
+            page: targetPage,
+            limit: pageSize,
+          }),
+          {
+            cache: "no-store",
+          }
+        );
 
-      if (!res.ok) {
-        showError(data?.error || "Erro ao carregar unidades.");
+        const data: unknown = await res.json();
+
+        if (!res.ok) {
+          showError(getApiErrorMessage(data, "Erro ao carregar unidades."));
+          setUnidades([]);
+          setPagination(emptyPagination);
+          return;
+        }
+
+        applyUnidadesResponse(data);
+      } catch (err) {
+        console.error(err);
+        showError("Erro ao carregar unidades.");
         setUnidades([]);
-        return;
+        setPagination(emptyPagination);
+      } finally {
+        if (showLoading) {
+          setListLoading(false);
+        }
       }
-
-      if (!Array.isArray(data)) {
-        showError("Resposta inválida da API.");
-        setUnidades([]);
-        return;
-      }
-
-      setUnidades(data);
-    } catch (err) {
-      console.error(err);
-      showError("Erro ao carregar unidades.");
-      setUnidades([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-
-
-  /* =========================================================
-     CARREGAR CONDOMÍNIOS PARA O SELECT
-     ========================================================= */
-
-  async function loadCondominios() {
-    try {
-      const res = await fetch("/api/admin/condominios", {
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok || !Array.isArray(data)) {
-        setCondominios([]);
-        return;
-      }
-
-      setCondominios(
-        data.map((condominio: any) => ({
-          id: condominio.id,
-          name: condominio.name,
-          status: condominio.status,
-        }))
-      );
-    } catch (err) {
-      console.error(err);
-      setCondominios([]);
-    }
-  }
+    },
+    [
+      applyUnidadesResponse,
+      condominioFilter,
+      page,
+      pageSize,
+      showError,
+    ]
+  );
 
 
 
@@ -314,7 +512,7 @@ export default function UnidadesPage() {
      CRIAR UNIDADE
      ========================================================= */
 
-  async function createUnidade(e: React.FormEvent) {
+  async function createUnidade(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const validationMessage = validateUnidadeForm(form);
@@ -335,17 +533,25 @@ export default function UnidadesPage() {
         body: JSON.stringify(buildPayload(form)),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao criar unidade.");
+        alert(getApiErrorMessage(data, "Erro ao criar unidade."));
         return;
       }
 
-      setForm(emptyForm);
+      setForm({
+        ...emptyForm,
+        condominiumId: condominioFilter !== "ALL" ? condominioFilter : "",
+      });
+
       setModalOpen(false);
 
-      await loadUnidades();
+      setPage(1);
+      await loadUnidades({
+        showLoading: false,
+        targetPage: 1,
+      });
 
       showSuccess("Unidade criada com sucesso.");
     } catch (err) {
@@ -385,7 +591,11 @@ export default function UnidadesPage() {
   function closeCreateModal() {
     if (creating) return;
 
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      condominiumId: condominioFilter !== "ALL" ? condominioFilter : "",
+    });
+
     setModalOpen(false);
   }
 
@@ -405,7 +615,7 @@ export default function UnidadesPage() {
      ATUALIZAR UNIDADE
      ========================================================= */
 
-  async function updateUnidade(e: React.FormEvent) {
+  async function updateUnidade(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!selectedUnidade) return;
@@ -428,10 +638,10 @@ export default function UnidadesPage() {
         body: JSON.stringify(buildPayload(editForm)),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao atualizar unidade.");
+        alert(getApiErrorMessage(data, "Erro ao atualizar unidade."));
         return;
       }
 
@@ -439,7 +649,7 @@ export default function UnidadesPage() {
       setEditForm(emptyForm);
       setEditModalOpen(false);
 
-      await loadUnidades();
+      await loadUnidades({ showLoading: false });
 
       showSuccess("Unidade atualizada com sucesso.");
     } catch (err) {
@@ -481,14 +691,14 @@ export default function UnidadesPage() {
         }),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao atualizar status.");
+        alert(getApiErrorMessage(data, "Erro ao atualizar status."));
         return;
       }
 
-      await loadUnidades();
+      await loadUnidades({ showLoading: false });
 
       showSuccess(
         nextStatus === "INACTIVE"
@@ -506,13 +716,194 @@ export default function UnidadesPage() {
 
 
   /* =========================================================
-     INIT
+     ALTERAR FILTRO DE CONDOMÍNIO
+
+     Correção React Compiler:
+     - listLoading é ativado no evento de usuário, não dentro do useEffect.
+     ========================================================= */
+
+  function handleCondominioFilterChange(value: string) {
+    setListLoading(true);
+    setCondominioFilter(value);
+    setPage(1);
+    setSearchTerm("");
+
+    if (value !== "ALL") {
+      setForm((prev) => ({
+        ...prev,
+        condominiumId: value,
+      }));
+    }
+
+    if (typeof window !== "undefined") {
+      window.history.replaceState(
+        null,
+        "",
+        buildCleanAdminUnidadesUrl(value)
+      );
+    }
+  }
+
+
+
+  function clearCondominioFilter() {
+    handleCondominioFilterChange("ALL");
+
+    setForm((prev) => ({
+      ...prev,
+      condominiumId: "",
+    }));
+  }
+
+
+
+  /* =========================================================
+     PAGINAÇÃO
+
+     Correção React Compiler:
+     - listLoading é ativado nos cliques de paginação.
+     - O useEffect apenas sincroniza a busca quando page muda.
+     ========================================================= */
+
+  function goToPreviousPage() {
+    if (!pagination.hasPreviousPage || listLoading) return;
+
+    setListLoading(true);
+    setPage((current) => Math.max(1, current - 1));
+  }
+
+
+
+  function goToNextPage() {
+    if (!pagination.hasNextPage || listLoading) return;
+
+    setListLoading(true);
+    setPage((current) => current + 1);
+  }
+
+
+
+  /* =========================================================
+     INIT / RECARREGAMENTO SERVER-SIDE
+
+     Ajuste de lint:
+     - Não chama setListLoading(true) dentro do corpo do useEffect.
+     - Fetch fica em promise chain e atualiza estado nas callbacks.
      ========================================================= */
 
   useEffect(() => {
-    loadUnidades();
-    loadCondominios();
-  }, []);
+    let isMounted = true;
+
+    Promise.all([
+      fetch(
+        buildUnidadesUrl({
+          condominioFilter,
+          page,
+          limit: pageSize,
+        }),
+        {
+          cache: "no-store",
+        }
+      ).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+
+      fetch("/api/admin/condominios", {
+        cache: "no-store",
+      }).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+    ])
+      .then(([unidadesResponse, condominiosResponse]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        if (!unidadesResponse.ok) {
+          showError(
+            getApiErrorMessage(
+              unidadesResponse.data,
+              "Erro ao carregar unidades."
+            )
+          );
+          setUnidades([]);
+          setPagination(emptyPagination);
+        } else {
+          applyUnidadesResponse(unidadesResponse.data);
+        }
+
+        if (!condominiosResponse.ok || !Array.isArray(condominiosResponse.data)) {
+          setCondominios([]);
+        } else {
+          const result = (condominiosResponse.data as Condominio[]).map(
+            (condominio) => ({
+              id: condominio.id,
+              name: condominio.name,
+              status: condominio.status,
+            })
+          );
+
+          setCondominios(result);
+
+          if (
+            condominioFilter !== "ALL" &&
+            !isValidCondominioFilter(condominioFilter, result)
+          ) {
+            setCondominioFilter("ALL");
+            setPage(1);
+            setForm((prev) => ({
+              ...prev,
+              condominiumId: "",
+            }));
+
+            if (typeof window !== "undefined") {
+              window.history.replaceState(null, "", "/admin/unidades");
+            }
+
+            showError(
+              "O condomínio informado no filtro não foi encontrado nesta carteira."
+            );
+          }
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isMounted) {
+          return;
+        }
+
+        console.error(err);
+        showError("Erro ao carregar unidades.");
+        setUnidades([]);
+        setCondominios([]);
+        setPagination(emptyPagination);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoading(false);
+          setListLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [
+    applyUnidadesResponse,
+    condominioFilter,
+    page,
+    pageSize,
+    showError,
+  ]);
 
 
 
@@ -528,13 +919,32 @@ export default function UnidadesPage() {
 
 
 
+  const selectedCondominioFilter = useMemo(() => {
+    if (condominioFilter === "ALL") {
+      return null;
+    }
+
+    return (
+      condominios.find((condominio) => condominio.id === condominioFilter) ||
+      null
+    );
+  }, [condominioFilter, condominios]);
+
+
+
   /* =========================================================
      MÉTRICAS
+
+     Observação:
+     - A base das métricas considera a página atual carregada
+       via server-side.
+     - O total geral da seleção vem da paginação.
      ========================================================= */
 
   const metrics = useMemo(() => {
     return {
-      total: unidades.length,
+      total: pagination.total || unidades.length,
+      pageTotal: unidades.length,
       active: unidades.filter((item) => item.status === "ACTIVE").length,
       inactive: unidades.filter((item) => item.status === "INACTIVE").length,
       condominiums: new Set(unidades.map((item) => item.condominiumId)).size,
@@ -560,22 +970,18 @@ export default function UnidadesPage() {
         0
       ),
     };
-  }, [unidades]);
+  }, [unidades, pagination.total]);
 
 
 
   /* =========================================================
-     FILTROS
+     FILTRO LOCAL DA PÁGINA ATUAL
      ========================================================= */
 
   const filteredUnidades = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
 
     return unidades.filter((unidade) => {
-      const matchesCondominio =
-        condominioFilter === "ALL" ||
-        unidade.condominiumId === condominioFilter;
-
       const searchable = [
         unidade.condominium?.name,
         unidade.block,
@@ -590,9 +996,9 @@ export default function UnidadesPage() {
 
       const matchesSearch = !term || searchable.includes(term);
 
-      return matchesCondominio && matchesSearch;
+      return matchesSearch;
     });
-  }, [unidades, searchTerm, condominioFilter]);
+  }, [unidades, searchTerm]);
 
 
 
@@ -622,10 +1028,6 @@ export default function UnidadesPage() {
       description="Gerencie apartamentos, casas ou salas vinculadas aos condomínios."
     >
       <div className="space-y-6">
-        {/* =====================================================
-            TÍTULO DA PÁGINA
-            ===================================================== */}
-
         <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#256D3C]">
@@ -637,14 +1039,19 @@ export default function UnidadesPage() {
             </h1>
 
             <p className="mt-2 max-w-4xl text-sm leading-6 text-[#5E6B63]">
-              Gerencie apartamentos, casas, salas, lojas e demais unidades vinculadas aos condomínios da carteira administrativa.
+              Gerencie apartamentos, casas, salas, lojas e demais unidades
+              vinculadas aos condomínios da carteira administrativa.
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => {
-              setForm(emptyForm);
+              setForm({
+                ...emptyForm,
+                condominiumId:
+                  condominioFilter !== "ALL" ? condominioFilter : "",
+              });
               setModalOpen(true);
             }}
             className="inline-flex h-12 items-center justify-center rounded-2xl bg-[#256D3C] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1F5A32] focus:outline-none focus:ring-4 focus:ring-[#256D3C]/20"
@@ -654,10 +1061,6 @@ export default function UnidadesPage() {
         </header>
 
 
-
-        {/* =====================================================
-            MENSAGENS
-            ===================================================== */}
 
         {success && (
           <div className="rounded-2xl border border-[#CFE6D4] bg-[#EAF7EE] p-4 text-sm font-semibold text-[#256D3C]">
@@ -673,9 +1076,36 @@ export default function UnidadesPage() {
 
 
 
-        {/* =====================================================
-            MODAL - NOVA UNIDADE
-            ===================================================== */}
+        {selectedCondominioFilter && (
+          <section className="rounded-[28px] border border-[#CFE6D4] bg-[#EAF7EE] p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#256D3C]">
+                  Filtro aplicado
+                </p>
+
+                <h2 className="mt-1 text-xl font-semibold text-[#17211B]">
+                  {selectedCondominioFilter.name}
+                </h2>
+
+                <p className="mt-1 text-sm leading-6 text-[#5E6B63]">
+                  Exibindo apenas unidades deste condomínio. A consulta já está
+                  filtrada no servidor para evitar listas grandes.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={clearCondominioFilter}
+                className="inline-flex h-11 w-fit items-center justify-center rounded-2xl border border-[#CFE6D4] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"
+              >
+                Limpar filtro
+              </button>
+            </div>
+          </section>
+        )}
+
+
 
         {modalOpen && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#17211B]/65 p-4 backdrop-blur-sm">
@@ -738,10 +1168,6 @@ export default function UnidadesPage() {
         )}
 
 
-
-        {/* =====================================================
-            MODAL - EDITAR UNIDADE
-            ===================================================== */}
 
         {editModalOpen && selectedUnidade && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#17211B]/65 p-4 backdrop-blur-sm">
@@ -806,20 +1232,18 @@ export default function UnidadesPage() {
 
 
 
-        {/* =====================================================
-            VISÃO DA CARTEIRA
-            ===================================================== */}
-
         <section className="overflow-hidden rounded-[32px] border border-[#DDE5DF] bg-white shadow-sm">
           <div className="border-b border-[#DDE5DF] bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAF9_62%,#EAF7EE_135%)] p-6">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-2xl font-semibold tracking-tight text-[#17211B] md:text-3xl">
-                  Visão da Carteira
+                  Visão da Seleção
                 </h2>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-[#5E6B63]">
-                  Resumo das unidades cadastradas, vínculos ativos, moradores e chamados associados.
+                  Resumo das unidades retornadas pela consulta atual. A listagem
+                  usa paginação server-side para manter a página leve mesmo em
+                  condomínios grandes.
                 </p>
               </div>
 
@@ -827,27 +1251,27 @@ export default function UnidadesPage() {
                 <QueueMetricBox
                   title="Total"
                   value={metrics.total}
-                  description="Unidades cadastradas."
+                  description="Na seleção atual."
+                  highlighted
+                />
+
+                <QueueMetricBox
+                  title="Nesta página"
+                  value={metrics.pageTotal}
+                  description={`Limite de ${pagination.limit}.`}
                   highlighted
                 />
 
                 <QueueMetricBox
                   title="Ativas"
                   value={metrics.active}
-                  description="Unidades em operação."
-                  highlighted
-                />
-
-                <QueueMetricBox
-                  title="Condomínios"
-                  value={metrics.condominiums}
-                  description="Com unidades vinculadas."
+                  description="Na página atual."
                 />
 
                 <QueueMetricBox
                   title="Moradores"
                   value={metrics.residentsActive}
-                  description="Moradores ativos."
+                  description="Vínculos ativos na página."
                 />
               </div>
             </div>
@@ -856,13 +1280,17 @@ export default function UnidadesPage() {
           <div className="grid gap-0 divide-y divide-[#DDE5DF] md:grid-cols-3 md:divide-x md:divide-y-0">
             <div className="p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">
-                Unidades inativas
+                Página atual
               </p>
 
               <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
-                {metrics.inactive > 0
-                  ? `${metrics.inactive} unidade(s) inativas na base.`
-                  : "Nenhuma unidade inativa na carteira."}
+                Página{" "}
+                <strong className="text-[#17211B]">{pagination.page}</strong>{" "}
+                de{" "}
+                <strong className="text-[#17211B]">
+                  {pagination.totalPages}
+                </strong>
+                .
               </p>
             </div>
 
@@ -872,28 +1300,27 @@ export default function UnidadesPage() {
               </p>
 
               <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
-                {metrics.tickets} chamado(s) vinculados às unidades cadastradas.
+                {metrics.tickets} chamado(s) vinculados às unidades desta página.
               </p>
             </div>
 
             <div className="p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">
-                Resultado atual
+                Resultado local
               </p>
 
               <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
-                Exibindo <strong className="text-[#17211B]">{filteredUnidades.length}</strong>{" "}
-                unidade(s) conforme filtros aplicados.
+                Exibindo{" "}
+                <strong className="text-[#17211B]">
+                  {filteredUnidades.length}
+                </strong>{" "}
+                unidade(s) após busca local nesta página.
               </p>
             </div>
           </div>
         </section>
 
 
-
-        {/* =====================================================
-            FILTROS
-            ===================================================== */}
 
         <ResponsiveSection
           title="Busca e Filtros"
@@ -911,8 +1338,13 @@ export default function UnidadesPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="form-input mt-1"
-                  placeholder="Buscar por condomínio, bloco, número, tipo ou status..."
+                  placeholder="Buscar na página atual por condomínio, bloco, número, tipo ou status..."
                 />
+
+                <p className="mt-2 text-xs leading-5 text-[#7A877F]">
+                  A busca textual filtra os registros já carregados nesta página.
+                  O filtro por condomínio é aplicado no servidor.
+                </p>
               </div>
 
               <div>
@@ -922,7 +1354,7 @@ export default function UnidadesPage() {
 
                 <select
                   value={condominioFilter}
-                  onChange={(e) => setCondominioFilter(e.target.value)}
+                  onChange={(e) => handleCondominioFilterChange(e.target.value)}
                   className="form-input mt-1"
                 >
                   <option value="ALL">Todos</option>
@@ -937,23 +1369,28 @@ export default function UnidadesPage() {
               </div>
             </div>
 
-            <p className="mt-3 text-sm text-[#5E6B63]">
-              Exibindo{" "}
-              <strong className="text-[#17211B]">
-                {filteredUnidades.length}
-              </strong>{" "}
-              de{" "}
-              <strong className="text-[#17211B]">{unidades.length}</strong>{" "}
-              unidade(s).
-            </p>
+            <div className="mt-4 flex flex-col gap-3 text-sm text-[#5E6B63] lg:flex-row lg:items-center lg:justify-between">
+              <p>
+                Exibindo{" "}
+                <strong className="text-[#17211B]">
+                  {filteredUnidades.length}
+                </strong>{" "}
+                de{" "}
+                <strong className="text-[#17211B]">{unidades.length}</strong>{" "}
+                unidade(s) carregadas nesta página. Total da seleção:{" "}
+                <strong className="text-[#17211B]">{pagination.total}</strong>.
+              </p>
+
+              {listLoading && (
+                <span className="font-semibold text-[#256D3C]">
+                  Atualizando lista...
+                </span>
+              )}
+            </div>
           </section>
         </ResponsiveSection>
 
 
-
-        {/* =====================================================
-            LISTAGEM
-            ===================================================== */}
 
         {filteredUnidades.length === 0 ? (
           <section className="rounded-[28px] border border-[#DDE5DF] bg-white p-8 text-center shadow-sm">
@@ -962,14 +1399,14 @@ export default function UnidadesPage() {
             </h2>
 
             <p className="mx-auto max-w-2xl text-sm leading-6 text-[#5E6B63]">
-              Não encontramos unidades com os filtros atuais. Tente limpar os
-              filtros ou cadastrar uma nova unidade.
+              Não encontramos unidades com os filtros atuais. Tente limpar a
+              busca local, trocar o condomínio ou cadastrar uma nova unidade.
             </p>
           </section>
         ) : (
           <ResponsiveSection
             title="Unidades da Carteira"
-            description="Lista operacional das unidades conforme os filtros aplicados."
+            description="Lista operacional das unidades conforme filtros e paginação aplicados."
             defaultOpenMobile
           >
             <div className="space-y-3">
@@ -1009,8 +1446,14 @@ export default function UnidadesPage() {
                       </p>
 
                       <p className="mt-2 text-xs text-[#7A877F]">
-                        Moradores ativos: <strong className="text-[#5E6B63]">{unidade.activeResidents ?? unidade.totalResidents ?? 0}</strong>
-                        {" "}• Chamados: <strong className="text-[#5E6B63]">{unidade.totalTickets || 0}</strong>
+                        Moradores ativos:{" "}
+                        <strong className="text-[#5E6B63]">
+                          {unidade.activeResidents ?? unidade.totalResidents ?? 0}
+                        </strong>{" "}
+                        • Chamados:{" "}
+                        <strong className="text-[#5E6B63]">
+                          {unidade.totalTickets || 0}
+                        </strong>
                       </p>
                     </div>
 
@@ -1052,15 +1495,47 @@ export default function UnidadesPage() {
 
                     <div className="border-t border-[#DDE5DF] p-4">
                       <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-4">
-                        <InfoLine label="Condomínio" value={unidade.condominium?.name || "-"} />
+                        <InfoLine
+                          label="Condomínio"
+                          value={unidade.condominium?.name || "-"}
+                        />
+
                         <InfoLine label="Tipo" value={unidade.unitType || "-"} />
-                        <InfoLine label="Bloco / Torre" value={unidade.block || "-"} />
+                        <InfoLine
+                          label="Bloco / Torre"
+                          value={unidade.block || "-"}
+                        />
                         <InfoLine label="Número" value={unidade.unitNumber} />
-                        <InfoLine label="Moradores" value={unidade.activeResidents ?? unidade.totalResidents ?? 0} />
-                        <InfoLine label="Total moradores" value={unidade.totalResidents || 0} />
-                        <InfoLine label="Chamados" value={unidade.totalTickets || 0} />
-                        <InfoLine label="Chamados abertos" value={unidade.openTickets || 0} />
-                        <InfoLine label="Criada em" value={new Date(unidade.createdAt).toLocaleString("pt-BR")} />
+
+                        <InfoLine
+                          label="Moradores"
+                          value={
+                            unidade.activeResidents ?? unidade.totalResidents ?? 0
+                          }
+                        />
+
+                        <InfoLine
+                          label="Total moradores"
+                          value={unidade.totalResidents || 0}
+                        />
+
+                        <InfoLine
+                          label="Chamados"
+                          value={unidade.totalTickets || 0}
+                        />
+
+                        <InfoLine
+                          label="Chamados abertos"
+                          value={unidade.openTickets || 0}
+                        />
+
+                        <InfoLine
+                          label="Criada em"
+                          value={new Date(unidade.createdAt).toLocaleString(
+                            "pt-BR"
+                          )}
+                        />
+
                         <InfoLine label="ID da unidade" value={unidade.id} />
                       </div>
                     </div>
@@ -1068,9 +1543,17 @@ export default function UnidadesPage() {
                 </article>
               ))}
             </div>
+
+
+
+            <PaginationControls
+              pagination={pagination}
+              loading={listLoading}
+              onPrevious={goToPreviousPage}
+              onNext={goToNextPage}
+            />
           </ResponsiveSection>
         )}
-
       </div>
 
       <style jsx global>{`
@@ -1096,6 +1579,10 @@ export default function UnidadesPage() {
         .form-input::placeholder {
           color: #9aa7a0;
         }
+
+        details > summary::-webkit-details-marker {
+          display: none;
+        }
       `}</style>
     </AdminShell>
   );
@@ -1105,8 +1592,6 @@ export default function UnidadesPage() {
 
 /* =========================================================
    COMPONENTE REUTILIZÁVEL DOS CAMPOS DO FORMULÁRIO
-
-   Usado tanto no cadastro quanto na edição.
    ========================================================= */
 
 function UnidadeFormFields({
@@ -1115,7 +1600,7 @@ function UnidadeFormFields({
   condominios,
 }: {
   form: UnidadeFormState;
-  setForm: React.Dispatch<React.SetStateAction<UnidadeFormState>>;
+  setForm: Dispatch<SetStateAction<UnidadeFormState>>;
   condominios: Condominio[];
 }) {
   return (
@@ -1273,6 +1758,61 @@ function QueueMetricBox({
 
 
 /* =========================================================
+   CONTROLES DE PAGINAÇÃO
+   ========================================================= */
+
+function PaginationControls({
+  pagination,
+  loading,
+  onPrevious,
+  onNext,
+}: {
+  pagination: PaginationState;
+  loading: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="mt-5 rounded-[24px] border border-[#DDE5DF] bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-[#17211B]">
+            Página {pagination.page} de {pagination.totalPages}
+          </p>
+
+          <p className="mt-1 text-xs text-[#5E6B63]">
+            Total de {pagination.total} unidade(s) na seleção atual. Exibindo até{" "}
+            {pagination.limit} por página.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onPrevious}
+            disabled={!pagination.hasPreviousPage || loading}
+            className="inline-flex h-11 items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C] disabled:cursor-not-allowed disabled:bg-[#F6F8F7] disabled:text-[#9AA7A0]"
+          >
+            Anterior
+          </button>
+
+          <button
+            type="button"
+            onClick={onNext}
+            disabled={!pagination.hasNextPage || loading}
+            className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-4 text-sm font-semibold text-white transition hover:bg-[#1F5A32] disabled:bg-[#9AA7A0]"
+          >
+            Próxima
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+/* =========================================================
    LINHA DE INFORMAÇÃO DO MENU SUSPENSO
    ========================================================= */
 
@@ -1309,13 +1849,12 @@ function FormField({
 }: {
   label: string;
   required?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div>
       <label className="text-sm font-semibold text-[#17211B]">
-        {label}{" "}
-        {required && <span className="text-red-600">*</span>}
+        {label} {required && <span className="text-red-600">*</span>}
       </label>
 
       <div className="mt-1">

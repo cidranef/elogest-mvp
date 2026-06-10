@@ -110,6 +110,31 @@ interface PortalUser {
 
 
 
+interface ActiveAccessPayload {
+  accessId?: string | null;
+  id?: string | null;
+  role?: string | null;
+  label?: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  userEmail?: string | null;
+  name?: string | null;
+  email?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+}
+
+
+
+type ActiveAccessResponse = {
+  activeAccess?: ActiveAccessPayload | null;
+  error?: string;
+};
+
+
+
 type PortalRole =
   | "MORADOR"
   | "SINDICO"
@@ -182,6 +207,53 @@ function isSindicoRole(role?: string | null) {
 
 function isResidentialRole(role?: string | null) {
   return role === "MORADOR" || role === "PROPRIETARIO";
+}
+
+
+
+function isPortalDashboardRole(role?: string | null) {
+  return (
+    role === "SINDICO" ||
+    role === "CONSELHEIRO" ||
+    role === "MORADOR" ||
+    role === "PROPRIETARIO"
+  );
+}
+
+
+
+function buildPortalUserFromActiveAccess(
+  activeAccess?: ActiveAccessPayload | null
+): PortalUser | null {
+  if (!activeAccess) {
+    return null;
+  }
+
+  const role = activeAccess.role || "";
+
+  if (!isPortalDashboardRole(role)) {
+    return null;
+  }
+
+  return {
+    id: activeAccess.userId || activeAccess.id || activeAccess.accessId || "",
+    name: activeAccess.userName || activeAccess.name || activeAccess.label || "",
+    email: activeAccess.userEmail || activeAccess.email || "",
+    role,
+    residentId: activeAccess.residentId || null,
+    condominiumId: activeAccess.condominiumId || null,
+    unitId: activeAccess.unitId || null,
+  };
+}
+
+
+
+function getAllowedDashboardFallbackMessage(role?: string | null) {
+  if (role === "CONSELHEIRO") {
+    return "";
+  }
+
+  return "Não foi possível carregar os chamados deste perfil, mas o acesso ao portal permanece disponível.";
 }
 
 
@@ -356,14 +428,64 @@ export default function PortalDashboardPage() {
       setError("");
       setAccessDenied(false);
 
-      const res = await fetch("/api/portal/chamados", {
-        cache: "no-store",
-      });
+      const [activeAccessResult, chamadosResult] = await Promise.allSettled([
+        fetch("/api/user/active-access", {
+          cache: "no-store",
+        }),
+        fetch("/api/portal/chamados", {
+          cache: "no-store",
+        }),
+      ]);
 
+      let activeAccess: ActiveAccessPayload | null = null;
+
+      if (activeAccessResult.status === "fulfilled") {
+        const activeAccessResponse = activeAccessResult.value;
+
+        if (activeAccessResponse.ok) {
+          const activeAccessData =
+            (await activeAccessResponse.json()) as ActiveAccessResponse;
+
+          activeAccess = activeAccessData.activeAccess || null;
+        }
+      }
+
+      const fallbackRole: PortalRole = activeAccess?.role || "";
+      const fallbackUser = buildPortalUserFromActiveAccess(activeAccess);
+
+      if (chamadosResult.status !== "fulfilled") {
+        if (isPortalDashboardRole(fallbackRole)) {
+          setRole(fallbackRole);
+          setUser(fallbackUser);
+          setUserName(fallbackUser?.name || activeAccess?.label || "");
+          setTickets([]);
+          setHasPersonalUnit(false);
+          setPersonalUnit(null);
+          setError(getAllowedDashboardFallbackMessage(fallbackRole));
+          return;
+        }
+
+        setError("Erro ao carregar dashboard.");
+        setTickets([]);
+        return;
+      }
+
+      const res = chamadosResult.value;
       const data = await res.json();
 
       if (!res.ok) {
         const message = data?.error || "Erro ao carregar dashboard.";
+
+        if (isPortalDashboardRole(fallbackRole)) {
+          setRole(fallbackRole);
+          setUser(fallbackUser);
+          setUserName(fallbackUser?.name || activeAccess?.label || "");
+          setTickets([]);
+          setHasPersonalUnit(false);
+          setPersonalUnit(null);
+          setError(getAllowedDashboardFallbackMessage(fallbackRole));
+          return;
+        }
 
         setError(message);
         setTickets([]);
@@ -376,9 +498,13 @@ export default function PortalDashboardPage() {
       }
 
       const nextRole: PortalRole =
-        data.role || data.activeAccess?.role || data.user?.role || "";
+        data.role ||
+        data.activeAccess?.role ||
+        data.user?.role ||
+        fallbackRole ||
+        "";
 
-      const nextUser: PortalUser | null = data.user || null;
+      const nextUser: PortalUser | null = data.user || fallbackUser || null;
 
       const receivedTickets: Ticket[] = Array.isArray(data.tickets)
         ? data.tickets
@@ -392,7 +518,7 @@ export default function PortalDashboardPage() {
 
       setRole(nextRole);
       setUser(nextUser);
-      setUserName(nextUser?.name || "");
+      setUserName(nextUser?.name || activeAccess?.label || "");
       setTickets(safeTickets);
 
       setHasPersonalUnit(!!data.hasPersonalUnit);
@@ -780,6 +906,10 @@ export default function PortalDashboardPage() {
       return "Abrir chamado";
     }
 
+    if (role === "CONSELHEIRO") {
+      return "Ver reuniões do conselho";
+    }
+
     return "Abrir meu chamado";
   }
 
@@ -1067,12 +1197,12 @@ export default function PortalDashboardPage() {
     return (
       <PortalContextGuard
         fallbackTitle="Dashboard do portal indisponível neste perfil de acesso"
-        fallbackDescription="O dashboard do portal é destinado a síndicos, moradores e proprietários. Para acessar dados administrativos, utilize a área admin."
+        fallbackDescription="O dashboard do portal é destinado a síndicos, conselheiros, moradores e proprietários. Para acessar dados administrativos, utilize a área admin."
       >
         <PortalShell
           current="dashboard"
           title="Dashboard do portal"
-          description="Este dashboard é destinado a síndicos, moradores e proprietários."
+          description="Este dashboard é destinado a síndicos, conselheiros, moradores e proprietários."
           canSwitchProfile={canSwitchProfile}
         >
           <section className="rounded-[32px] border border-red-200 bg-white p-8 shadow-sm">
@@ -1086,8 +1216,8 @@ export default function PortalDashboardPage() {
               </h1>
 
               <p className="mt-2 max-w-3xl text-sm leading-6 text-[#5E6B63]">
-                Este dashboard é destinado exclusivamente a síndicos,
-                proprietários e moradores.
+                Este dashboard é destinado a síndicos,
+                conselheiros, proprietários e moradores.
               </p>
             </div>
 
@@ -1129,7 +1259,7 @@ export default function PortalDashboardPage() {
   return (
     <PortalContextGuard
       fallbackTitle="Dashboard do portal indisponível neste perfil de acesso"
-      fallbackDescription="O dashboard do portal é destinado a síndicos, moradores e proprietários. Para acessar dados administrativos, utilize a área admin."
+      fallbackDescription="O dashboard do portal é destinado a síndicos, conselheiros, moradores e proprietários. Para acessar dados administrativos, utilize a área admin."
     >
       <PortalShell
         current="dashboard"
@@ -1191,7 +1321,7 @@ export default function PortalDashboardPage() {
 
               <div className="flex shrink-0 xl:min-w-[260px]">
                 <Link
-                  href="/portal/chamados"
+                  href={role === "CONSELHEIRO" ? "/portal/reunioes-conselho" : "/portal/chamados"}
                   className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-[#256D3C] px-6 text-sm font-semibold text-white transition hover:bg-[#1F5A32] xl:w-auto xl:min-w-[220px]"
                 >
                   {getOpenTicketActionLabel()}

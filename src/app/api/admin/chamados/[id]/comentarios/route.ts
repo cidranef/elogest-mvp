@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
-
+import { Prisma, Status } from "@prisma/client";
+import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   notifyTicketInternalTargets,
@@ -17,56 +18,73 @@ import {
   isAdministradoraAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
-import { Status } from "@prisma/client";
 
 
 
 /* =========================================================
-   ETAPA 18.1 - API DE COMENTÁRIOS DO CHAMADO
-
-   Esta rota cria registros na timeline do chamado.
-
-   Ela separa dois tipos de comunicação:
-
-   COMMENT_INTERNAL:
-   - Comentário interno da administradora/equipe.
-   - Não deve aparecer no portal do morador.
-
-   COMMENT_PUBLIC:
-   - Resposta pública ao morador.
-   - Deve aparecer no portal do morador.
+   API DE COMENTÁRIOS DO CHAMADO - ADMIN
 
    Rota:
    POST /api/admin/chamados/[id]/comentarios
 
-   ETAPA 35.5:
-   - Rota administrativa exclusiva para SUPER_ADMIN / ADMINISTRADORA.
-   - SÍNDICO, MORADOR e PROPRIETÁRIO comentam pelo portal.
-   - Comentários são bloqueados em chamados finalizados.
-   - ADMINISTRADORA só comenta em chamados da própria carteira.
-   - Comentário público atualiza firstResponseAt quando aplicável.
-   - Comentário interno nunca notifica morador.
-   - Uso de enums Prisma Role / Status para evitar erro de tipagem.
-
-   ETAPA 40.3 — AUDITORIA DOS CHAMADOS PONTA A PONTA
-
-   Ajustes desta revisão:
-   - Comparações de perfil passam a usar helpers da matriz central.
-   - COMMENT_INTERNAL agora valida canCommentInternal().
-   - COMMENT_PUBLIC mantém validação canCommentPublic().
-   - accessId só é gravado quando for UserAccess real.
-   - Contexto legado/fallback não é bloqueado apenas por accessId nulo.
-   - Mantido COMMENT_INTERNAL fora do portal.
-   - Mantida notificação pública apenas para morador/criador.
-   - Mantida notificação interna apenas para operação/admin/responsável.
+   Revisão de lint/segurança:
+   - Removidos tipos any.
+   - Adicionado requireActiveAdminApiAccess().
+   - Mantida operação exclusiva para ADMINISTRADORA ativa.
+   - Mantido isolamento por administratorId do activeAccess.
+   - Mantidos logs com accessId, actorRole e actorLabel.
    ========================================================= */
 
 
 
-type Params = {
+type RouteContext = {
   params: Promise<{
     id: string;
   }>;
+};
+
+
+
+type AuthSessionUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type CommentContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+type CommentAction = "COMMENT_INTERNAL" | "COMMENT_PUBLIC";
+
+
+
+type CommentRequestBody = {
+  comment?: unknown;
+  type?: unknown;
 };
 
 
@@ -91,19 +109,7 @@ function getDatabaseAccessId(access: ActiveUserAccess | null) {
 
 
 
-/* =========================================================
-   NORMALIZA O TIPO DE COMENTÁRIO RECEBIDO DO FRONT
-
-   O front poderá enviar:
-
-   type: "internal"
-   ou
-   type: "public"
-
-   A API converte para os valores oficiais salvos em TicketLog.action.
-   ========================================================= */
-
-function resolveCommentAction(type: unknown) {
+function resolveCommentAction(type: unknown): CommentAction {
   if (type === "public") {
     return "COMMENT_PUBLIC";
   }
@@ -113,16 +119,20 @@ function resolveCommentAction(type: unknown) {
 
 
 
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ATIVO
-
-   A sessão base identifica quem está logado.
-   O contexto ativo define com qual papel/carteira ele está
-   operando naquele momento.
    ========================================================= */
 
-async function getCommentContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getCommentContextUser(): Promise<CommentContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -173,23 +183,12 @@ async function getCommentContextUser() {
 
 /* =========================================================
    VALIDA CONTEXTO DA ROTA ADMINISTRATIVA
-
-   Permitidos:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
-
-   Bloqueados:
-   - SINDICO
-   - MORADOR
-   - PROPRIETARIO
-   - CONSELHEIRO
-
-   Observação:
-   Síndico, morador e proprietário comentam pela rota do portal.
    ========================================================= */
 
-function validateCommentContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateCommentContext(
+  user: CommentContextUser
+): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -199,11 +198,6 @@ function validateCommentContext(user: any) {
     };
   }
 
-  /*
-     Etapa 43:
-     /admin é a área operacional da administradora.
-     SUPER_ADMIN deve operar pela área /elogest, não por esta rota.
-  */
   if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
@@ -232,19 +226,13 @@ function validateCommentContext(user: any) {
 
 /* =========================================================
    FILTRO DO CHAMADO PELO CONTEXTO ATIVO
-
-   SUPER_ADMIN:
-   - acessa todos.
-
-   ADMINISTRADORA:
-   - acessa chamados da administradora ativa.
-
-   Demais perfis:
-   - bloqueados antes deste filtro.
    ========================================================= */
 
-function getTicketWhereByContext(user: any, ticketId: string) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function getTicketWhereByContext(
+  user: CommentContextUser,
+  ticketId: string
+): Prisma.TicketWhereInput {
+  const activeAccess = user.activeAccess;
 
   if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
@@ -266,10 +254,16 @@ function getTicketWhereByContext(user: any, ticketId: string) {
    POST - CRIAR COMENTÁRIO NO CHAMADO
    ========================================================= */
 
-export async function POST(request: NextRequest, { params }: Params) {
+export async function POST(request: Request, context: RouteContext) {
   try {
-    const authUser: any = await getCommentContextUser();
-    const { id } = await params;
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const authUser = await getCommentContextUser();
+    const { id } = await context.params;
 
     const ticketId = cleanText(id);
 
@@ -280,12 +274,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       );
     }
 
-
-
-    /* =========================================================
-       VALIDAR CONTEXTO ADMINISTRATIVO
-       ========================================================= */
-
     const contextValidation = validateCommentContext(authUser);
 
     if (!contextValidation.ok) {
@@ -295,9 +283,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       );
     }
 
-
-
-    const activeAccess = authUser.activeAccess as ActiveUserAccess | null;
+    const activeAccess = authUser.activeAccess;
 
     if (!activeAccess) {
       return NextResponse.json(
@@ -306,16 +292,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       );
     }
 
+    const body = (await request.json()) as CommentRequestBody;
 
-
-    /* =========================================================
-       VALIDAR CONTEÚDO DO COMENTÁRIO
-       ========================================================= */
-
-    const body = await request.json();
-
-    const comment = cleanText(body?.comment);
-    const type = body?.type;
+    const comment = cleanText(body.comment);
+    const action = resolveCommentAction(body.type);
 
     if (!comment) {
       return NextResponse.json(
@@ -323,21 +303,6 @@ export async function POST(request: NextRequest, { params }: Params) {
         { status: 400 }
       );
     }
-
-    const action = resolveCommentAction(type);
-
-
-
-    /* =========================================================
-       PERMISSÕES DE COMENTÁRIO
-
-       COMMENT_PUBLIC:
-       - exige COMMENT_PUBLIC.
-
-       COMMENT_INTERNAL:
-       - exige COMMENT_INTERNAL.
-       - nunca aparece no portal.
-       ========================================================= */
 
     if (action === "COMMENT_PUBLIC" && !canCommentPublic(activeAccess)) {
       return NextResponse.json(
@@ -352,17 +317,6 @@ export async function POST(request: NextRequest, { params }: Params) {
         { status: 403 }
       );
     }
-
-
-
-    /* =========================================================
-       BUSCA O CHAMADO
-
-       A busca respeita o contexto ativo administrativo:
-
-       - SUPER_ADMIN: qualquer chamado;
-       - ADMINISTRADORA: apenas carteira ativa.
-       ========================================================= */
 
     const ticket = await db.ticket.findFirst({
       where: getTicketWhereByContext(authUser, ticketId),
@@ -428,17 +382,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       );
     }
 
-
-
-    /* =========================================================
-       BLOQUEIOS OPERACIONAIS
-
-       Histórico continua preservado, mas novas comunicações são
-       bloqueadas quando:
-       - chamado está finalizado;
-       - condomínio/administradora estão inativos.
-       ========================================================= */
-
     if (ticket.status === "RESOLVED" || ticket.status === "CANCELED") {
       return NextResponse.json(
         {
@@ -461,23 +404,6 @@ export async function POST(request: NextRequest, { params }: Params) {
         { status: 400 }
       );
     }
-
-
-
-    /* =========================================================
-       CRIA O LOG DO COMENTÁRIO
-
-       action:
-       - COMMENT_INTERNAL
-       - COMMENT_PUBLIC
-
-       accessId:
-       - salvo apenas quando for UserAccess real;
-       - fallback/legado grava null para não quebrar FK.
-
-       actorRole / actorLabel:
-       - sempre gravados para manter auditoria.
-       ========================================================= */
 
     const dbAccessId = getDatabaseAccessId(activeAccess);
 
@@ -504,16 +430,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       },
     });
 
-
-
-    /* =========================================================
-       PRIMEIRA RESPOSTA
-
-       Se for uma resposta pública ao morador e o chamado ainda
-       não tiver firstResponseAt, gravamos este momento como
-       primeira resposta.
-       ========================================================= */
-
     if (action === "COMMENT_PUBLIC" && !ticket.firstResponseAt) {
       await db.ticket.update({
         where: {
@@ -525,25 +441,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       });
     }
 
-
-
-    /* =========================================================
-       METADADOS PADRÃO DA NOTIFICAÇÃO
-
-       Inclui contexto ativo do usuário que criou o comentário.
-       ========================================================= */
-
     const notificationMetadata = {
       commentPreview: comment.substring(0, 180),
       action,
-
-      /*
-        Metadata pode receber o accessId sintético.
-        O que não pode é salvar accessId sintético em FK.
-      */
       accessId: activeAccess.accessId,
       accessSource: activeAccess.source,
-
       actorRole: buildActorRole(activeAccess),
       actorLabel: buildActorLabel(activeAccess),
       createdByUserId: authUser.id,
@@ -551,26 +453,17 @@ export async function POST(request: NextRequest, { params }: Params) {
       createdByUserRole: activeAccess.role,
     };
 
-
-
-    /* =========================================================
-       NOTIFICAÇÃO DE RESPOSTA PÚBLICA
-
-       COMMENT_PUBLIC:
-       - notifica morador/criador;
-       - evita duplicidade;
-       - evita notificar quem executou a ação.
-       ========================================================= */
+    const actorUser = {
+      id: authUser.id,
+      name: authUser.name,
+      email: authUser.email,
+      role: activeAccess.role,
+    };
 
     if (action === "COMMENT_PUBLIC") {
       await notifyTicketPublicTargets({
         ticket,
-        actorUser: {
-          id: authUser.id,
-          name: authUser.name,
-          email: authUser.email,
-          role: activeAccess.role,
-        },
+        actorUser,
         type: "TICKET_PUBLIC_COMMENT",
         title: "Nova resposta no chamado",
         message: `O chamado "${ticket.title}" recebeu uma nova resposta.`,
@@ -578,36 +471,16 @@ export async function POST(request: NextRequest, { params }: Params) {
       });
     }
 
-
-
-    /* =========================================================
-       NOTIFICAÇÃO DE COMENTÁRIO INTERNO
-
-       COMMENT_INTERNAL:
-       - notifica usuários da administradora da carteira;
-       - notifica responsável atribuído, se não for morador;
-       - nunca notifica morador;
-       - evita duplicidades;
-       - evita notificar quem executou a ação.
-       ========================================================= */
-
     if (action === "COMMENT_INTERNAL") {
       await notifyTicketInternalTargets({
         ticket,
-        actorUser: {
-          id: authUser.id,
-          name: authUser.name,
-          email: authUser.email,
-          role: activeAccess.role,
-        },
+        actorUser,
         type: "TICKET_INTERNAL_COMMENT",
         title: "Novo comentário interno",
         message: `O chamado "${ticket.title}" recebeu um comentário interno.`,
         metadata: notificationMetadata,
       });
     }
-
-
 
     return NextResponse.json({
       success: true,
@@ -624,6 +497,13 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json(
         { error: "Usuário não autenticado." },
         { status: 401 }
+      );
+    }
+
+    if (isPrismaKnownRequestError(error)) {
+      return NextResponse.json(
+        { error: "Erro ao registrar comentário no chamado." },
+        { status: 500 }
       );
     }
 

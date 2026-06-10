@@ -1,4 +1,12 @@
+import {
+  Prisma,
+  type Condominium,
+  type Resident,
+  type Ticket,
+  type Unit,
+} from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -14,6 +22,16 @@ import { NextResponse } from "next/server";
    UNIDADES - API DE ATUALIZAÇÃO
 
    ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO
+   - Mantido isolamento por activeAccess.
+   - Mantida validação de carteira ativa.
+   - Removidos tipos any.
+   - Adicionado tratamento tipado para erro Prisma P2002.
 
    PATCH:
    - ADMINISTRADORA edita apenas unidades de condomínios da sua
@@ -42,6 +60,61 @@ interface RouteContext {
     id: string;
   }>;
 }
+
+
+
+/* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type RequestBody = Record<string, unknown>;
+
+
+
+type RelatedResident = Pick<Resident, "id" | "status">;
+
+
+
+type RelatedTicket = Pick<Ticket, "id" | "status">;
+
+
+
+type UnitWithRelations = Unit & {
+  condominium: Condominium;
+  residents: RelatedResident[];
+  tickets: RelatedTicket[];
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
 
 
 
@@ -83,7 +156,7 @@ function normalizeUnitType(value: unknown) {
 
 
 
-function normalizeStatus(value: unknown) {
+function normalizeStatus(value: unknown): "ACTIVE" | "INACTIVE" | null {
   const status = cleanText(value).toUpperCase();
 
   if (status === "ACTIVE" || status === "INACTIVE") {
@@ -95,6 +168,14 @@ function normalizeStatus(value: unknown) {
 
 
 
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ADMINISTRATIVO
 
@@ -102,8 +183,8 @@ function normalizeStatus(value: unknown) {
    O contexto ativo define o papel/carteira em uso.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -160,8 +241,8 @@ async function getAdminContextUser() {
    SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -205,10 +286,8 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return activeAccess?.administratorId || null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
 }
 
 
@@ -217,14 +296,13 @@ function getAdministratorIdFromContext(user: any) {
    RETORNO PADRONIZADO
    ========================================================= */
 
-function buildUnitPayload(unidade: any) {
+function buildUnitPayload(unidade: UnitWithRelations) {
   const chamadosAbertos = unidade.tickets.filter(
-    (ticket: any) =>
-      ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
+    (ticket) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
   ).length;
 
   const moradoresAtivos = unidade.residents.filter(
-    (resident: any) => resident.status === "ACTIVE"
+    (resident) => resident.status === "ACTIVE"
   ).length;
 
   return {
@@ -256,9 +334,15 @@ function buildUnitPayload(unidade: any) {
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
     const { id } = await context.params;
-    const body = await req.json();
+    const body = (await req.json()) as RequestBody;
 
     const unitId = cleanText(id);
 
@@ -291,6 +375,9 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        VALIDAR ACESSO À UNIDADE ATUAL
+
+       A unidade só pode ser editada quando pertencer a condomínio
+       da administradora ativa do perfil atual.
        ========================================================= */
 
     const unidadeAtual = await db.unit.findFirst({
@@ -361,6 +448,8 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     /* =========================================================
        NORMALIZAÇÃO DOS CAMPOS
+
+       Só usa valor enviado quando o campo existe no body.
        ========================================================= */
 
     const block =
@@ -486,12 +575,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownRequestError(error) && error.code === "P2002") {
       return NextResponse.json(
         {
           error:

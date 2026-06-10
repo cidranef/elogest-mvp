@@ -177,9 +177,6 @@ function priorityLabel(priority?: string | null) {
   );
 }
 
-function priorityClass(priority?: string | null) {
-  return priority === "URGENT" ? "text-red-700" : "text-[#5E6B63]";
-}
 function formatDisplayTitle(value?: string | null) {
   const text = String(value || "").trim();
 
@@ -319,7 +316,7 @@ function renderStars(value: number) {
   return "★".repeat(value) + "☆".repeat(Math.max(0, 5 - value));
 }
 
-function csvEscape(value: any) {
+function csvEscape(value: unknown) {
   const text = String(value ?? "")
     .replace(/\r?\n|\r/g, " ")
     .replace(/"/g, '""');
@@ -345,47 +342,6 @@ function periodLabel(period: PeriodFilter) {
       "90D": "Últimos 90 dias",
       ALL: "Todo o período",
     }[period] || "Período selecionado"
-  );
-}
-
-
-
-/* =========================================================
-   CARD DE KPI
-   ========================================================= */
-
-function ReportKpiCard({
-  title,
-  value,
-  description,
-  tone = "default",
-}: {
-  title: string;
-  value: string | number;
-  description?: string;
-  tone?: "default" | "blue" | "yellow" | "green" | "red" | "purple";
-}) {
-  const valueClass =
-    tone === "green"
-      ? "text-[#256D3C]"
-      : tone === "red"
-        ? "text-red-700"
-        : "text-[#17211B]";
-
-  return (
-    <div className="rounded-[24px] border border-[#DDE5DF] bg-white p-5 shadow-sm">
-      <p className="text-sm text-[#5E6B63]">{title}</p>
-
-      <strong className={`mt-1 block text-4xl font-semibold tracking-tight ${valueClass}`}>
-        {value}
-      </strong>
-
-      {description && (
-        <p className="mt-2 text-xs leading-relaxed text-[#7A877F]">
-          {description}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -481,7 +437,18 @@ export default function ChamadosRelatoriosPage() {
      ========================================================= */
 
   useEffect(() => {
-    loadTickets();
+    let isMounted = true;
+
+    void Promise.resolve().then(async () => {
+      if (!isMounted) return;
+
+      await loadTickets();
+    });
+
+    return () => {
+      isMounted = false;
+    };
+     
   }, []);
 
 

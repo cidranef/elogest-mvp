@@ -75,6 +75,36 @@ function statusClasses(status: string) {
 
 
 
+function planStatusLabel(status?: string | null) {
+  if (status === "ACTIVE") return "Plano ativo";
+  if (status === "TRIALING") return "Em teste";
+  if (status === "PAST_DUE") return "Pendente";
+  if (status === "SUSPENDED") return "Suspenso";
+  if (status === "CANCELED") return "Cancelado";
+
+  return "Sem status";
+}
+
+
+
+function planBadgeClasses(status?: string | null) {
+  if (status === "ACTIVE" || status === "TRIALING") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
+  if (status === "PAST_DUE") {
+    return "border-yellow-200 bg-yellow-50 text-yellow-800";
+  }
+
+  if (status === "SUSPENDED" || status === "CANCELED") {
+    return "border-red-200 bg-red-50 text-red-800";
+  }
+
+  return "border-[#DDE5DF] bg-[#F7F9F8] text-[#64736A]";
+}
+
+
+
 function pluralize(value: number, singular: string, plural: string) {
   return value === 1 ? singular : plural;
 }
@@ -210,6 +240,14 @@ export default async function EloGestAdministradorasPage() {
         phone: true,
         status: true,
         createdAt: true,
+        planStatus: true,
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         _count: {
           select: {
             condominiums: true,
@@ -279,7 +317,7 @@ export default async function EloGestAdministradorasPage() {
 
               <p className="mt-3 max-w-3xl text-sm leading-6 text-[#64736A] sm:text-base sm:leading-7">
                 Gerencie as administradoras clientes da plataforma, acompanhe
-                seus condomínios vinculados, usuários operacionais e status de
+                seus condomínios vinculados, usuários operacionais, plano contratado e status de
                 operação. Esta é uma visão global da EloGest, sem vínculo com
                 uma carteira específica.
               </p>
@@ -291,6 +329,13 @@ export default async function EloGestAdministradorasPage() {
                 className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-5 py-3 text-sm font-semibold text-[#17211B] shadow-sm transition hover:border-[#256D3C] hover:text-[#256D3C]"
               >
                 Voltar ao dashboard
+              </Link>
+
+              <Link
+                href="/elogest/planos"
+                className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-[#CFE6D4] bg-[#EAF7EE] px-5 py-3 text-sm font-semibold text-[#256D3C] shadow-sm transition hover:border-[#256D3C]"
+              >
+                Ver Planos
               </Link>
 
               <Link
@@ -402,10 +447,11 @@ export default async function EloGestAdministradorasPage() {
             <EmptyState />
           ) : (
             <div className="overflow-hidden rounded-[24px] border border-[#DDE5DF]">
-              <div className="hidden grid-cols-[1.25fr_1fr_0.85fr_0.65fr_0.6fr] border-b border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#7A877F] lg:grid">
+              <div className="hidden grid-cols-[1.18fr_0.95fr_0.82fr_0.75fr_0.58fr_0.55fr] border-b border-[#DDE5DF] bg-[#F7F9F8] px-4 py-3 text-xs font-bold uppercase tracking-[0.12em] text-[#7A877F] lg:grid">
                 <div>Administradora</div>
                 <div>Contato</div>
                 <div>Estrutura</div>
+                <div>Plano</div>
                 <div>Status</div>
                 <div className="text-right">Cadastro</div>
               </div>
@@ -415,7 +461,7 @@ export default async function EloGestAdministradorasPage() {
                   <Link
                     key={administradora.id}
                     href={`/elogest/administradoras/${administradora.id}`}
-                    className="group grid gap-3 px-4 py-4 transition hover:bg-[#F7FBF8] lg:grid-cols-[1.25fr_1fr_0.85fr_0.65fr_0.6fr] lg:items-center"
+                    className="group grid gap-3 px-4 py-4 transition hover:bg-[#F7FBF8] lg:grid-cols-[1.18fr_0.95fr_0.82fr_0.75fr_0.58fr_0.55fr] lg:items-center"
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -455,6 +501,23 @@ export default async function EloGestAdministradorasPage() {
                         {administradora._count.users} usuário
                         {administradora._count.users === 1 ? "" : "s"}
                       </span>
+                    </div>
+
+                    <div className="min-w-0">
+                      <span
+                        className={[
+                          "inline-flex max-w-full rounded-full border px-3 py-1 text-xs font-semibold",
+                          planBadgeClasses(administradora.planStatus),
+                        ].join(" ")}
+                      >
+                        <span className="truncate">
+                          {administradora.plan?.name || "Sem Plano"}
+                        </span>
+                      </span>
+
+                      <p className="mt-1 text-xs leading-5 text-[#7A877F]">
+                        {planStatusLabel(administradora.planStatus)}
+                      </p>
                     </div>
 
                     <div>

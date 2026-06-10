@@ -1,3 +1,5 @@
+import { AccessRole, Prisma, Role, Status } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
@@ -7,10 +9,16 @@ import {
   type ActiveUserAccess,
 } from "@/lib/user-access";
 import { canManageUsers } from "@/lib/access-control";
-import { NextResponse } from "next/server";
-import { Role, Status } from "@prisma/client";
-import bcrypt from "bcryptjs";
 import { validateStrongPassword } from "@/lib/password-policy";
+import { NextResponse } from "next/server";
+import {
+  getPlanErrorPayload,
+  isPlanAccessError,
+  isPlanLimitError,
+  MODULE_SLUGS,
+  requireCanCreateUser,
+  requireModuleAccess,
+} from "@/lib/plan-limits";
 
 
 
@@ -22,6 +30,14 @@ import { validateStrongPassword } from "@/lib/password-policy";
    ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
    - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
      quando a administradora estiver inativa.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO / ACESSOS
+   - Mantido isolamento por activeAccess.
+   - Removidos tipos any.
+   - Adicionado tratamento tipado para erro Prisma P2002.
+   - Mantido fluxo morador -> usuário -> portal.
+   - Mantida sincronização de UserAccess.
+   - Mantida política forte de senha.
 
    GET:
    - ADMINISTRADORA lista usuários da própria carteira.
@@ -62,23 +78,132 @@ import { validateStrongPassword } from "@/lib/password-policy";
 
 
 /* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type RequestBody = Record<string, unknown>;
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+type OperationalRole = Extract<Role, "ADMINISTRADORA" | "SINDICO" | "MORADOR">;
+
+
+
+/* =========================================================
+   SELECT PADRÃO
+   ========================================================= */
+
+const userSelect = {
+  id: true,
+  name: true,
+  email: true,
+
+  // ETAPA 42.10.6 — Telefone pessoal para notificações/WhatsApp
+  phone: true,
+  phoneVerifiedAt: true,
+  phoneOptInAt: true,
+  phoneOptOutAt: true,
+
+  role: true,
+  isActive: true,
+
+  administratorId: true,
+  condominiumId: true,
+  residentId: true,
+
+  administrator: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+
+  condominium: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+
+  resident: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      status: true,
+      unit: {
+        select: {
+          id: true,
+          block: true,
+          unitNumber: true,
+        },
+      },
+      condominium: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
+
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.UserSelect;
+
+
+
+/* =========================================================
    HELPERS
    ========================================================= */
 
-function normalizeText(value?: string | null) {
+function normalizeText(value: unknown) {
   const cleaned = String(value || "").trim();
+
   return cleaned.length > 0 ? cleaned : "";
 }
 
 
 
-function normalizeEmail(value?: string | null) {
+function normalizeEmail(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
 
 
-function normalizePhone(value?: string | null) {
+function normalizePhone(value: unknown) {
   const digits = String(value || "").replace(/\D/g, "");
 
   return digits.length > 0 ? digits : null;
@@ -113,7 +238,7 @@ function isValidEmail(email: string) {
 
 
 
-function isValidAdminRole(role: string): role is Role {
+function isValidAdminRole(role: string): role is OperationalRole {
   return (
     role === Role.ADMINISTRADORA ||
     role === Role.SINDICO ||
@@ -121,6 +246,13 @@ function isValidAdminRole(role: string): role is Role {
   );
 }
 
+
+
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
 
 
 
@@ -172,6 +304,178 @@ function buildPrimaryAccessLabel({
 
 
 
+
+
+
+function normalizeCouncilAccessInput(body: RequestBody) {
+  const raw = body.councilAccess;
+
+  if (!raw || typeof raw !== "object") {
+    return {
+      provided: false,
+      enabled: false,
+      title: "",
+      condominiumId: "",
+    };
+  }
+
+  const input = raw as Record<string, unknown>;
+
+  return {
+    provided: true,
+    enabled: input.enabled === true,
+    title: normalizeText(input.title) || "Conselheiro",
+    condominiumId: normalizeText(input.condominiumId),
+  };
+}
+
+
+
+function buildCouncilAccessLabel({
+  title,
+  condominiumName,
+}: {
+  title?: string | null;
+  condominiumName?: string | null;
+}) {
+  const safeTitle = normalizeText(title) || "Conselheiro";
+
+  return condominiumName ? `${safeTitle} - ${condominiumName}` : safeTitle;
+}
+
+
+
+async function syncCouncilUserAccess({
+  userId,
+  administratorId,
+  condominiumId,
+  title,
+  isEnabled,
+  isActive,
+}: {
+  userId: string;
+  administratorId: string;
+  condominiumId: string | null;
+  title?: string | null;
+  isEnabled: boolean;
+  isActive: boolean;
+}) {
+  const administratorCondominiums = await db.condominium.findMany({
+    where: {
+      administratorId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const condominiumIds = administratorCondominiums.map((item) => item.id);
+
+  if (!isEnabled || !isActive) {
+    await db.userAccess.updateMany({
+      where: {
+        userId,
+        role: AccessRole.CONSELHEIRO,
+        condominiumId: {
+          in: condominiumIds,
+        },
+      },
+      data: {
+        isActive: false,
+        isDefault: false,
+      },
+    });
+
+    return;
+  }
+
+  if (!condominiumId) {
+    throw new Error("COUNCIL_CONDOMINIUM_REQUIRED");
+  }
+
+  const condominium = await db.condominium.findFirst({
+    where: {
+      id: condominiumId,
+      administratorId,
+      status: Status.ACTIVE,
+      administrator: {
+        status: Status.ACTIVE,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  if (!condominium) {
+    throw new Error("COUNCIL_CONDOMINIUM_INVALID");
+  }
+
+  const label = buildCouncilAccessLabel({
+    title,
+    condominiumName: condominium.name,
+  });
+
+  const existingAccess = await db.userAccess.findFirst({
+    where: {
+      userId,
+      role: AccessRole.CONSELHEIRO,
+      condominiumId: condominium.id,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  const syncedAccess = existingAccess
+    ? await db.userAccess.update({
+        where: {
+          id: existingAccess.id,
+        },
+        data: {
+          label,
+          administratorId,
+          condominiumId: condominium.id,
+          residentId: null,
+          unitId: null,
+          isActive: true,
+          isDefault: false,
+        },
+      })
+    : await db.userAccess.create({
+        data: {
+          userId,
+          role: AccessRole.CONSELHEIRO,
+          label,
+          administratorId,
+          condominiumId: condominium.id,
+          residentId: null,
+          unitId: null,
+          isActive: true,
+          isDefault: false,
+        },
+      });
+
+  await db.userAccess.updateMany({
+    where: {
+      userId,
+      role: AccessRole.CONSELHEIRO,
+      condominiumId: {
+        in: condominiumIds,
+      },
+      id: {
+        not: syncedAccess.id,
+      },
+    },
+    data: {
+      isActive: false,
+      isDefault: false,
+    },
+  });
+}
+
+
 async function syncOperationalUserAccess({
   userId,
   role,
@@ -212,22 +516,34 @@ async function syncOperationalUserAccess({
   const [administrator, condominium, resident] = await Promise.all([
     administratorId
       ? db.administrator.findUnique({
-          where: { id: administratorId },
-          select: { name: true },
+          where: {
+            id: administratorId,
+          },
+          select: {
+            name: true,
+          },
         })
       : Promise.resolve(null),
 
     condominiumId
       ? db.condominium.findUnique({
-          where: { id: condominiumId },
-          select: { name: true },
+          where: {
+            id: condominiumId,
+          },
+          select: {
+            name: true,
+          },
         })
       : Promise.resolve(null),
 
     residentId
       ? db.resident.findUnique({
-          where: { id: residentId },
-          select: { name: true },
+          where: {
+            id: residentId,
+          },
+          select: {
+            name: true,
+          },
         })
       : Promise.resolve(null),
   ]);
@@ -314,73 +630,12 @@ async function syncOperationalUserAccess({
 
 
 
-const userSelect = {
-  id: true,
-  name: true,
-  email: true,
-
-  // ETAPA 42.10.6 — Telefone pessoal para notificações/WhatsApp
-  phone: true,
-  phoneVerifiedAt: true,
-  phoneOptInAt: true,
-  phoneOptOutAt: true,
-
-  role: true,
-  isActive: true,
-
-  administratorId: true,
-  condominiumId: true,
-  residentId: true,
-
-  administrator: {
-    select: {
-      id: true,
-      name: true,
-    },
-  },
-
-  condominium: {
-    select: {
-      id: true,
-      name: true,
-    },
-  },
-
-  resident: {
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      phone: true,
-      status: true,
-      unit: {
-        select: {
-          id: true,
-          block: true,
-          unitNumber: true,
-        },
-      },
-      condominium: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-  },
-
-  createdAt: true,
-  updatedAt: true,
-};
-
-
-
 /* =========================================================
    USUÁRIO COM CONTEXTO ADMINISTRATIVO
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -433,8 +688,8 @@ async function getAdminContextUser() {
    VALIDA CONTEXTO ADMINISTRATIVO
    ========================================================= */
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -478,10 +733,8 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return activeAccess?.administratorId || null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
 }
 
 
@@ -498,7 +751,7 @@ export async function GET() {
       return adminApiAccess.error;
     }
 
-    const user: any = await getAdminContextUser();
+    const user = await getAdminContextUser();
 
     const contextValidation = validateAdminContext(user);
 
@@ -517,6 +770,11 @@ export async function GET() {
         { status: 403 }
       );
     }
+
+    await requireModuleAccess({
+      administratorId,
+      moduleSlug: MODULE_SLUGS.USUARIOS,
+    });
 
 
 
@@ -555,9 +813,72 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(usuarios);
+    const userIds = usuarios.map((usuario) => usuario.id);
+
+    const userAccesses = userIds.length
+      ? await db.userAccess.findMany({
+          where: {
+            userId: {
+              in: userIds,
+            },
+            administratorId,
+          },
+          select: {
+            id: true,
+            userId: true,
+            role: true,
+            label: true,
+            condominiumId: true,
+            isActive: true,
+            condominium: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+        })
+      : [];
+
+    const accessesByUser = new Map<string, typeof userAccesses>();
+
+    for (const access of userAccesses) {
+      const current = accessesByUser.get(access.userId) || [];
+      current.push(access);
+      accessesByUser.set(access.userId, current);
+    }
+
+    return NextResponse.json(
+      usuarios.map((usuario) => ({
+        ...usuario,
+        userAccesses: accessesByUser.get(usuario.id) || [],
+      }))
+    );
   } catch (error: unknown) {
     console.error("ERRO AO LISTAR USUÁRIOS:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
+
+    if (error instanceof Error && error.message === "COUNCIL_CONDOMINIUM_REQUIRED") {
+      return NextResponse.json(
+        { error: "Selecione o condomínio do perfil de conselheiro." },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof Error && error.message === "COUNCIL_CONDOMINIUM_INVALID") {
+      return NextResponse.json(
+        { error: "Condomínio do conselheiro não encontrado, inativo ou fora da carteira." },
+        { status: 403 }
+      );
+    }
 
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
@@ -587,8 +908,8 @@ export async function POST(req: Request) {
       return adminApiAccess.error;
     }
 
-    const authUser: any = await getAdminContextUser();
-    const body = await req.json();
+    const authUser = await getAdminContextUser();
+    const body = (await req.json()) as RequestBody;
 
     const contextValidation = validateAdminContext(authUser);
 
@@ -679,7 +1000,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const role: Role = rawRole;
+    const role = rawRole;
+    const councilAccess = normalizeCouncilAccessInput(body);
+
+    await requireCanCreateUser(currentAdministratorId);
 
 
 
@@ -759,7 +1083,9 @@ export async function POST(req: Request) {
        ========================================================= */
 
     if (role === Role.SINDICO) {
-      if (!body.condominiumId) {
+      const requestedCondominiumId = normalizeText(body.condominiumId);
+
+      if (!requestedCondominiumId) {
         return NextResponse.json(
           { error: "Selecione o condomínio para o síndico." },
           { status: 400 }
@@ -768,7 +1094,7 @@ export async function POST(req: Request) {
 
       const condominio = await db.condominium.findFirst({
         where: {
-          id: body.condominiumId,
+          id: requestedCondominiumId,
           administratorId: currentAdministratorId,
           status: Status.ACTIVE,
           administrator: {
@@ -824,10 +1150,12 @@ export async function POST(req: Request) {
       administratorId = null;
       residentId = null;
 
-      if (body.residentId) {
+      const requestedResidentId = normalizeText(body.residentId);
+
+      if (requestedResidentId) {
         const morador = await db.resident.findFirst({
           where: {
-            id: body.residentId,
+            id: requestedResidentId,
             condominiumId: condominio.id,
             status: Status.ACTIVE,
             condominium: {
@@ -893,7 +1221,9 @@ export async function POST(req: Request) {
        ========================================================= */
 
     if (role === Role.MORADOR) {
-      if (!body.residentId) {
+      const requestedResidentId = normalizeText(body.residentId);
+
+      if (!requestedResidentId) {
         return NextResponse.json(
           { error: "Selecione o morador para este usuário." },
           { status: 400 }
@@ -902,7 +1232,7 @@ export async function POST(req: Request) {
 
       const morador = await db.resident.findFirst({
         where: {
-          id: body.residentId,
+          id: requestedResidentId,
           status: Status.ACTIVE,
           condominium: {
             administratorId: currentAdministratorId,
@@ -1004,11 +1334,43 @@ export async function POST(req: Request) {
       isActive: usuario.isActive,
     });
 
+    await syncCouncilUserAccess({
+      userId: usuario.id,
+      administratorId: currentAdministratorId,
+      condominiumId:
+        councilAccess.condominiumId ||
+        condominiumId ||
+        null,
+      title: councilAccess.title,
+      isEnabled: councilAccess.enabled,
+      isActive: usuario.isActive,
+    });
+
     return NextResponse.json(usuario, {
       status: 201,
     });
   } catch (error: unknown) {
     console.error("ERRO AO CRIAR USUÁRIO:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
+
+    if (error instanceof Error && error.message === "COUNCIL_CONDOMINIUM_REQUIRED") {
+      return NextResponse.json(
+        { error: "Selecione o condomínio do perfil de conselheiro." },
+        { status: 400 }
+      );
+    }
+
+    if (error instanceof Error && error.message === "COUNCIL_CONDOMINIUM_INVALID") {
+      return NextResponse.json(
+        { error: "Condomínio do conselheiro não encontrado, inativo ou fora da carteira." },
+        { status: 403 }
+      );
+    }
 
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
@@ -1017,12 +1379,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownRequestError(error) && error.code === "P2002") {
       return NextResponse.json(
         { error: "Já existe um usuário com estes dados." },
         { status: 409 }

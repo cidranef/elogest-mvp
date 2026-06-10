@@ -151,6 +151,14 @@ interface Ticket {
   rating?: TicketRating | null;
 }
 
+
+
+type TicketUpdatePayload = {
+  status?: string;
+  assignedToUserId?: string | null;
+  resolutionComment?: string;
+};
+
 /* =========================================================
    PÁGINA DE DETALHES DO CHAMADO
 
@@ -242,6 +250,7 @@ export default function ChamadoDetalhesPage() {
 
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
 
   /* =========================================================
      MENSAGENS
@@ -437,7 +446,7 @@ export default function ChamadoDetalhesPage() {
      ATUALIZAÇÃO DO CHAMADO
      ========================================================= */
 
-  async function updateTicket(payload: any, successMessage?: string) {
+  async function updateTicket(payload: TicketUpdatePayload, successMessage?: string) {
     if (!ticketId) return;
 
     try {
@@ -692,10 +701,24 @@ export default function ChamadoDetalhesPage() {
      ========================================================= */
 
   useEffect(() => {
-    loadTicket();
-    loadUsuarios();
-    loadCurrentUser();
-    loadActiveAccess();
+    let isMounted = true;
+
+    void Promise.resolve().then(async () => {
+      if (!isMounted) return;
+
+      setNowTimestamp(Date.now());
+
+      await Promise.all([
+        loadTicket(),
+        loadUsuarios(),
+        loadCurrentUser(),
+        loadActiveAccess(),
+      ]);
+    });
+
+    return () => {
+      isMounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId]);
 
@@ -815,7 +838,7 @@ export default function ChamadoDetalhesPage() {
 
     const createdAt = new Date(currentTicket.createdAt).getTime();
     const elapsedHours = Math.floor(
-      (Date.now() - createdAt) / (1000 * 60 * 60),
+      (nowTimestamp - createdAt) / (1000 * 60 * 60),
     );
     const remainingHours =
       getSlaLimitHours(currentTicket.priority) - elapsedHours;
@@ -899,9 +922,6 @@ export default function ChamadoDetalhesPage() {
     return isAdminContext() || isSyndicContext();
   }
 
-  function canSeeOperationalActions() {
-    return canChangeStatus() || canAssignResponsible();
-  }
 
   /* =========================================================
      RESPONSÁVEIS OPERACIONAIS
@@ -968,21 +988,6 @@ export default function ChamadoDetalhesPage() {
     return "Condomínio / Área comum";
   }
 
-  function getFullAddressLabel(currentTicket: Ticket) {
-    const condominium = currentTicket.condominium;
-
-    if (!condominium) return "-";
-
-    const parts = [
-      condominium.address,
-      condominium.number,
-      condominium.district,
-      condominium.city,
-      condominium.state,
-    ].filter(Boolean);
-
-    return parts.length > 0 ? parts.join(", ") : "-";
-  }
 
   /* =========================================================
      SITUAÇÃO OPERACIONAL E AÇÃO RECOMENDADA
@@ -2330,26 +2335,3 @@ function CompactInfoLine({
   );
 }
 
-/* =========================================================
-   LINHA COMPACTA DO CABEÇALHO
-   ========================================================= */
-
-function MiniInfoLine({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) {
-  return (
-    <div className="rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] p-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7A877F]">
-        {label}
-      </p>
-
-      <p className="mt-1 break-words text-sm font-semibold text-[#17211B]">
-        {value}
-      </p>
-    </div>
-  );
-}

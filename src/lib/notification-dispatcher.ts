@@ -10,7 +10,11 @@ import {
   type NotificationEventType,
 } from "@/lib/notification-events";
 import { isNotificationChannelEnabledForUser } from "@/lib/notification-preferences";
-import { ticketNotificationEmailTemplate } from "@/lib/notification-email-templates";
+import {
+  assemblyNotificationEmailTemplate,
+  meetingNotificationEmailTemplate,
+  ticketNotificationEmailTemplate,
+} from "@/lib/notification-email-templates";
 import { buildNotificationWhatsAppMessage } from "@/lib/notification-whatsapp-templates";
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 
@@ -73,8 +77,20 @@ import { sendWhatsAppMessage } from "@/lib/whatsapp";
        4. destinatário precisa ter telefone;
        5. usuário não pode ter phoneOptOutAt preenchido;
        6. preferência WHATSAPP do evento precisa estar ativa.
+
+   ETAPA 49 — REUNIÕES DE CONSELHO
+
+   Ajustes desta revisão:
+   - E-mails de eventos COUNCIL_MEETING_* passam a usar template
+     próprio de reunião, sem reaproveitar o texto visual de chamados.
+   - Mantido fallback para template de chamados nos eventos antigos.
+   - A decisão técnica da Sala De Reunião EloGest continua plugável
+     para Assembleias futuras.
    ========================================================= */
 
+
+
+type NotificationMetadata = Record<string, unknown>;
 
 
 type DispatchNotificationEmailInput = {
@@ -89,7 +105,7 @@ type DispatchNotificationEmailInput = {
   ticketId?: string | null;
   href?: string | null;
 
-  metadata?: any;
+  metadata?: NotificationMetadata;
 };
 
 
@@ -120,7 +136,7 @@ type DispatchNotificationWhatsAppInput = {
   ticketId?: string | null;
   href?: string | null;
 
-  metadata?: any;
+  metadata?: NotificationMetadata;
 };
 
 
@@ -170,6 +186,146 @@ function buildAbsoluteUrl(href?: string | null) {
   }
 
   return `${getAppBaseUrl()}${href.startsWith("/") ? href : `/${href}`}`;
+}
+
+
+
+
+
+function getMetadataString(
+  metadata: NotificationMetadata | undefined,
+  key: string,
+) {
+  const value = metadata?.[key];
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized || null;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return null;
+}
+
+
+
+function getFirstMetadataString(
+  metadata: NotificationMetadata | undefined,
+  keys: string[],
+) {
+  for (const key of keys) {
+    const value = getMetadataString(metadata, key);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+
+
+function getMetadataStringArray(
+  metadata: NotificationMetadata | undefined,
+  key: string,
+) {
+  const value = metadata?.[key];
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+
+function isMeetingNotificationEvent(eventType: NotificationEventType) {
+  return String(eventType).startsWith("COUNCIL_MEETING_");
+}
+
+function isAssemblyNotificationEvent(eventType: NotificationEventType) {
+  return String(eventType).startsWith("ASSEMBLY_");
+}
+
+
+
+function buildEmailTemplateForEvent({
+  eventType,
+  title,
+  message,
+  actionUrl,
+  ticketId,
+  metadata,
+}: {
+  eventType: NotificationEventType;
+  title: string;
+  message: string;
+  actionUrl?: string | null;
+  ticketId?: string | null;
+  metadata?: NotificationMetadata;
+}) {
+  if (isAssemblyNotificationEvent(eventType)) {
+    return assemblyNotificationEmailTemplate({
+      mode:
+        String(eventType) === "ASSEMBLY_VOTING_REMINDER"
+          ? "reminder"
+          : String(eventType) === "ASSEMBLY_VOTING_DEADLINE_EXTENDED"
+            ? "deadline_extended"
+            : String(eventType) === "ASSEMBLY_RESULTS_PUBLISHED"
+              ? "results"
+              : "convocation",
+      title,
+      message,
+      actionUrl,
+      condominiumName: getMetadataString(metadata, "condominiumName"),
+      scheduledStartAt: getMetadataString(metadata, "scheduledStartAt"),
+      votingStartsAt: getMetadataString(metadata, "votingStartsAt"),
+      votingEndsAt: getMetadataString(metadata, "votingEndsAt"),
+      previousVotingEndsAt: getMetadataString(metadata, "previousVotingEndsAt"),
+      extensionReason: getMetadataString(metadata, "extensionReason"),
+      meetingMode: getMetadataString(metadata, "meetingMode"),
+      representedUnits: getMetadataStringArray(metadata, "representedUnits"),
+    });
+  }
+
+  if (isMeetingNotificationEvent(eventType)) {
+    return meetingNotificationEmailTemplate({
+      title,
+      message,
+      actionUrl,
+      actionLabel:
+        getMetadataString(metadata, "actionLabel") ||
+        (String(eventType) === "COUNCIL_MEETING_ROOM_OPENED"
+          ? "Entrar na sala"
+          : "Acessar reunião"),
+      meetingTitle: getFirstMetadataString(metadata, ["meetingTitle", "councilMeetingTitle"]),
+      condominiumName: getMetadataString(metadata, "condominiumName"),
+      scheduledStartAt:
+        getFirstMetadataString(metadata, ["scheduledStartAt", "meetingStartAt", "startsAt"]),
+      scheduledEndAt:
+        getFirstMetadataString(metadata, ["scheduledEndAt", "meetingEndAt", "endsAt"]),
+      meetingMode: getMetadataString(metadata, "meetingMode"),
+      roomStatus: getMetadataString(metadata, "roomStatus"),
+      eventLabel: getNotificationEventLabel(eventType),
+    });
+  }
+
+  return ticketNotificationEmailTemplate({
+    title,
+    message,
+    actionUrl,
+    actionLabel: ticketId ? "Acessar chamado" : "Acessar EloGest",
+    ticketTitle: getMetadataString(metadata, "ticketTitle"),
+    condominiumName: getMetadataString(metadata, "condominiumName"),
+    eventLabel: getNotificationEventLabel(eventType),
+  });
 }
 
 
@@ -368,14 +524,13 @@ export async function dispatchNotificationEmail({
 
     const actionUrl = buildAbsoluteUrl(href);
 
-    const template = ticketNotificationEmailTemplate({
+    const template = buildEmailTemplateForEvent({
+      eventType,
       title,
       message,
       actionUrl,
-      actionLabel: ticketId ? "Acessar chamado" : "Acessar EloGest",
-      ticketTitle: metadata?.ticketTitle || null,
-      condominiumName: metadata?.condominiumName || null,
-      eventLabel: getNotificationEventLabel(eventType),
+      ticketId,
+      metadata,
     });
 
     const result = await sendMail({
@@ -514,15 +669,15 @@ export async function dispatchNotificationWhatsApp({
       recipientName: toName || null,
 
       ticketId: ticketId || null,
-      ticketTitle: metadata?.ticketTitle || title || null,
-      ticketStatus: metadata?.ticketStatus || metadata?.status || null,
-      ticketPriority: metadata?.ticketPriority || metadata?.priority || null,
+      ticketTitle: getMetadataString(metadata, "ticketTitle") || title || null,
+      ticketStatus: getFirstMetadataString(metadata, ["ticketStatus", "status"]),
+      ticketPriority: getFirstMetadataString(metadata, ["ticketPriority", "priority"]),
 
-      condominiumName: metadata?.condominiumName || null,
-      unitLabel: metadata?.unitLabel || metadata?.unitName || null,
+      condominiumName: getMetadataString(metadata, "condominiumName"),
+      unitLabel: getFirstMetadataString(metadata, ["unitLabel", "unitName"]),
 
-      actorName: metadata?.actorName || metadata?.userName || null,
-      comment: metadata?.comment || metadata?.commentPreview || message || null,
+      actorName: getFirstMetadataString(metadata, ["actorName", "userName"]),
+      comment: getFirstMetadataString(metadata, ["comment", "commentPreview"]) || message || null,
 
       appUrl: actionUrl || getAppBaseUrl(),
     });

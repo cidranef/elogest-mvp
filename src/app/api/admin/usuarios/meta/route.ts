@@ -1,4 +1,6 @@
+import { Prisma, Status } from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -7,7 +9,6 @@ import {
 } from "@/lib/user-access";
 import { canManageUsers } from "@/lib/access-control";
 import { NextResponse } from "next/server";
-import { Status } from "@prisma/client";
 
 
 
@@ -15,6 +16,18 @@ import { Status } from "@prisma/client";
    USUÁRIOS - META DADOS
 
    ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO / ACESSOS
+   - Mantido isolamento por activeAccess.
+   - Removidos tipos any.
+   - Tipados filtros Prisma.
+   - Mantido retorno para selects da página /admin/usuarios.
+   - Mantido filtro de moradores ativos sem usuário vinculado.
+   - Mantida proteção para não expor dados fora da carteira.
 
    Usado no formulário de criação/edição de usuários.
 
@@ -36,11 +49,59 @@ import { Status } from "@prisma/client";
 
 
 /* =========================================================
-   USUÁRIO COM CONTEXTO ADMINISTRATIVO
+   TYPES
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+
+
+/* =========================================================
+   USUÁRIO COM CONTEXTO ADMINISTRATIVO
+
+   A sessão identifica quem está logado.
+   O contexto ativo define a carteira/perfil em operação.
+   ========================================================= */
+
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -89,8 +150,12 @@ async function getAdminContextUser() {
 
 
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+/* =========================================================
+   VALIDA CONTEXTO ADMINISTRATIVO
+   ========================================================= */
+
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -134,10 +199,8 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return activeAccess?.administratorId || null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
 }
 
 
@@ -148,7 +211,13 @@ function getAdministratorIdFromContext(user: any) {
 
 export async function GET() {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
 
     const contextValidation = validateAdminContext(user);
 
@@ -177,12 +246,12 @@ export async function GET() {
        e somente dados da carteira ativa.
        ========================================================= */
 
-    const administratorWhere = {
+    const administratorWhere: Prisma.AdministratorWhereInput = {
       id: administratorId,
       status: Status.ACTIVE,
     };
 
-    const condominiumWhere = {
+    const condominiumWhere: Prisma.CondominiumWhereInput = {
       administratorId,
       status: Status.ACTIVE,
       administrator: {
@@ -190,7 +259,7 @@ export async function GET() {
       },
     };
 
-    const residentWhere = {
+    const residentWhere: Prisma.ResidentWhereInput = {
       user: null,
       status: Status.ACTIVE,
       email: {
@@ -205,7 +274,7 @@ export async function GET() {
       },
     };
 
-    const userWhere = {
+    const userWhere: Prisma.UserWhereInput = {
       OR: [
         {
           administratorId,
@@ -368,7 +437,7 @@ export async function GET() {
        ========================================================= */
 
     const residentsWithValidEmail = residents.filter((resident) => {
-      const email = resident.email?.trim();
+      const email = cleanText(resident.email);
 
       return !!email;
     });

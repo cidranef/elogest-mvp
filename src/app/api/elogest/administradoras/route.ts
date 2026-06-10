@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import {
   AccessRole,
+  AdministratorPlanStatus,
   Role,
   Status,
 } from "@prisma/client";
@@ -20,13 +21,11 @@ import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
 
    ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
 
-   Objetivo:
-   - Permitir que a EloGest liste e cadastre administradoras.
-   - Opcionalmente criar o primeiro usuário responsável pelo acesso.
-   - Criar User com role ADMINISTRADORA.
-   - Criar UserAccess ADMINISTRADORA para o usuário responsável.
-   - Manter endpoint exclusivo para SUPER_ADMIN.
-   - Preparar o fluxo futuro de convite por e-mail.
+   ETAPA 47 — PLANOS, MÓDULOS E LIMITES
+   - GET passa a retornar o plano vinculado de cada administradora.
+   - POST passa a vincular novas administradoras ao Plano Free
+     automaticamente, quando nenhum plano específico for informado.
+   - Mantém a criação do primeiro responsável pelo acesso.
 
    Segurança:
    - A rota usa requireEloGestSuperAdmin().
@@ -64,6 +63,76 @@ function isValidEmail(value: string) {
 
 
 
+async function getDefaultFreePlan() {
+  return db.plan.findUnique({
+    where: {
+      slug: "free",
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      status: true,
+      maxCondominiums: true,
+      maxUnits: true,
+      maxUsers: true,
+      maxMonthlyTickets: true,
+      maxProviders: true,
+    },
+  });
+}
+
+
+
+function administratorSelect() {
+  return {
+    id: true,
+    name: true,
+    cnpj: true,
+    email: true,
+    phone: true,
+    status: true,
+
+    /* =====================================================
+       ETAPA 47 - PLANO COMERCIAL
+       ===================================================== */
+
+    planId: true,
+    planStatus: true,
+    planStartedAt: true,
+    planExpiresAt: true,
+    customLimitsEnabled: true,
+    plan: {
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        status: true,
+        monthlyPriceCents: true,
+        annualPriceCents: true,
+        maxCondominiums: true,
+        maxUnits: true,
+        maxUsers: true,
+        maxMonthlyTickets: true,
+        maxProviders: true,
+      },
+    },
+
+    createdAt: true,
+    updatedAt: true,
+    _count: {
+      select: {
+        condominiums: true,
+        users: true,
+        administratorProviders: true,
+      },
+    },
+  } as const;
+}
+
+
+
 export async function GET() {
   try {
     const auth = await requireEloGestSuperAdmin();
@@ -73,25 +142,15 @@ export async function GET() {
     }
 
     const administradoras = await db.administrator.findMany({
-      select: {
-        id: true,
-        name: true,
-        cnpj: true,
-        email: true,
-        phone: true,
-        status: true,
-        createdAt: true,
-        updatedAt: true,
-        _count: {
-          select: {
-            condominiums: true,
-            users: true,
-          },
+      select: administratorSelect(),
+      orderBy: [
+        {
+          status: "asc",
         },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+        {
+          createdAt: "desc",
+        },
+      ],
     });
 
     return NextResponse.json({
@@ -193,7 +252,7 @@ export async function POST(request: NextRequest) {
       if (!userName) {
         return NextResponse.json(
           {
-            error: "Informe o nome do usuário responsável."
+            error: "Informe o nome do usuário responsável.",
           },
           {
             status: 400,
@@ -252,13 +311,36 @@ export async function POST(request: NextRequest) {
       if (existingUser) {
         return NextResponse.json(
           {
-            error: "Já existe um usuário cadastrado com este e-mail."
+            error: "Já existe um usuário cadastrado com este e-mail.",
           },
           {
             status: 409,
           }
         );
       }
+    }
+
+
+
+    /* =======================================================
+       ETAPA 47 - PLANO PADRÃO
+
+       Novas administradoras nascem no Plano Free, salvo ajuste
+       posterior pelo Super Admin EloGest.
+       ======================================================= */
+
+    const freePlan = await getDefaultFreePlan();
+
+    if (!freePlan) {
+      return NextResponse.json(
+        {
+          error:
+            "Plano Free não encontrado. Execute o seed da Etapa 47 antes de cadastrar novas administradoras.",
+        },
+        {
+          status: 500,
+        }
+      );
     }
 
     const result = await db.$transaction(async (tx) => {
@@ -269,7 +351,11 @@ export async function POST(request: NextRequest) {
           email,
           phone,
           status: Status.ACTIVE,
+          planId: freePlan.id,
+          planStatus: AdministratorPlanStatus.ACTIVE,
+          planStartedAt: new Date(),
         },
+        select: administratorSelect(),
       });
 
       let user = null;

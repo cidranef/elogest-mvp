@@ -1,52 +1,25 @@
-import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
+import { Prisma, Role, Status } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
+import { getAuthUser } from "@/lib/auth-guard";
+import { canAssignTicket } from "@/lib/access-control";
 import {
   getActiveUserAccessFromCookies,
   isAdministradoraAccess,
   type ActiveUserAccess,
 } from "@/lib/user-access";
-import { Role, Status } from "@prisma/client";
-import {
-  canAssignTicket,
-} from "@/lib/access-control";
 
 
 
 /* =========================================================
    RESPONSÁVEIS VÁLIDOS PARA UM CHAMADO
 
-   ETAPA 35.5 — FILTROS DE REGISTROS ATIVOS NOS FLUXOS OPERACIONAIS
-
-   Retorna somente usuários que podem receber atribuição:
-
-   - ADMINISTRADORA da mesma carteira do condomínio do chamado
-   - SÍNDICO do mesmo condomínio do chamado
-
-   Bloqueia como responsáveis:
-   - MORADOR
-   - PROPRIETÁRIO
-   - CONSELHEIRO
-   - SÍNDICO de outro condomínio
-   - ADMINISTRADORA de outra carteira
-   - usuário inativo
-   - usuário vinculado a condomínio/administradora inativa
-
-   Regras da rota:
-   - /api/admin/... é exclusiva para contexto SUPER_ADMIN ou ADMINISTRADORA
-   - SÍNDICO deve operar pelo portal
-   - MORADOR / PROPRIETÁRIO devem operar pelo portal
-   - Histórico do chamado permanece preservado
-
-   ETAPA 40.3 — AUDITORIA DOS CHAMADOS PONTA A PONTA
-
-   Ajustes desta revisão:
-   - Contexto administrativo passa a usar helpers da matriz central.
-   - Listagem de responsáveis exige permissão ASSIGN_TICKET.
-   - ID da rota é normalizado.
-   - Filtro do chamado fica defensivo contra contexto inválido.
-   - Mantida regra de retornar [] quando condomínio/administradora
-     estiver inativo, pois atribuição é ação operacional.
+   Revisão de lint/segurança:
+   - Removidos tipos any.
+   - Adicionado requireActiveAdminApiAccess().
+   - Mantida operação exclusiva para ADMINISTRADORA ativa.
+   - Mantido isolamento por administratorId do activeAccess.
    ========================================================= */
 
 
@@ -56,6 +29,39 @@ type RouteContext = {
     id: string;
   }>;
 };
+
+
+
+type AuthSessionUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type ResponsaveisContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
 
 
 
@@ -69,24 +75,29 @@ function cleanText(value: unknown) {
 
 
 
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ATIVO
-
-   A sessão base identifica quem está logado.
-   O contexto ativo define com qual papel/carteira ele está
-   operando naquele momento.
    ========================================================= */
 
-async function getResponsaveisContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getResponsaveisContextUser(): Promise<ResponsaveisContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: ActiveUserAccess | null = await getActiveUserAccessFromCookies({
-    userId: sessionUser.id,
-  });
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
 
   if (!activeAccess) {
     return {
@@ -128,20 +139,12 @@ async function getResponsaveisContextUser() {
 
 /* =========================================================
    VALIDA CONTEXTO DA ROTA ADMINISTRATIVA
-
-   Permitidos:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
-
-   Bloqueados:
-   - SINDICO
-   - MORADOR
-   - PROPRIETARIO
-   - CONSELHEIRO
    ========================================================= */
 
-function validateResponsaveisContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateResponsaveisContext(
+  user: ResponsaveisContextUser
+): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -151,11 +154,6 @@ function validateResponsaveisContext(user: any) {
     };
   }
 
-  /*
-     Etapa 43:
-     /admin é a área operacional da administradora.
-     SUPER_ADMIN deve operar pela área /elogest.
-  */
   if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
@@ -192,19 +190,13 @@ function validateResponsaveisContext(user: any) {
 
 /* =========================================================
    FILTRO DO CHAMADO PELO CONTEXTO ATIVO
-
-   SUPER_ADMIN:
-   - acessa qualquer chamado.
-
-   ADMINISTRADORA:
-   - acessa chamados da administradora ativa.
-
-   Defesa:
-   - contexto inválido retorna filtro impossível.
    ========================================================= */
 
-function getTicketWhereByContext(user: any, ticketId: string) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function getTicketWhereByContext(
+  user: ResponsaveisContextUser,
+  ticketId: string
+): Prisma.TicketWhereInput {
+  const activeAccess = user.activeAccess;
 
   if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
@@ -226,9 +218,15 @@ function getTicketWhereByContext(user: any, ticketId: string) {
    GET - LISTAR RESPONSÁVEIS VÁLIDOS PARA O CHAMADO
    ========================================================= */
 
-export async function GET(req: Request, context: RouteContext) {
+export async function GET(_req: Request, context: RouteContext) {
   try {
-    const user: any = await getResponsaveisContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getResponsaveisContextUser();
     const { id } = await context.params;
 
     const ticketId = cleanText(id);
@@ -249,17 +247,6 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       BUSCA DO CHAMADO COM VALIDAÇÃO DE ACESSO
-
-       A busca respeita o contexto ativo administrativo:
-
-       - SUPER_ADMIN: qualquer chamado;
-       - ADMINISTRADORA: apenas carteira ativa.
-       ========================================================= */
-
     const chamado = await db.ticket.findFirst({
       where: getTicketWhereByContext(user, ticketId),
       include: {
@@ -278,36 +265,12 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       BLOQUEIO OPERACIONAL PARA CONDOMÍNIO INATIVO
-
-       Observação:
-       - O detalhe do chamado pode continuar exibindo histórico.
-       - Porém, atribuir novo responsável é ação operacional.
-       - Portanto, se condomínio ou administradora estiver inativo,
-         não retornamos responsáveis para nova atribuição.
-       ========================================================= */
-
     if (
       chamado.condominium?.status !== Status.ACTIVE ||
       chamado.condominium?.administrator?.status !== Status.ACTIVE
     ) {
       return NextResponse.json([]);
     }
-
-
-
-    /* =========================================================
-       RESPONSÁVEIS VÁLIDOS
-
-       Regras:
-       - usuário ativo;
-       - ADMINISTRADORA da mesma carteira;
-       - SÍNDICO do mesmo condomínio;
-       - administradora/condomínio do responsável precisam estar ativos.
-       ========================================================= */
 
     const responsaveis = await db.user.findMany({
       where: {
@@ -369,8 +332,6 @@ export async function GET(req: Request, context: RouteContext) {
       ],
     });
 
-
-
     return NextResponse.json(responsaveis);
   } catch (error: unknown) {
     console.error("ERRO AO LISTAR RESPONSÁVEIS DO CHAMADO:", error);
@@ -379,6 +340,13 @@ export async function GET(req: Request, context: RouteContext) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
+      );
+    }
+
+    if (isPrismaKnownRequestError(error)) {
+      return NextResponse.json(
+        { error: "Erro ao consultar responsáveis." },
+        { status: 500 }
       );
     }
 

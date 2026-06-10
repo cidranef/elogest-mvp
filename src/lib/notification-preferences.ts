@@ -53,6 +53,16 @@ import {
    - SYSTEM só nasce ativo se estiver ativo em enabledChannels.
    - EMAIL só nasce ativo se estiver ativo em enabledChannels.
    - WHATSAPP só nasce ativo se estiver ativo em enabledChannels.
+
+   ETAPA 50 — ENQUETES
+
+   Ajustes desta revisão:
+   - Nenhuma regra paralela foi criada para enquetes.
+   - Os eventos POLL_PUBLISHED, POLL_EXTENDED e
+     POLL_RESULTS_PUBLISHED entram automaticamente na base a partir
+     da matriz central de notification-events.ts.
+   - Nesta etapa, somente SYSTEM nasce ativo para esses eventos.
+   - EMAIL e WHATSAPP permanecem preparados para evolução futura.
    ========================================================= */
 
 
@@ -72,6 +82,20 @@ export type NotificationPreferenceResult = {
   updatedAt?: Date;
 };
 
+
+
+
+
+type NotificationPreferenceLike = {
+  id?: string;
+  userId: string;
+  eventType: string;
+  systemEnabled: boolean;
+  emailEnabled: boolean;
+  whatsappEnabled: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+};
 
 
 type EnsurePreferenceInput = {
@@ -157,7 +181,9 @@ export function getDefaultNotificationPreference(
    Mantém retorno padronizado para API e componentes.
    ========================================================= */
 
-function serializePreference(preference: any): NotificationPreferenceResult {
+function serializePreference(
+  preference: NotificationPreferenceLike,
+): NotificationPreferenceResult {
   return {
     id: preference.id,
     userId: preference.userId,

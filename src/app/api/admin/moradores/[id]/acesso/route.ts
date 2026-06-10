@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -15,18 +16,24 @@ import { NextResponse } from "next/server";
 
    ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
-   Objetivo:
-   Ao clicar em "Gerenciar acesso" no cadastro do morador,
-   o sistema decide automaticamente:
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
 
-   1. Se o morador já tem usuário vinculado:
-      -> editar usuário vinculado.
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO
+   - Mantido isolamento por activeAccess.
+   - Removidos tipos any.
+   - Fluxo de acesso do morador continua protegido por carteira.
+   - Administradora inativa não consegue resolver/criar acesso.
+   - Mantida decisão automática:
+     1. Morador já tem usuário vinculado:
+        -> editar usuário vinculado.
 
-   2. Se o morador não tem usuário, mas o e-mail já existe:
-      -> editar usuário existente para permitir vínculo.
+     2. Morador não tem usuário, mas e-mail já existe na carteira:
+        -> editar usuário existente para revisar/vincular.
 
-   3. Se o morador não tem usuário e o e-mail não existe:
-      -> criar novo usuário MORADOR.
+     3. Morador não tem usuário e e-mail está livre:
+        -> criar novo usuário MORADOR.
 
    Regras de segurança:
    - /admin é área operacional da ADMINISTRADORA.
@@ -49,11 +56,52 @@ interface RouteContext {
 
 
 /* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+/* =========================================================
    HELPERS
    ========================================================= */
 
-function normalizeEmail(value?: string | null) {
-  return String(value || "").trim().toLowerCase();
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+
+
+function normalizeEmail(value: unknown) {
+  return cleanText(value).toLowerCase();
 }
 
 
@@ -68,10 +116,13 @@ function isValidEmail(email: string) {
 
 /* =========================================================
    USUÁRIO COM CONTEXTO ADMINISTRATIVO
+
+   A sessão identifica quem está logado.
+   O contexto ativo define a carteira/perfil em operação.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -120,8 +171,14 @@ async function getAdminContextUser() {
 
 
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+/* =========================================================
+   VALIDA CONTEXTO ADMINISTRATIVO
+   ========================================================= */
+
+function validateAdminContext(
+  user: AdminContextUser
+): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -152,8 +209,7 @@ function validateAdminContext(user: any) {
     return {
       ok: false,
       status: 403,
-      message:
-        "Usuário sem permissão para gerenciar moradores ou usuários.",
+      message: "Usuário sem permissão para gerenciar moradores ou usuários.",
     };
   }
 
@@ -166,10 +222,8 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return activeAccess?.administratorId || null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
 }
 
 
@@ -178,11 +232,18 @@ function getAdministratorIdFromContext(user: any) {
    GET - RESOLVER ACESSO DO MORADOR
    ========================================================= */
 
-export async function GET(req: Request, context: RouteContext) {
+export async function GET(_req: Request, context: RouteContext) {
   try {
-    const authUser: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const authUser = await getAdminContextUser();
     const { id } = await context.params;
-    const residentId = String(id || "").trim();
+
+    const residentId = cleanText(id);
 
     if (!residentId) {
       return NextResponse.json(
@@ -208,6 +269,16 @@ export async function GET(req: Request, context: RouteContext) {
         { status: 403 }
       );
     }
+
+
+
+    /* =========================================================
+       LOCALIZA MORADOR DENTRO DA CARTEIRA ATIVA
+
+       ADMINISTRADORA:
+       - só resolve acesso de morador vinculado a condomínio da
+         própria carteira.
+       ========================================================= */
 
     const morador = await db.resident.findFirst({
       where: {
@@ -248,6 +319,12 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
+
+
+    /* =========================================================
+       CASO 1 — MORADOR JÁ POSSUI USUÁRIO VINCULADO
+       ========================================================= */
+
     if (morador.user?.id) {
       const params = new URLSearchParams({
         action: "edit",
@@ -262,6 +339,12 @@ export async function GET(req: Request, context: RouteContext) {
         url: `/admin/usuarios?${params.toString()}`,
       });
     }
+
+
+
+    /* =========================================================
+       VALIDA E-MAIL DO MORADOR
+       ========================================================= */
 
     const residentEmail = normalizeEmail(morador.email);
 
@@ -284,6 +367,14 @@ export async function GET(req: Request, context: RouteContext) {
         { status: 400 }
       );
     }
+
+
+
+    /* =========================================================
+       CASO 2 — E-MAIL JÁ EXISTE DENTRO DA CARTEIRA
+
+       Abre o usuário existente para revisão/vínculo.
+       ========================================================= */
 
     const existingUserByEmail = await db.user.findFirst({
       where: {
@@ -336,6 +427,15 @@ export async function GET(req: Request, context: RouteContext) {
       });
     }
 
+
+
+    /* =========================================================
+       BLOQUEIO — E-MAIL EXISTE FORA DA CARTEIRA
+
+       Evita que uma administradora assuma acesso de usuário que
+       pertence a outro escopo/carteira.
+       ========================================================= */
+
     const existingUserOutOfScope = await db.user.findFirst({
       where: {
         email: {
@@ -357,6 +457,12 @@ export async function GET(req: Request, context: RouteContext) {
         { status: 409 }
       );
     }
+
+
+
+    /* =========================================================
+       CASO 3 — E-MAIL LIVRE PARA CRIAÇÃO DE USUÁRIO MORADOR
+       ========================================================= */
 
     const params = new URLSearchParams({
       action: "create",

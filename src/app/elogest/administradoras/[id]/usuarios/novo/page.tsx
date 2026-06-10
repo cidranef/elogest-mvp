@@ -32,6 +32,29 @@ import EloGestShell from "@/components/EloGestShell";
 
 
 
+function StepCard({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
+      <p className="text-sm font-semibold text-[#17211B]">
+        {title}
+      </p>
+
+      <p className="mt-1 text-sm leading-6 text-[#64736A]">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+
+
+
 export default function NovoUsuarioAdministradoraPage() {
   const router = useRouter();
   const params = useParams();
@@ -89,25 +112,6 @@ export default function NovoUsuarioAdministradoraPage() {
 
 
 
-  function StepCard({
-    title,
-    description,
-  }: {
-    title: string;
-    description: string;
-  }) {
-    return (
-      <div className="rounded-2xl border border-[#DDE5DF] bg-white p-4">
-        <p className="text-sm font-semibold text-[#17211B]">
-          {title}
-        </p>
-
-        <p className="mt-1 text-sm leading-6 text-[#64736A]">
-          {description}
-        </p>
-      </div>
-    );
-  }
 
 
 

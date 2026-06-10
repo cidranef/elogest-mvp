@@ -23,6 +23,70 @@ enum Status {
   INACTIVE
 }
 
+// =========================================================
+// ETAPA 47 - STATUS DO PLANO DA ADMINISTRADORA
+//
+// Controla a situação comercial da administradora dentro do
+// EloGest, sem misturar com Status ACTIVE/INACTIVE operacional.
+//
+// ACTIVE:
+// plano ativo e liberado.
+//
+// TRIALING:
+// período de avaliação/teste controlado.
+//
+// PAST_DUE:
+// pagamento pendente futuramente, sem necessariamente bloquear
+// tudo de imediato.
+//
+// SUSPENDED:
+// acesso comercial suspenso.
+//
+// CANCELED:
+// plano cancelado.
+//
+// EXPIRED:
+// período de avaliação ou contrato expirado.
+// =========================================================
+
+enum AdministratorPlanStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  SUSPENDED
+  CANCELED
+  EXPIRED
+}
+
+// =========================================================
+// ETAPA 45 - TIPO DO CONDOMÍNIO
+//
+// Define a natureza principal do condomínio.
+//
+// RESIDENTIAL:
+// condomínio residencial.
+//
+// COMMERCIAL:
+// condomínio comercial.
+//
+// MIXED:
+// condomínio misto, com unidades residenciais e comerciais.
+//
+// HORIZONTAL:
+// condomínio horizontal / casas.
+//
+// OTHER:
+// reservado para casos específicos.
+// =========================================================
+
+enum CondominiumType {
+  RESIDENTIAL
+  COMMERCIAL
+  MIXED
+  HORIZONTAL
+  OTHER
+}
+
 enum TicketStatus {
   OPEN
   IN_PROGRESS
@@ -113,6 +177,139 @@ enum UnitPersonLinkType {
 }
 
 // =========================================================
+// ETAPA 48 - COMUNICADOS E CONFIRMAÇÃO DE LEITURA
+//
+// AnnouncementType:
+// classifica o assunto principal do comunicado.
+//
+// AnnouncementStatus:
+// controla o ciclo de vida do comunicado.
+//
+// AnnouncementPriority:
+// permite destacar comunicados importantes ou urgentes.
+//
+// AnnouncementTargetScope:
+// define a estratégia principal de público-alvo.
+// =========================================================
+
+enum AnnouncementType {
+  GENERAL
+  MAINTENANCE
+  ASSEMBLY
+  FINANCIAL
+  SECURITY
+  EMERGENCY
+  GOVERNANCE
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AnnouncementPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum AnnouncementTargetScope {
+  ALL_ADMINISTRATOR
+  CONDOMINIUM
+  BLOCK
+  UNIT
+  ROLE
+  LINK_TYPE
+  CUSTOM
+}
+
+// =========================================================
+// ETAPA 48.9.4 - HISTÓRICO DE COMUNICADOS
+//
+// Registra os principais eventos do ciclo de vida de um
+// comunicado, preservando rastreabilidade operacional.
+// =========================================================
+enum AnnouncementLogAction {
+  CREATED
+  UPDATED
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+  REMINDER_SENT
+  READING_CONFIRMED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+}
+
+// =========================================================
+// ETAPA 50 - ENQUETES
+//
+// Enquetes são consultas operacionais/consultivas dentro do
+// EloGest. Elas NÃO substituem assembleias nem votação formal.
+//
+// A estrutura abaixo prepara:
+// - enquetes por administradora e condomínio;
+// - criação pela administradora ou por perfis autorizados do portal;
+// - público-alvo por perfil, vínculo, bloco ou unidade;
+// - resposta única por usuário/perfil ativo;
+// - opção de resultado visível ou restrito;
+// - auditoria/histórico;
+// - evolução futura para múltipla escolha sem refatoração.
+// =========================================================
+
+enum PollType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  YES_NO
+  TEXT
+}
+
+enum PollStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+  CANCELED
+}
+
+enum PollTargetScope {
+  CONDOMINIUM
+  BLOCK
+  UNIT
+  ROLE
+  LINK_TYPE
+  GOVERNANCE
+  CUSTOM
+}
+
+enum PollResultVisibility {
+  ADMIN_ONLY
+  PARTICIPANTS_AFTER_RESPONSE
+  PARTICIPANTS_AFTER_CLOSED
+  PUBLIC_TO_TARGET
+}
+
+enum PollLogAction {
+  CREATED
+  UPDATED
+  PUBLISHED
+  EXTENDED
+  CLOSED
+  ARCHIVED
+  CANCELED
+  TARGET_ADDED
+  TARGET_REMOVED
+  RESPONSE_REGISTERED
+  RESPONSE_UPDATED
+  REMINDER_SENT
+  RESULTS_PUBLISHED
+  RESULTS_VIEWED
+}
+
+// =========================================================
 // ETAPA 11.1 - ESCOPO DO CHAMADO
 //
 // UNIT:
@@ -121,6 +318,314 @@ enum UnitPersonLinkType {
 // CONDOMINIUM:
 // Chamado geral do condomínio / área comum.
 // =========================================================
+
+// =========================================================
+// ETAPA 49 - SALA DE REUNIÃO ELOGEST / REUNIÕES DE CONSELHO
+//
+// A sala de reunião nasce como estrutura central e reutilizável.
+// Nesta etapa, ela atende Reuniões De Conselho, mas já fica
+// preparada para Assembleias, reuniões internas e outras rotinas
+// futuras de governança.
+//
+// Importante:
+// - A experiência do usuário deve ser "dentro do EloGest".
+// - O provedor de câmera/vídeo será plugável e decidido depois.
+// - Os enums abaixo não alteram regras já aprovadas de chamados,
+//   comunicados, fornecedores, planos ou notificações.
+// =========================================================
+
+enum MeetingRoomType {
+  COUNCIL
+  ASSEMBLY
+  INTERNAL
+  EXTRAORDINARY
+  OTHER
+}
+
+enum MeetingMode {
+  PRESENTIAL
+  ONLINE
+  HYBRID
+}
+
+enum MeetingRoomStatus {
+  DRAFT
+  SCHEDULED
+  OPEN
+  CLOSED
+  CANCELED
+}
+
+enum MeetingProvider {
+  INTERNAL_PENDING
+  GOOGLE_MEET
+  ZOOM
+  TEAMS
+  JITSI
+  DAILY
+  WHEREBY
+  OTHER
+}
+
+enum MeetingRoomParticipantStatus {
+  INVITED
+  CONFIRMED
+  DECLINED
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+enum MeetingRoomLogAction {
+  CREATED
+  UPDATED
+  SCHEDULED
+  OPENED
+  CLOSED
+  CANCELED
+  PARTICIPANT_INVITED
+  PARTICIPANT_CONFIRMED
+  PARTICIPANT_DECLINED
+  PARTICIPANT_MARKED_PRESENT
+  PARTICIPANT_MARKED_ABSENT
+  PROVIDER_UPDATED
+}
+
+enum CouncilMeetingStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  ARCHIVED
+}
+
+enum CouncilParticipantStatus {
+  INVITED
+  CONFIRMED
+  DECLINED
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+enum CouncilAgendaItemStatus {
+  OPEN
+  DISCUSSED
+  APPROVED
+  REJECTED
+  POSTPONED
+  CANCELED
+}
+
+enum CouncilMeetingLogAction {
+  CREATED
+  UPDATED
+  SCHEDULED
+  STARTED
+  COMPLETED
+  CANCELED
+  ARCHIVED
+  PARTICIPANT_ADDED
+  PARTICIPANT_UPDATED
+  PARTICIPANT_REMOVED
+  AGENDA_ITEM_ADDED
+  AGENDA_ITEM_UPDATED
+  AGENDA_ITEM_REMOVED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  ATTENDANCE_CONFIRMED
+  PRESENCE_REGISTERED
+  DECISION_REGISTERED
+}
+
+// =========================================================
+// ETAPA 51 - ASSEMBLEIAS E VOTAÇÃO PELO CELULAR
+//
+// Assembleias são deliberações formais e auditáveis.
+// Diferentemente das enquetes, o voto representa uma unidade
+// elegível, e não apenas o usuário conectado.
+//
+// A modelagem preserva:
+// - fotografia das unidades elegíveis no momento da convocação;
+// - voto único por unidade e pauta;
+// - procurações/representações formais;
+// - alteração auditada de voto enquanto permitida;
+// - quórum, apuração e publicação oficial dos resultados.
+// =========================================================
+
+enum AssemblyType {
+  ORDINARY
+  EXTRAORDINARY
+  SPECIAL
+  OTHER
+}
+
+enum AssemblyStatus {
+  DRAFT
+  SCHEDULED
+  OPEN
+  CLOSED
+  RESULTS_PUBLISHED
+  CANCELED
+  ARCHIVED
+}
+
+enum AssemblyAgendaItemType {
+  INFORMATIVE
+  APPROVE_REJECT_ABSTAIN
+  YES_NO_ABSTAIN
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+}
+
+enum AssemblyAgendaItemStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  RESULT_VALIDATED
+  CANCELED
+}
+
+enum AssemblyResultStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NO_QUORUM
+  INFORMATIONAL
+  MANUAL_REVIEW
+  DEFERRED
+  CANCELED
+}
+
+enum AssemblyQuorumRuleType {
+  SIMPLE_MAJORITY
+  MINIMUM_PARTICIPATION
+  MINIMUM_APPROVAL
+  CUSTOM
+}
+
+// =========================================================
+// ETAPA 52.5.1 - TRANSPARENCIA DA VOTACAO POR PAUTA
+//
+// CONSOLIDATED:
+// exibe apenas totais, pesos, quorum e resultado.
+//
+// NOMINAL_BY_UNIT:
+// permite divulgar o voto individualizado por unidade, sem
+// expor automaticamente o nome da pessoa que registrou o voto.
+//
+// SECRET:
+// preserva a auditoria interna completa, mas limita a exibicao
+// publica ao resultado consolidado.
+// =========================================================
+enum AssemblyVoteVisibility {
+  CONSOLIDATED
+  NOMINAL_BY_UNIT
+  SECRET
+}
+
+enum AssemblyEligibilityStatus {
+  ELIGIBLE
+  BLOCKED
+}
+
+enum AssemblyRepresentationStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum AssemblyVoteOrigin {
+  DIRECT_UNIT_LINK
+  PROXY_REPRESENTATION
+  AUTHORIZED_LINK
+  ADMINISTRATIVE_IMPORT
+}
+
+enum AssemblyAttachmentScope {
+  CONVOCATION
+  AGENDA_ITEM
+  RESULT
+  OTHER
+}
+
+enum AssemblyLogAction {
+  CREATED
+  UPDATED
+  SCHEDULED
+  OPENED
+  CLOSED
+  CANCELED
+  ARCHIVED
+  RESULTS_PUBLISHED
+  AGENDA_ITEM_ADDED
+  AGENDA_ITEM_UPDATED
+  AGENDA_ITEM_REMOVED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  ELIGIBILITY_SNAPSHOT_CREATED
+  ELIGIBLE_UNIT_ADDED
+  ELIGIBLE_UNIT_UPDATED
+  ELIGIBLE_UNIT_BLOCKED
+  REPRESENTATION_ADDED
+  REPRESENTATION_UPDATED
+  REPRESENTATION_REVOKED
+  VOTE_REGISTERED
+  VOTE_UPDATED
+  REMINDER_SENT
+  VOTING_DEADLINE_EXTENDED
+  VOTING_REOPENED
+  AGENDA_ITEM_DEFERRED
+  AGENDA_ITEM_IMPORTED
+}
+
+// =========================================================
+// ETAPA 52 - ATA COM IA
+//
+// A IA atua somente como assistente de redação.
+// A ata oficial continua dependendo de revisão, aprovação e
+// publicação humana explícita. A modelagem preserva versões,
+// snapshots, logs e fallback estruturado sem IA.
+// =========================================================
+
+enum AssemblyMinuteStatus {
+  DRAFT
+  GENERATED
+  UNDER_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AssemblyMinuteGenerationMode {
+  STRUCTURED
+  AI_ASSISTED
+  MANUAL
+}
+
+enum AssemblyMinuteVersionSource {
+  STRUCTURED_GENERATION
+  AI_ASSISTED_GENERATION
+  MANUAL_REVISION
+  APPROVAL_SNAPSHOT
+  PUBLICATION_SNAPSHOT
+}
+
+enum AssemblyMinuteLogAction {
+  CREATED
+  STRUCTURED_GENERATED
+  AI_GENERATED
+  AI_FALLBACK_USED
+  REGENERATED
+  UPDATED
+  SUBMITTED_FOR_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  VERSION_CREATED
+  PDF_GENERATED
+}
 
 enum TicketScope {
   UNIT
@@ -139,6 +644,84 @@ enum TicketScope {
 // WHATSAPP:
 // Canal externo de WhatsApp.
 // =========================================================
+
+// =========================================================
+// ETAPA 46 - REDE DE FORNECEDORES ELOGEST
+//
+// A Etapa 46 passa a tratar fornecedores/prestadores como
+// ativos da plataforma EloGest.
+//
+// A arquitetura fica dividida em três camadas:
+//
+// 1) Provider:
+// fornecedor global da Rede EloGest.
+//
+// 2) AdministratorProvider:
+// homologação e regras internas da administradora.
+//
+// 3) CondominiumProvider:
+// vínculo operacional do fornecedor com condomínios específicos.
+//
+// Importante:
+// - Provider não pertence obrigatoriamente a uma administradora.
+// - AdministratorProvider define se a administradora usa/homologa.
+// - CondominiumProvider define se atende determinado condomínio.
+// =========================================================
+
+enum ProviderEntityType {
+  COMPANY
+  INDIVIDUAL
+  PROFESSIONAL
+  OTHER
+}
+
+enum ProviderGlobalStatus {
+  DRAFT
+  ACTIVE
+  IN_REVIEW
+  SUSPENDED
+  BLOCKED
+  INACTIVE
+}
+
+enum ProviderVisibility {
+  PRIVATE
+  ELOGEST_NETWORK
+  PUBLIC_FUTURE
+}
+
+enum ProviderOrigin {
+  ELOGEST
+  ADMINISTRATOR
+  INDICATION
+  IMPORT
+  OTHER
+}
+
+enum AdministratorProviderStatus {
+  IN_REVIEW
+  HOMOLOGATED
+  ACTIVE
+  SUSPENDED
+  BLOCKED
+  INACTIVE
+}
+
+enum CondominiumProviderStatus {
+  ACTIVE
+  SUSPENDED
+  ENDED
+  INACTIVE
+}
+
+enum CondominiumProviderLinkType {
+  CONTRACT
+  RECURRING
+  ON_DEMAND
+  INDICATED
+  PREFERRED
+  OTHER
+}
 
 enum NotificationChannel {
   SYSTEM
@@ -176,6 +759,50 @@ model Administrator {
   users        User[]
 
   // =========================================================
+  // ETAPA 47 - PLANO, MÓDULOS E LIMITES
+  //
+  // planId:
+  // vínculo comercial da administradora com um plano EloGest.
+  // Mantido opcional nesta primeira etapa para não quebrar
+  // administradoras já existentes durante a migration.
+  //
+  // planStatus:
+  // controla a situação comercial do plano.
+  //
+  // planStartedAt / planExpiresAt:
+  // preparados para avaliação gratuita, contrato, renovação e
+  // futura cobrança recorrente.
+  //
+  // customLimitsEnabled:
+  // indica que esta administradora possui limites específicos,
+  // diferentes do plano padrão.
+  // =========================================================
+  planId              String?
+  planStatus          AdministratorPlanStatus @default(ACTIVE)
+  planStartedAt       DateTime?
+  planExpiresAt       DateTime?
+  customLimitsEnabled Boolean                 @default(false)
+
+  plan            Plan?                         @relation(fields: [planId], references: [id])
+  moduleOverrides AdministratorModuleOverride[]
+  limitOverride   AdministratorLimitOverride?
+
+  // =========================================================
+  // ETAPA 46 - FORNECEDORES HOMOLOGADOS
+  //
+  // administratorProviders:
+  // fornecedores/prestadores homologados, em análise ou bloqueados
+  // dentro da carteira desta administradora.
+  //
+  // providersCreated:
+  // fornecedores cadastrados originalmente por esta administradora
+  // na Rede de Fornecedores EloGest.
+  // =========================================================
+  administratorProviders AdministratorProvider[]
+  condominiumProviders   CondominiumProvider[]
+  providersCreated       Provider[]              @relation("ProvidersCreatedByAdministrator")
+
+  // =========================================================
   // ETAPA 27.1 - VÍNCULOS DE ACESSO
   //
   // Permite que usuários sejam vinculados a esta administradora
@@ -190,31 +817,337 @@ model Administrator {
   // =========================================================
   ratingsReceived TicketRating[] @relation("RatingsReceivedByAdministrator")
 
+  // =========================================================
+  // ETAPA 48 - COMUNICADOS
+  //
+  // Comunicados criados e gerenciados dentro da carteira desta
+  // administradora, respeitando plano, módulo, status operacional
+  // e isolamento por administratorId.
+  // =========================================================
+  announcements Announcement[]
+
+  // =========================================================
+  // ETAPA 50 - ENQUETES
+  //
+  // Enquetes criadas dentro da carteira desta administradora,
+  // respeitando plano, módulo, status operacional e isolamento.
+  // =========================================================
+  polls Poll[]
+
+  // =========================================================
+  // ETAPA 49 - SALA DE REUNIÃO ELOGEST / REUNIÕES DE CONSELHO
+  //
+  // meetingRooms:
+  // salas centrais da plataforma dentro da carteira.
+  //
+  // councilMeetings:
+  // reuniões de conselho vinculadas aos condomínios da administradora.
+  // =========================================================
+  meetingRooms    MeetingRoom[]
+  councilMeetings CouncilMeeting[]
+
+  // =========================================================
+  // ETAPA 51 - ASSEMBLEIAS
+  // =========================================================
+  assemblies Assembly[]
+
+  // =========================================================
+  // ETAPA 52 - ATAS DE ASSEMBLEIA
+  // =========================================================
+  assemblyMinutes AssemblyMinute[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([planId])
+  @@index([planStatus])
+}
+
+// =========================================================
+// ETAPA 47 - PLANOS, MÓDULOS E LIMITES
+//
+// Base comercial do EloGest como SaaS.
+//
+// Nesta etapa, cobrança real ainda não é implementada.
+// A estrutura abaixo prepara:
+// - planos comerciais;
+// - módulos liberados por plano;
+// - limites por plano;
+// - exceções/overrides por administradora;
+// - Plano Free para avaliação controlada.
+// =========================================================
+
+model Plan {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  status      Status  @default(ACTIVE)
+
+  // =========================================================
+  // PREÇOS
+  //
+  // Valores em centavos para evitar problemas de arredondamento.
+  // Null permite plano customizado, cortesia ou Enterprise.
+  // =========================================================
+  monthlyPriceCents Int?
+  annualPriceCents  Int?
+
+  // =========================================================
+  // LIMITES PADRÃO DO PLANO
+  //
+  // Null representa limite customizado/ilimitado, usado
+  // principalmente para Enterprise.
+  //
+  // Decisão comercial aprovada na Etapa 47:
+  // - Plano Free: 3 fornecedores.
+  // - Plano Essencial: 10 fornecedores.
+  // =========================================================
+  maxCondominiums   Int?
+  maxUnits          Int?
+  maxUsers          Int?
+  maxMonthlyTickets Int?
+  maxProviders      Int?
+
+  isPublic  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  administrators Administrator[]
+  modules        PlanModule[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([isPublic])
+  @@index([sortOrder])
+}
+
+model PlatformModule {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  status      Status  @default(ACTIVE)
+
+  // =========================================================
+  // isCore:
+  // marca módulos estruturais da plataforma.
+  // Mesmo assim, a lib de acesso deve continuar sendo a fonte
+  // central de decisão para liberar ou bloquear rotas/APIs.
+  // =========================================================
+  isCore    Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  plans                  PlanModule[]
+  administratorOverrides AdministratorModuleOverride[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([isCore])
+  @@index([sortOrder])
+}
+
+model PlanModule {
+  id       String  @id @default(cuid())
+  planId   String
+  moduleId String
+  enabled  Boolean @default(true)
+
+  plan   Plan           @relation(fields: [planId], references: [id], onDelete: Cascade)
+  module PlatformModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([planId, moduleId])
+  @@index([planId])
+  @@index([moduleId])
+  @@index([enabled])
+}
+
+model AdministratorModuleOverride {
+  id              String @id @default(cuid())
+  administratorId String
+  moduleId        String
+
+  // =========================================================
+  // enabled:
+  // true libera manualmente um módulo.
+  // false bloqueia manualmente um módulo, mesmo que o plano tenha.
+  //
+  // Uso previsto:
+  // - liberar módulo premium em demonstração;
+  // - bloquear módulo por negociação/risco;
+  // - testar rollout controlado por administradora.
+  // =========================================================
+  enabled Boolean
+
+  reason String?
+
+  startsAt  DateTime?
+  expiresAt DateTime?
+
+  administrator Administrator  @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+  module        PlatformModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([administratorId, moduleId])
+  @@index([administratorId])
+  @@index([moduleId])
+  @@index([enabled])
+  @@index([expiresAt])
+}
+
+model AdministratorLimitOverride {
+  id              String @id @default(cuid())
+  administratorId String @unique
+
+  // =========================================================
+  // LIMITES ESPECÍFICOS POR ADMINISTRADORA
+  //
+  // Null mantém o limite herdado do plano.
+  // Preencher somente quando houver negociação, cortesia,
+  // implantação assistida ou condição comercial especial.
+  // =========================================================
+  maxCondominiums   Int?
+  maxUnits          Int?
+  maxUsers          Int?
+  maxMonthlyTickets Int?
+  maxProviders      Int?
+
+  reason String?
+
+  administrator Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
 }
 
 model Condominium {
-  id              String  @id @default(cuid())
+  id              String @id @default(cuid())
   administratorId String
-  name            String
-  cnpj            String? @unique
-  email           String?
-  phone           String?
-  cep             String?
-  address         String?
-  number          String?
-  complement      String?
-  district        String?
-  city            String?
-  state           String?
-  status          Status  @default(ACTIVE)
+
+  // =========================================================
+  // ETAPA 45 - CADASTRO CONDOMINIAL AVANÇADO
+  //
+  // Mantemos os campos já existentes para não quebrar as telas,
+  // APIs e migrations anteriores.
+  //
+  // A partir desta etapa, o condomínio passa a ser tratado como
+  // o núcleo operacional da plataforma EloGest, preparando base
+  // para comunicados, fornecedores, assembleias, financeiro,
+  // relatórios e governança.
+  // =========================================================
+
+  name      String
+  legalName String?
+  cnpj      String? @unique
+
+  type   CondominiumType @default(RESIDENTIAL)
+  status Status          @default(ACTIVE)
+
+  // =========================================================
+  // ETAPA 45 - CONTATO INSTITUCIONAL
+  //
+  // email / phone:
+  // canais principais do condomínio.
+  //
+  // administrativeContactName / Email / Phone:
+  // contato administrativo preferencial para rotinas internas.
+  // =========================================================
+
+  email String?
+  phone String?
+
+  administrativeContactName  String?
+  administrativeContactEmail String?
+  administrativeContactPhone String?
+
+  // =========================================================
+  // ETAPA 45.2 - IMAGEM DA FACHADA
+  //
+  // facadeImagePath:
+  // URL ou caminho da imagem principal do condomínio.
+  // Nesta etapa, começamos como campo texto para permitir
+  // uso imediato na listagem e na futura página de detalhe.
+  // Upload físico pode ser tratado depois por API própria.
+  // =========================================================
+
+  facadeImagePath String?
+
+  // =========================================================
+  // ETAPA 45 - ENDEREÇO
+  //
+  // Mantemos cep/address para compatibilidade com páginas atuais.
+  // Em tela, estes campos podem ser exibidos como CEP e Logradouro.
+  // =========================================================
+
+  cep        String?
+  address    String?
+  number     String?
+  complement String?
+  district   String?
+  city       String?
+  state      String?
+
+  // =========================================================
+  // ETAPA 45 - DADOS OPERACIONAIS
+  //
+  // unitsCount:
+  // quantidade total estimada/cadastrada de unidades.
+  //
+  // blocksCount:
+  // quantidade de blocos/torres.
+  //
+  // managementStartDate / managementEndDate:
+  // início e eventual encerramento da gestão pela administradora.
+  //
+  // notes:
+  // observações internas da administradora.
+  //
+  // metadata:
+  // campo flexível para configurações futuras sem exigir migration
+  // a cada pequeno ajuste operacional.
+  // =========================================================
+
+  unitsCount  Int?
+  blocksCount Int?
+
+  managementStartDate DateTime?
+  managementEndDate   DateTime?
+
+  notes    String?
+  metadata Json?
 
   administrator Administrator @relation(fields: [administratorId], references: [id])
   units         Unit[]
   residents     Resident[]
   users         User[]
   tickets       Ticket[]
+
+  // =========================================================
+  // ETAPA 46 - FORNECEDORES POR CONDOMÍNIO
+  //
+  // Permite vincular fornecedores/prestadores que atendem este
+  // condomínio, preparando base para chamados, contratos,
+  // avaliações, cotações e prestadores recorrentes.
+  // =========================================================
+  condominiumProviders CondominiumProvider[]
 
   // =========================================================
   // ETAPA 27.1 - VÍNCULOS DE ACESSO
@@ -239,8 +1172,53 @@ model Condominium {
   // =========================================================
   unitPersonLinks UnitPersonLink[]
 
+  // =========================================================
+  // ETAPA 48 - COMUNICADOS POR CONDOMÍNIO
+  //
+  // announcements:
+  // comunicados associados diretamente ao condomínio.
+  //
+  // announcementTargets:
+  // segmentações de público-alvo que apontam para este condomínio.
+  // =========================================================
+  announcements       Announcement[]
+  announcementTargets AnnouncementTarget[]
+
+  // =========================================================
+  // ETAPA 50 - ENQUETES POR CONDOMÍNIO
+  // =========================================================
+  polls       Poll[]
+  pollTargets PollTarget[]
+
+  // =========================================================
+  // ETAPA 49 - SALA DE REUNIÃO ELOGEST / REUNIÕES DE CONSELHO
+  //
+  // A sala fica centralizada para permitir uso futuro também em
+  // Assembleias, sem refatorar a base criada nesta etapa.
+  // =========================================================
+  meetingRooms    MeetingRoom[]
+  councilMeetings CouncilMeeting[]
+
+  // =========================================================
+  // ETAPA 51 - ASSEMBLEIAS POR CONDOMÍNIO
+  // =========================================================
+  assemblies Assembly[]
+
+  // =========================================================
+  // ETAPA 52 - ATAS DE ASSEMBLEIA POR CONDOMÍNIO
+  // =========================================================
+  assemblyMinutes AssemblyMinute[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([status])
+  @@index([type])
+  @@index([city])
+  @@index([state])
+  @@index([administratorId, status])
+  @@index([administratorId, city])
 }
 
 model Unit {
@@ -267,6 +1245,29 @@ model Unit {
   // ETAPA 43 - VÍNCULOS DE PESSOAS COM ESTA UNIDADE
   // =========================================================
   unitPersonLinks UnitPersonLink[]
+
+  // =========================================================
+  // ETAPA 48 - COMUNICADOS POR UNIDADE
+  //
+  // Permite segmentar comunicados para uma unidade específica,
+  // preservando rastreabilidade e preparando confirmação de leitura.
+  // =========================================================
+  announcementTargets AnnouncementTarget[]
+
+  // =========================================================
+  // ETAPA 50 - ENQUETES POR UNIDADE
+  //
+  // Permite segmentar enquetes para uma unidade específica,
+  // preservando isolamento por condomínio e perfil ativo.
+  // =========================================================
+  pollTargets PollTarget[]
+
+  // =========================================================
+  // ETAPA 51 - VOTAÇÃO FORMAL POR UNIDADE
+  // =========================================================
+  assemblyEligibleUnits   AssemblyEligibleUnit[]
+  assemblyRepresentations AssemblyRepresentation[]
+  assemblyVotes           AssemblyVote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -438,6 +1439,23 @@ model User {
   uploadedTicketAttachments TicketAttachment[]
 
   // =========================================================
+  // ETAPA 46 - AÇÕES SOBRE FORNECEDORES
+  //
+  // providersCreated:
+  // fornecedores cadastrados por este usuário.
+  //
+  // administratorProvidersHomologated:
+  // homologações realizadas por este usuário dentro de uma
+  // administradora.
+  //
+  // condominiumProvidersCreated:
+  // vínculos de fornecedores com condomínios criados por este usuário.
+  // =========================================================
+  providersCreated                  Provider[]              @relation("ProvidersCreatedByUser")
+  administratorProvidersHomologated AdministratorProvider[] @relation("AdministratorProviderHomologatedByUser")
+  condominiumProvidersCreated       CondominiumProvider[]   @relation("CondominiumProviderCreatedByUser")
+
+  // =========================================================
   // ETAPA 20 / 40.7.2 - AVALIAÇÕES DO ATENDIMENTO
   //
   // ratingsGiven:
@@ -466,6 +1484,83 @@ model User {
   // tipo de evento.
   // =========================================================
   notificationPreferences NotificationPreference[]
+
+  // =========================================================
+  // ETAPA 48 - COMUNICADOS E LEITURAS
+  //
+  // createdAnnouncements:
+  // comunicados criados por este usuário administrativo.
+  //
+  // announcementReadings:
+  // confirmações de leitura registradas por este usuário.
+  // =========================================================
+  createdAnnouncements            Announcement[]
+  announcementReadings            AnnouncementReading[]
+  uploadedAnnouncementAttachments AnnouncementAttachment[]
+  announcementLogs                AnnouncementLog[]
+
+  // =========================================================
+  // ETAPA 50 - ENQUETES
+  //
+  // createdPolls:
+  // enquetes criadas pelo usuário na administradora ou portal.
+  //
+  // pollResponses:
+  // respostas registradas pelo usuário.
+  //
+  // pollLogs:
+  // ações registradas no histórico/auditoria de enquetes.
+  // =========================================================
+  createdPolls         Poll[]         @relation("PollsCreatedByUser")
+  publishedPollResults Poll[]         @relation("PollResultsPublishedByUser")
+  pollResponses        PollResponse[] @relation("PollResponsesByUser")
+  pollLogs             PollLog[]      @relation("PollLogsByUser")
+
+  // =========================================================
+  // ETAPA 49 - SALA DE REUNIÃO ELOGEST / REUNIÕES DE CONSELHO
+  //
+  // Relações separadas por nome para não conflitar com as
+  // relações existentes de comunicados, chamados e fornecedores.
+  // =========================================================
+  meetingRoomsCreated               MeetingRoom[]               @relation("MeetingRoomsCreatedByUser")
+  meetingRoomParticipants           MeetingRoomParticipant[]
+  meetingRoomLogs                   MeetingRoomLog[]
+  createdCouncilMeetings            CouncilMeeting[]            @relation("CouncilMeetingsCreatedByUser")
+  councilMeetingsRecordKeeper       CouncilMeeting[]            @relation("CouncilMeetingRecordKeeper")
+  councilMeetingParticipants        CouncilMeetingParticipant[]
+  uploadedCouncilMeetingAttachments CouncilMeetingAttachment[]
+  councilMeetingLogs                CouncilMeetingLog[]
+
+  // =========================================================
+  // ETAPA 51 - ASSEMBLEIAS E VOTAÇÃO FORMAL
+  // =========================================================
+  createdAssemblies               Assembly[]               @relation("AssembliesCreatedByUser")
+  assembliesConvocationPublished  Assembly[]               @relation("AssemblyConvocationPublishedByUser")
+  assembliesResultsPublished      Assembly[]               @relation("AssemblyResultsPublishedByUser")
+  deferredAssemblyAgendaItems     AssemblyAgendaItem[]     @relation("AssemblyAgendaItemDeferredByUser")
+  uploadedAssemblyAttachments     AssemblyAttachment[]
+  assemblyLogs                    AssemblyLog[]
+  assemblyRepresentationsGranted  AssemblyRepresentation[] @relation("AssemblyRepresentationGrantor")
+  assemblyRepresentationsReceived AssemblyRepresentation[] @relation("AssemblyRepresentationRepresentative")
+  assemblyRepresentationsCreated  AssemblyRepresentation[] @relation("AssemblyRepresentationCreatedByUser")
+  assemblyRepresentationsRevoked  AssemblyRepresentation[] @relation("AssemblyRepresentationRevokedByUser")
+  assemblyVotes                   AssemblyVote[]           @relation("AssemblyVotesByUser")
+  assemblyVoteRevisions           AssemblyVoteRevision[]   @relation("AssemblyVoteRevisionsByUser")
+
+  // =========================================================
+  // ETAPA 52 - ATA COM IA
+  //
+  // Relações nomeadas preservam autoria em cada fase:
+  // geração, revisão, aprovação, publicação, arquivamento,
+  // versões e histórico operacional.
+  // =========================================================
+  assemblyMinutesGenerated AssemblyMinute[]        @relation("AssemblyMinuteGeneratedByUser")
+  assemblyMinutesReviewed  AssemblyMinute[]        @relation("AssemblyMinuteReviewedByUser")
+  assemblyMinutesApproved  AssemblyMinute[]        @relation("AssemblyMinuteApprovedByUser")
+  assemblyMinutesPublished AssemblyMinute[]        @relation("AssemblyMinutePublishedByUser")
+  assemblyMinutesArchived  AssemblyMinute[]        @relation("AssemblyMinuteArchivedByUser")
+  assemblyMinuteVersions   AssemblyMinuteVersion[] @relation("AssemblyMinuteVersionCreatedByUser")
+  assemblyMinuteLogs       AssemblyMinuteLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -564,6 +1659,39 @@ model UserAccess {
   ticketLogs     TicketLog[]
   notifications  Notification[]
 
+  // =========================================================
+  // ETAPA 48 - CONFIRMAÇÃO DE LEITURA POR PERFIL ATIVO
+  //
+  // Cada leitura fica vinculada ao perfil de acesso utilizado
+  // no portal, evitando misturar síndico, proprietário, morador
+  // ou outros vínculos da mesma pessoa.
+  // =========================================================
+  announcementReadings AnnouncementReading[]
+
+  // =========================================================
+  // ETAPA 50 - RESPOSTAS DE ENQUETES POR PERFIL ATIVO
+  //
+  // Cada resposta fica vinculada ao perfil ativo utilizado,
+  // evitando misturar síndico, proprietário, morador ou
+  // conselheiro quando a mesma pessoa tiver múltiplos acessos.
+  // =========================================================
+  pollResponses PollResponse[]
+
+  // =========================================================
+  // ETAPA 49 - SALA DE REUNIÃO ELOGEST / REUNIÕES DE CONSELHO
+  //
+  // Vincula presença/convite ao perfil ativo usado pelo usuário,
+  // evitando misturar síndico, conselheiro, proprietário ou morador.
+  // =========================================================
+  meetingRoomParticipants    MeetingRoomParticipant[]
+  councilMeetingParticipants CouncilMeetingParticipant[]
+
+  // =========================================================
+  // ETAPA 51 - CONTEXTO DO VOTO E DA REPRESENTAÇÃO
+  // =========================================================
+  assemblyRepresentations AssemblyRepresentation[]
+  assemblyVotes           AssemblyVote[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -652,6 +1780,11 @@ model UnitPersonLink {
   unit        Unit        @relation(fields: [unitId], references: [id])
 
   accesses UserAccess[]
+
+  // =========================================================
+  // ETAPA 51 - ORIGEM FORMAL DO DIREITO DE VOTO
+  // =========================================================
+  assemblyVotes AssemblyVote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -950,6 +2083,8 @@ model TicketRating {
 
   ratedCondominium Condominium? @relation("RatingsByCondominiumContext", fields: [ratedCondominiumId], references: [id])
 
+  ratedProvider Provider? @relation("RatingsReceivedByProvider", fields: [ratedProviderId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -959,6 +2094,7 @@ model TicketRating {
   @@index([ratedUserId])
   @@index([ratedAdministratorId])
   @@index([ratedCondominiumId])
+  @@index([ratedProviderId])
 }
 
 // =========================================================
@@ -976,10 +2112,1777 @@ model TicketRating {
 // - comentário interno criado.
 // =========================================================
 
+// =========================================================
+// ETAPA 46 - PROVIDER / FORNECEDOR GLOBAL ELOGEST
+//
+// Representa o cadastro central do fornecedor/prestador na
+// Rede de Fornecedores EloGest.
+//
+// Este cadastro pode nascer de:
+// - cadastro interno do EloGest;
+// - cadastro feito por uma administradora;
+// - indicação;
+// - importação futura.
+//
+// Regra estratégica:
+// o fornecedor é um ativo global da plataforma, mas sua utilização
+// operacional por uma administradora depende de AdministratorProvider.
+// =========================================================
+
+model Provider {
+  id String @id @default(cuid())
+
+  tradeName String
+  legalName String?
+
+  // =========================================================
+  // DOCUMENTO
+  //
+  // document:
+  // CNPJ, CPF ou documento equivalente.
+  //
+  // documentNormalized:
+  // versão sem máscara, preparada para evitar duplicidades.
+  // Mantemos opcional para permitir cadastro preliminar.
+  // =========================================================
+  document           String?
+  documentNormalized String? @unique
+
+  entityType ProviderEntityType @default(COMPANY)
+
+  // =========================================================
+  // CLASSIFICAÇÃO / BUSCA
+  //
+  // primaryCategory:
+  // categoria principal em texto para manter flexibilidade
+  // comercial e evitar migrations a cada nova categoria.
+  //
+  // categories:
+  // lista flexível em JSON para múltiplas categorias.
+  //
+  // serviceArea:
+  // texto livre para região de atendimento.
+  // =========================================================
+  primaryCategory String?
+  categories      Json?
+  description     String?
+  serviceArea     String?
+
+  // =========================================================
+  // CONTATO
+  // =========================================================
+  email    String?
+  phone    String?
+  whatsapp String?
+  website  String?
+
+  // =========================================================
+  // ENDEREÇO / REGIÃO
+  // =========================================================
+  cep        String?
+  address    String?
+  number     String?
+  complement String?
+  district   String?
+  city       String?
+  state      String?
+
+  // =========================================================
+  // STATUS GLOBAL / VISIBILIDADE
+  //
+  // globalStatus:
+  // status do fornecedor na base EloGest.
+  //
+  // visibility:
+  // PRIVATE:
+  // fornecedor criado para uso restrito inicial.
+  //
+  // ELOGEST_NETWORK:
+  // preparado para aparecer na Rede de Fornecedores EloGest.
+  //
+  // PUBLIC_FUTURE:
+  // reservado para exposição pública futura, caso o produto evolua.
+  //
+  // isVerified:
+  // selo futuro de verificação/homologação EloGest.
+  //
+  // isFeatured:
+  // preparado para destaque comercial/monetização futura.
+  // =========================================================
+  globalStatus ProviderGlobalStatus @default(ACTIVE)
+  visibility   ProviderVisibility   @default(PRIVATE)
+
+  isVerified Boolean @default(false)
+  isFeatured Boolean @default(false)
+
+  origin ProviderOrigin @default(ADMINISTRATOR)
+
+  // =========================================================
+  // AUTORIA / ORIGEM
+  //
+  // createdByAdministratorId:
+  // quando o fornecedor nasce a partir de uma administradora.
+  //
+  // createdByUserId:
+  // usuário que realizou o cadastro.
+  // =========================================================
+  createdByAdministratorId String?
+  createdByUserId          String?
+
+  createdByAdministrator Administrator? @relation("ProvidersCreatedByAdministrator", fields: [createdByAdministratorId], references: [id])
+  createdByUser          User?          @relation("ProvidersCreatedByUser", fields: [createdByUserId], references: [id])
+
+  administratorProviders AdministratorProvider[]
+  condominiumProviders   CondominiumProvider[]
+
+  // =========================================================
+  // ETAPA 40.7.2 / 46 - AVALIAÇÕES FUTURAS DE FORNECEDORES
+  //
+  // TicketRating já possuía ratedProviderId reservado.
+  // A Etapa 46 conecta o campo ao Provider.
+  // =========================================================
+  ratingsReceived TicketRating[] @relation("RatingsReceivedByProvider")
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tradeName])
+  @@index([legalName])
+  @@index([entityType])
+  @@index([primaryCategory])
+  @@index([globalStatus])
+  @@index([visibility])
+  @@index([isVerified])
+  @@index([isFeatured])
+  @@index([origin])
+  @@index([createdByAdministratorId])
+  @@index([createdByUserId])
+  @@index([city])
+  @@index([state])
+  @@index([city, state])
+}
+
+// =========================================================
+// ETAPA 46 - HOMOLOGAÇÃO DO FORNECEDOR PELA ADMINISTRADORA
+//
+// Representa a relação entre a administradora e um fornecedor
+// da Rede EloGest.
+//
+// Um mesmo Provider pode ser:
+// - homologado por uma administradora;
+// - em análise por outra;
+// - bloqueado por outra;
+// - privado para uma carteira;
+// - futuro fornecedor visível na Rede EloGest.
+// =========================================================
+
+model AdministratorProvider {
+  id              String @id @default(cuid())
+  administratorId String
+  providerId      String
+
+  status AdministratorProviderStatus @default(IN_REVIEW)
+
+  // =========================================================
+  // DADOS INTERNOS DA ADMINISTRADORA
+  //
+  // internalName:
+  // apelido/nome interno usado pela administradora.
+  //
+  // internalCategory:
+  // classificação interna, mesmo que o fornecedor tenha uma
+  // categoria global diferente.
+  //
+  // notes:
+  // observações privadas da administradora.
+  // =========================================================
+  internalName     String?
+  internalCategory String?
+  notes            String?
+
+  // =========================================================
+  // REGRAS DE USO
+  //
+  // canBeUsedInTickets:
+  // permite usar o fornecedor em chamados futuramente.
+  //
+  // visibleToSyndics:
+  // preparado para síndicos consultarem fornecedores liberados.
+  //
+  // visibleToResidents:
+  // preparado para moradores consultarem fornecedores liberados.
+  // Por padrão começa falso para evitar exposição indevida.
+  // =========================================================
+  canBeUsedInTickets Boolean @default(true)
+  visibleToSyndics   Boolean @default(false)
+  visibleToResidents Boolean @default(false)
+
+  homologatedAt       DateTime?
+  homologatedByUserId String?
+
+  administrator Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+  provider      Provider      @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  homologatedByUser User? @relation("AdministratorProviderHomologatedByUser", fields: [homologatedByUserId], references: [id])
+
+  condominiumProviders CondominiumProvider[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([administratorId, providerId])
+  @@index([administratorId])
+  @@index([providerId])
+  @@index([status])
+  @@index([internalCategory])
+  @@index([canBeUsedInTickets])
+  @@index([visibleToSyndics])
+  @@index([visibleToResidents])
+  @@index([homologatedByUserId])
+  @@index([administratorId, status])
+}
+
+// =========================================================
+// ETAPA 46 - FORNECEDOR VINCULADO AO CONDOMÍNIO
+//
+// Representa quais fornecedores/prestadores atendem um
+// condomínio específico.
+//
+// Prepara base para:
+// - fornecedor padrão por categoria;
+// - chamados com prestador responsável;
+// - contratos;
+// - documentos obrigatórios;
+// - avaliações;
+// - financeiro;
+// - cotações futuras.
+// =========================================================
+
+model CondominiumProvider {
+  id String @id @default(cuid())
+
+  administratorId         String
+  condominiumId           String
+  providerId              String
+  administratorProviderId String?
+
+  status   CondominiumProviderStatus   @default(ACTIVE)
+  linkType CondominiumProviderLinkType @default(ON_DEMAND)
+
+  category String?
+
+  // =========================================================
+  // isPreferred:
+  // indica fornecedor preferencial/padrão para determinada
+  // categoria dentro do condomínio.
+  // =========================================================
+  isPreferred Boolean @default(false)
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  notes String?
+
+  createdByUserId String?
+
+  administrator         Administrator          @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+  condominium           Condominium            @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+  provider              Provider               @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  administratorProvider AdministratorProvider? @relation(fields: [administratorProviderId], references: [id], onDelete: SetNull)
+
+  createdByUser User? @relation("CondominiumProviderCreatedByUser", fields: [createdByUserId], references: [id])
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([providerId])
+  @@index([administratorProviderId])
+  @@index([status])
+  @@index([linkType])
+  @@index([category])
+  @@index([isPreferred])
+  @@index([createdByUserId])
+  @@index([administratorId, status])
+  @@index([condominiumId, status])
+  @@index([condominiumId, category])
+  @@index([providerId, status])
+}
+
+// =========================================================
+// ETAPA 48 - COMUNICADOS E CONFIRMAÇÃO DE LEITURA
+//
+// Announcement:
+// comunicado criado pela administradora, com escopo, status,
+// prioridade e controle de publicação.
+//
+// AnnouncementTarget:
+// segmentação do público-alvo do comunicado.
+//
+// AnnouncementReading:
+// confirmação de leitura por usuário e perfil ativo.
+// =========================================================
+
+model Announcement {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  condominium   Condominium? @relation(fields: [condominiumId], references: [id], onDelete: SetNull)
+
+  title   String
+  content String
+
+  type        AnnouncementType        @default(GENERAL)
+  status      AnnouncementStatus      @default(DRAFT)
+  priority    AnnouncementPriority    @default(NORMAL)
+  targetScope AnnouncementTargetScope @default(CONDOMINIUM)
+
+  publishAt   DateTime?
+  publishedAt DateTime?
+
+  // Campo legado da primeira revisão da Etapa 48.
+  // Mantido para evitar migration destrutiva em bases que já aplicaram eventDate.
+  eventDate DateTime?
+
+  // Início e término previsto do fato/evento comunicado.
+  // Ex.: manutenção, assembleia, vistoria ou interrupção programada.
+  eventStartAt DateTime?
+  eventEndAt   DateTime?
+
+  expiresAt DateTime?
+
+  requireReadingConfirmation Boolean @default(true)
+
+  createdByUserId String
+  createdByUser   User   @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  readings    AnnouncementReading[]
+  targets     AnnouncementTarget[]
+  attachments AnnouncementAttachment[]
+  logs        AnnouncementLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([createdByUserId])
+  @@index([status])
+  @@index([priority])
+  @@index([targetScope])
+  @@index([publishAt])
+  @@index([publishedAt])
+  @@index([eventDate])
+  @@index([eventStartAt])
+  @@index([eventEndAt])
+  @@index([expiresAt])
+  @@index([administratorId, status])
+  @@index([administratorId, condominiumId])
+}
+
+model AnnouncementTarget {
+  id String @id @default(cuid())
+
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  condominium   Condominium? @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  // ETAPA 48.9.1 - COMUNICADOS POR BLOCO
+  // Armazena o bloco textual conforme cadastrado nas unidades do condomínio.
+  block String?
+
+  role     AccessRole?
+  linkType UnitPersonLinkType?
+
+  createdAt DateTime @default(now())
+
+  @@index([announcementId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([block])
+  @@index([role])
+  @@index([linkType])
+  @@index([announcementId, condominiumId])
+  @@index([announcementId, unitId])
+  @@index([announcementId, block])
+  @@index([announcementId, role])
+  @@index([announcementId, linkType])
+}
+
+model AnnouncementReading {
+  id String @id @default(cuid())
+
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessId   String
+  userAccess UserAccess @relation(fields: [accessId], references: [id], onDelete: Cascade)
+
+  readAt    DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  @@unique([announcementId, userId, accessId])
+  @@index([announcementId])
+  @@index([userId])
+  @@index([accessId])
+  @@index([readAt])
+  @@index([announcementId, readAt])
+}
+
+model AnnouncementAttachment {
+  id               String @id @default(cuid())
+  announcementId   String
+  uploadedByUserId String
+
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int
+  url          String
+
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  uploadedByUser User         @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@index([announcementId])
+  @@index([uploadedByUserId])
+  @@index([createdAt])
+}
+
+model AnnouncementLog {
+  id             String  @id @default(cuid())
+  announcementId String
+  userId         String?
+
+  action   AnnouncementLogAction
+  message  String?
+  metadata Json?
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([announcementId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([announcementId, createdAt])
+}
+
+// =========================================================
+// ETAPA 50 - ENQUETES
+//
+// Poll:
+// enquete consultiva/operacional criada dentro de uma carteira
+// e, quando aplicável, vinculada a um condomínio.
+//
+// PollTarget:
+// define o público-alvo detalhado da enquete.
+//
+// PollOption:
+// opções disponíveis para enquetes fechadas.
+//
+// PollResponse / PollResponseOption:
+// resposta do usuário e suas opções selecionadas.
+//
+// PollLog:
+// histórico/auditoria da enquete.
+// =========================================================
+
+model Poll {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  condominium   Condominium? @relation(fields: [condominiumId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+
+  type             PollType             @default(SINGLE_CHOICE)
+  status           PollStatus           @default(DRAFT)
+  targetScope      PollTargetScope      @default(CONDOMINIUM)
+  resultVisibility PollResultVisibility @default(ADMIN_ONLY)
+
+  // =========================================================
+  // CONTROLE DE PUBLICAÇÃO
+  //
+  // startsAt:
+  // início da disponibilidade da enquete.
+  //
+  // endsAt:
+  // prazo final para resposta.
+  //
+  // publishedAt / closedAt / archivedAt / canceledAt:
+  // rastreiam o ciclo de vida da enquete sem apagar histórico.
+  //
+  // resultsPublishedAt / resultsPublishedByUserId:
+  // registram o momento e o responsável pela publicação oficial
+  // dos resultados. A visibilidade configurada só deve liberar o
+  // resultado no portal após essa publicação explícita.
+  //
+  // adminExpiryReminderSentAt:
+  // registra quando a administradora recebeu o lembrete interno
+  // de que o prazo da enquete se esgotou. A rotina automática deve
+  // considerar apenas enquetes publicadas com prazo vencido e esse
+  // campo nulo. Ao prorrogar o prazo, a API deve limpar esse campo
+  // para permitir um novo lembrete no próximo vencimento.
+  // =========================================================
+  startsAt    DateTime?
+  endsAt      DateTime?
+  publishedAt DateTime?
+  closedAt    DateTime?
+  archivedAt  DateTime?
+  canceledAt  DateTime?
+
+  adminExpiryReminderSentAt DateTime?
+
+  resultsPublishedAt       DateTime?
+  resultsPublishedByUserId String?
+  resultsPublishedByUser   User?     @relation("PollResultsPublishedByUser", fields: [resultsPublishedByUserId], references: [id], onDelete: SetNull)
+
+  // =========================================================
+  // REGRAS DE RESULTADO E PARTICIPAÇÃO
+  //
+  // allowResponseUpdate:
+  // se true, permite trocar resposta enquanto a enquete estiver
+  // aberta. No MVP, a API pode manter false para resposta única.
+  //
+  // anonymousResults:
+  // se true, a exibição de resultados deve agregar respostas sem
+  // expor o nome dos participantes para usuários finais.
+  // Administradores autorizados ainda podem auditar quando necessário.
+  //
+  // requireEligibleVoter:
+  // preparado para enquetes qualificadas que devem respeitar
+  // UnitPersonLink.canVote. Não transforma enquete em assembleia.
+  // =========================================================
+  allowResponseUpdate  Boolean @default(false)
+  anonymousResults     Boolean @default(true)
+  requireEligibleVoter Boolean @default(false)
+
+  createdByUserId String
+  createdByUser   User   @relation("PollsCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  options       PollOption[]
+  targets       PollTarget[]
+  responses     PollResponse[]
+  logs          PollLog[]
+  notifications Notification[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([createdByUserId])
+  @@index([type])
+  @@index([status])
+  @@index([targetScope])
+  @@index([resultVisibility])
+  @@index([startsAt])
+  @@index([endsAt])
+  @@index([publishedAt])
+  @@index([closedAt])
+  @@index([adminExpiryReminderSentAt])
+  @@index([resultsPublishedAt])
+  @@index([resultsPublishedByUserId])
+  @@index([administratorId, condominiumId])
+  @@index([administratorId, status])
+  @@index([condominiumId, status])
+}
+
+model PollTarget {
+  id String @id @default(cuid())
+
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  condominium   Condominium? @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  // Bloco textual conforme cadastrado nas unidades do condomínio.
+  block String?
+
+  role     AccessRole?
+  linkType UnitPersonLinkType?
+
+  createdAt DateTime @default(now())
+
+  @@index([pollId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([block])
+  @@index([role])
+  @@index([linkType])
+  @@index([pollId, condominiumId])
+  @@index([pollId, unitId])
+  @@index([pollId, block])
+  @@index([pollId, role])
+  @@index([pollId, linkType])
+}
+
+model PollOption {
+  id String @id @default(cuid())
+
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  label       String
+  description String?
+  order       Int     @default(0)
+  isActive    Boolean @default(true)
+
+  responses  PollResponse[]
+  selectedBy PollResponseOption[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pollId])
+  @@index([order])
+  @@index([isActive])
+  @@index([pollId, order])
+}
+
+model PollResponse {
+  id String @id @default(cuid())
+
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation("PollResponsesByUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  accessId   String
+  userAccess UserAccess @relation(fields: [accessId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  unitId        String?
+  residentId    String?
+
+  // Para SINGLE_CHOICE e YES_NO.
+  selectedOptionId String?
+  selectedOption   PollOption? @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+
+  // Para TEXT.
+  textAnswer String?
+
+  // Para MULTIPLE_CHOICE.
+  selectedOptions PollResponseOption[]
+
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  metadata Json?
+
+  @@unique([pollId, userId, accessId])
+  @@index([pollId])
+  @@index([userId])
+  @@index([accessId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([residentId])
+  @@index([selectedOptionId])
+  @@index([submittedAt])
+  @@index([pollId, submittedAt])
+}
+
+model PollResponseOption {
+  id String @id @default(cuid())
+
+  pollResponseId String
+  pollResponse   PollResponse @relation(fields: [pollResponseId], references: [id], onDelete: Cascade)
+
+  optionId String
+  option   PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([pollResponseId, optionId])
+  @@index([pollResponseId])
+  @@index([optionId])
+}
+
+model PollLog {
+  id String @id @default(cuid())
+
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation("PollLogsByUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  action  PollLogAction
+  message String?
+
+  fromValue String?
+  toValue   String?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([pollId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([pollId, createdAt])
+}
+
+// =========================================================
+// ETAPA 49 - SALA DE REUNIÃO ELOGEST
+//
+// Estrutura central e reutilizável para reuniões dentro do EloGest.
+// Nesta etapa será usada por Reuniões De Conselho, mas a modelagem
+// já deixa o caminho preparado para Assembleias e outros módulos.
+//
+// Regra estratégica:
+// - A experiência principal deve ser a Sala De Reunião EloGest.
+// - A tecnologia de câmera/vídeo será plugável posteriormente.
+// - providerJoinUrl fica como campo técnico/futuro, não como
+//   experiência principal para o usuário final.
+// =========================================================
+
+model MeetingRoom {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String?
+  condominium   Condominium? @relation(fields: [condominiumId], references: [id], onDelete: SetNull)
+
+  type   MeetingRoomType   @default(COUNCIL)
+  mode   MeetingMode       @default(ONLINE)
+  status MeetingRoomStatus @default(DRAFT)
+
+  title       String
+  description String?
+
+  scheduledStartAt DateTime?
+  scheduledEndAt   DateTime?
+  openedAt         DateTime?
+  closedAt         DateTime?
+  canceledAt       DateTime?
+
+  // Local físico para reuniões presenciais ou híbridas.
+  location String?
+
+  // =========================================================
+  // PROVEDOR DE CÂMERA/VÍDEO
+  //
+  // INTERNAL_PENDING:
+  // usado enquanto a plataforma/provedor definitivo não for
+  // escolhido. A sala continua existindo dentro do EloGest.
+  //
+  // providerJoinUrl:
+  // campo técnico para uso futuro com iframe/SDK/link interno,
+  // sem transformar a experiência em "link externo solto".
+  // =========================================================
+  provider          MeetingProvider @default(INTERNAL_PENDING)
+  providerMeetingId String?
+  providerJoinUrl   String?
+  providerMetadata  Json?
+
+  internalAccessCode String? @unique
+  accessInstructions String?
+
+  createdByUserId String
+  createdByUser   User   @relation("MeetingRoomsCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  participants    MeetingRoomParticipant[]
+  logs            MeetingRoomLog[]
+  councilMeetings CouncilMeeting[]
+  assemblies      Assembly[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([createdByUserId])
+  @@index([type])
+  @@index([mode])
+  @@index([status])
+  @@index([provider])
+  @@index([scheduledStartAt])
+  @@index([scheduledEndAt])
+  @@index([openedAt])
+  @@index([closedAt])
+  @@index([administratorId, condominiumId])
+  @@index([administratorId, status])
+  @@index([type, status])
+}
+
+model MeetingRoomParticipant {
+  id String @id @default(cuid())
+
+  meetingRoomId String
+  meetingRoom   MeetingRoom @relation(fields: [meetingRoomId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  userAccessId String?
+  userAccess   UserAccess? @relation(fields: [userAccessId], references: [id], onDelete: SetNull)
+
+  role   AccessRole
+  status MeetingRoomParticipantStatus @default(INVITED)
+
+  invitedAt   DateTime  @default(now())
+  respondedAt DateTime?
+  joinedAt    DateTime?
+  leftAt      DateTime?
+
+  attendanceNote String?
+  metadata       Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([meetingRoomId, userId, role])
+  @@index([meetingRoomId])
+  @@index([userId])
+  @@index([userAccessId])
+  @@index([role])
+  @@index([status])
+  @@index([invitedAt])
+  @@index([respondedAt])
+  @@index([joinedAt])
+}
+
+model MeetingRoomLog {
+  id String @id @default(cuid())
+
+  meetingRoomId String
+  meetingRoom   MeetingRoom @relation(fields: [meetingRoomId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   MeetingRoomLogAction
+  message  String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([meetingRoomId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([meetingRoomId, createdAt])
+}
+
+// =========================================================
+// ETAPA 49 - REUNIÕES DE CONSELHO
+//
+// Primeiro uso real da Sala De Reunião EloGest.
+// Mantém regras específicas de conselho: pauta, participantes,
+// anexos, presença, decisões e histórico.
+//
+// Importante:
+// - meetingRoomId é opcional nesta primeira migration para evitar
+//   travas em dados existentes/futuros durante implantação gradual.
+// - Na criação via API, a reunião de conselho deve criar ou vincular
+//   uma MeetingRoom quando for online/híbrida.
+// =========================================================
+
+model CouncilMeeting {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String
+  condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  meetingRoomId String?
+  meetingRoom   MeetingRoom? @relation(fields: [meetingRoomId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+
+  status CouncilMeetingStatus @default(DRAFT)
+  mode   MeetingMode          @default(ONLINE)
+
+  scheduledStartAt DateTime?
+  scheduledEndAt   DateTime?
+  completedAt      DateTime?
+  canceledAt       DateTime?
+  archivedAt       DateTime?
+
+  location String?
+
+  // Campos de apoio para organização da reunião e futura ata com IA.
+  summary       String?
+  decisions     String?
+  nextSteps     String?
+  internalNotes String?
+
+  createdByUserId String
+  createdByUser   User   @relation("CouncilMeetingsCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // =========================================================
+  // ETAPA 49.6 - RESPONSÁVEL PELO REGISTRO DA REUNIÃO
+  //
+  // Define a pessoa escolhida durante a reunião para registrar
+  // discussões, decisões, ações, responsáveis, prazos e status
+  // das pautas dentro da Sala De Governança EloGest.
+  //
+  // recordKeeperUserId:
+  // identifica a pessoa/login responsável pelo registro.
+  //
+  // recordKeeperParticipantId:
+  // preserva qual participação nominal foi usada para assumir
+  // a função naquela reunião.
+  //
+  // recordKeeperAssignedAt:
+  // registra quando a função foi atribuída.
+  // =========================================================
+  recordKeeperUserId        String?
+  recordKeeperUser          User?                      @relation("CouncilMeetingRecordKeeper", fields: [recordKeeperUserId], references: [id], onDelete: SetNull)
+  recordKeeperParticipantId String?
+  recordKeeperParticipant   CouncilMeetingParticipant? @relation("CouncilMeetingRecordKeeperParticipant", fields: [recordKeeperParticipantId], references: [id], onDelete: SetNull)
+  recordKeeperAssignedAt    DateTime?
+
+  participants CouncilMeetingParticipant[]
+  agendaItems  CouncilMeetingAgendaItem[]
+  attachments  CouncilMeetingAttachment[]
+  logs         CouncilMeetingLog[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([meetingRoomId])
+  @@index([createdByUserId])
+  @@index([recordKeeperUserId])
+  @@index([recordKeeperParticipantId])
+  @@index([recordKeeperAssignedAt])
+  @@index([status])
+  @@index([mode])
+  @@index([scheduledStartAt])
+  @@index([scheduledEndAt])
+  @@index([completedAt])
+  @@index([administratorId, condominiumId])
+  @@index([administratorId, status])
+  @@index([condominiumId, status])
+}
+
+model CouncilMeetingParticipant {
+  id String @id @default(cuid())
+
+  councilMeetingId String
+  councilMeeting   CouncilMeeting @relation(fields: [councilMeetingId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  userAccessId String?
+  userAccess   UserAccess? @relation(fields: [userAccessId], references: [id], onDelete: SetNull)
+
+  role   AccessRole
+  status CouncilParticipantStatus @default(INVITED)
+
+  invitedAt   DateTime  @default(now())
+  respondedAt DateTime?
+  confirmedAt DateTime?
+  joinedAt    DateTime?
+  leftAt      DateTime?
+
+  canViewPrivateNotes Boolean @default(false)
+  attendanceNote      String?
+  metadata            Json?
+
+  // =========================================================
+  // ETAPA 49.6 - RESPONSÁVEL PELO REGISTRO DA REUNIÃO
+  //
+  // Relação reversa para identificar as reuniões em que esta
+  // participação nominal foi escolhida como responsável pelo
+  // registro das informações na plataforma.
+  // =========================================================
+  recordKeeperForMeetings CouncilMeeting[] @relation("CouncilMeetingRecordKeeperParticipant")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([councilMeetingId, userId, role])
+  @@index([councilMeetingId])
+  @@index([userId])
+  @@index([userAccessId])
+  @@index([role])
+  @@index([status])
+  @@index([invitedAt])
+  @@index([respondedAt])
+  @@index([confirmedAt])
+  @@index([joinedAt])
+}
+
+model CouncilMeetingAgendaItem {
+  id String @id @default(cuid())
+
+  councilMeetingId String
+  councilMeeting   CouncilMeeting @relation(fields: [councilMeetingId], references: [id], onDelete: Cascade)
+
+  order Int @default(0)
+
+  title       String
+  description String?
+
+  status CouncilAgendaItemStatus @default(OPEN)
+
+  discussionNotes String?
+  decision        String?
+  responsibleName String?
+  dueDate         DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([councilMeetingId])
+  @@index([order])
+  @@index([status])
+  @@index([dueDate])
+  @@index([councilMeetingId, order])
+}
+
+model CouncilMeetingAttachment {
+  id String @id @default(cuid())
+
+  councilMeetingId String
+  councilMeeting   CouncilMeeting @relation(fields: [councilMeetingId], references: [id], onDelete: Cascade)
+
+  uploadedByUserId String
+  uploadedByUser   User   @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int
+  url          String
+
+  description String?
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([councilMeetingId])
+  @@index([uploadedByUserId])
+  @@index([createdAt])
+}
+
+model CouncilMeetingLog {
+  id String @id @default(cuid())
+
+  councilMeetingId String
+  councilMeeting   CouncilMeeting @relation(fields: [councilMeetingId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   CouncilMeetingLogAction
+  message  String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([councilMeetingId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([councilMeetingId, createdAt])
+}
+
+// =========================================================
+// ETAPA 51 - ASSEMBLEIAS E VOTAÇÃO PELO CELULAR
+//
+// Estrutura formal e separada das enquetes da Etapa 50.
+// A unidade é o núcleo do voto. A pessoa autenticada registra
+// o voto em nome de uma unidade elegível, por vínculo direto ou
+// representação/procuração válida.
+// =========================================================
+
+model Assembly {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String
+  condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  meetingRoomId String?
+  meetingRoom   MeetingRoom? @relation(fields: [meetingRoomId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+
+  type   AssemblyType   @default(ORDINARY)
+  status AssemblyStatus @default(DRAFT)
+  mode   MeetingMode    @default(HYBRID)
+
+  scheduledStartAt   DateTime?
+  scheduledEndAt     DateTime?
+  votingStartsAt     DateTime?
+  votingEndsAt       DateTime?
+  openedAt           DateTime?
+  closedAt           DateTime?
+  resultsPublishedAt DateTime?
+  canceledAt         DateTime?
+  archivedAt         DateTime?
+
+  // =========================================================
+  // ETAPA 51.6 - PUBLICAÇÃO FORMAL DA CONVOCAÇÃO
+  // =========================================================
+  convocationPublishedAt       DateTime?
+  convocationPublishedByUserId String?
+  convocationPublishedByUser   User?     @relation("AssemblyConvocationPublishedByUser", fields: [convocationPublishedByUserId], references: [id], onDelete: SetNull)
+
+  location           String?
+  externalMeetingUrl String?
+  accessInstructions String?
+
+  convocationText String?
+  internalNotes   String?
+
+  // Permite alteração do voto enquanto a assembleia estiver
+  // aberta. Cada mudança permanece preservada em revisão própria.
+  allowVoteChange Boolean @default(false)
+
+  // Registra quando a fotografia das unidades elegíveis foi gerada.
+  // Após a abertura, alterações devem ser explícitas e auditadas.
+  eligibilitySnapshotAt DateTime?
+
+  createdByUserId String
+  createdByUser   User   @relation("AssembliesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  resultsPublishedByUserId String?
+  resultsPublishedByUser   User?   @relation("AssemblyResultsPublishedByUser", fields: [resultsPublishedByUserId], references: [id], onDelete: SetNull)
+
+  agendaItems     AssemblyAgendaItem[]
+  eligibleUnits   AssemblyEligibleUnit[]
+  representations AssemblyRepresentation[]
+  votes           AssemblyVote[]
+  attachments     AssemblyAttachment[]
+  logs            AssemblyLog[]
+  notifications   Notification[]
+
+  // =========================================================
+  // ETAPA 52 - ATA OFICIAL DA ASSEMBLEIA
+  //
+  // Relação 1:1: cada assembleia possui no máximo uma ata
+  // principal, com múltiplas versões preservadas internamente.
+  // =========================================================
+  minute AssemblyMinute?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([meetingRoomId])
+  @@index([createdByUserId])
+  @@index([resultsPublishedByUserId])
+  @@index([convocationPublishedByUserId])
+  @@index([convocationPublishedAt])
+  @@index([type])
+  @@index([status])
+  @@index([mode])
+  @@index([scheduledStartAt])
+  @@index([votingStartsAt])
+  @@index([votingEndsAt])
+  @@index([administratorId, condominiumId])
+  @@index([administratorId, status])
+  @@index([condominiumId, status])
+}
+
+model AssemblyAgendaItem {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  order Int @default(0)
+
+  title       String
+  description String?
+
+  type   AssemblyAgendaItemType   @default(APPROVE_REJECT_ABSTAIN)
+  status AssemblyAgendaItemStatus @default(DRAFT)
+
+  // Regras configuráveis e transparentes. Em cenários jurídicos
+  // complexos, a pauta pode permanecer em MANUAL_REVIEW para
+  // validação administrativa antes da publicação oficial.
+  quorumRuleType          AssemblyQuorumRuleType @default(SIMPLE_MAJORITY)
+  minimumParticipationPct Decimal?               @db.Decimal(7, 4)
+  minimumApprovalPct      Decimal?               @db.Decimal(7, 4)
+  customRuleDescription   String?
+
+  votingStartsAt DateTime?
+  votingEndsAt   DateTime?
+
+  // =========================================================
+  // ETAPA 52.5.1 - TRANSPARENCIA DA VOTACAO
+  //
+  // A auditoria interna permanece completa em todos os modos.
+  // Este campo controla apenas o nivel de detalhamento que pode
+  // ser apresentado no portal e na ata oficial da pauta.
+  // =========================================================
+  voteVisibility AssemblyVoteVisibility @default(CONSOLIDATED)
+
+  resultStatus      AssemblyResultStatus @default(PENDING)
+  resultSummary     String?
+  resultValidatedAt DateTime?
+
+  // =========================================================
+  // ETAPA 51.9.5 - PAUTA ENCAMINHADA PARA NOVA DELIBERACAO
+  // =========================================================
+  deferredAt       DateTime?
+  deferredByUserId String?
+  deferredByUser   User?     @relation("AssemblyAgendaItemDeferredByUser", fields: [deferredByUserId], references: [id], onDelete: SetNull)
+  deferredReason   String?
+  deferredNotes    String?
+
+  originAgendaItemId  String?
+  originAgendaItem    AssemblyAgendaItem?  @relation("AssemblyAgendaItemCarryForward", fields: [originAgendaItemId], references: [id], onDelete: SetNull)
+  carriedForwardItems AssemblyAgendaItem[] @relation("AssemblyAgendaItemCarryForward")
+
+  options     AssemblyAgendaOption[]
+  votes       AssemblyVote[]
+  attachments AssemblyAttachment[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assemblyId])
+  @@index([order])
+  @@index([type])
+  @@index([status])
+  @@index([voteVisibility])
+  @@index([resultStatus])
+  @@index([deferredAt])
+  @@index([deferredByUserId])
+  @@index([originAgendaItemId])
+  @@index([votingStartsAt])
+  @@index([votingEndsAt])
+  @@index([assemblyId, order])
+}
+
+model AssemblyAgendaOption {
+  id String @id @default(cuid())
+
+  agendaItemId String
+  agendaItem   AssemblyAgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+
+  label        String
+  description  String?
+  order        Int     @default(0)
+  isAbstention Boolean @default(false)
+
+  voteOptions AssemblyVoteOption[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agendaItemId])
+  @@index([order])
+  @@index([isAbstention])
+  @@index([agendaItemId, order])
+}
+
+// =========================================================
+// FOTOGRAFIA DAS UNIDADES ELEGÍVEIS
+//
+// Esta tabela evita que alterações cadastrais futuras modifiquem
+// retroativamente o quórum de uma assembleia já convocada.
+// =========================================================
+
+model AssemblyEligibleUnit {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  // Snapshot legível para auditoria, mesmo se o cadastro da unidade
+  // for atualizado futuramente.
+  snapshotBlock      String?
+  snapshotUnitNumber String
+
+  status        AssemblyEligibilityStatus @default(ELIGIBLE)
+  blockedReason String?
+
+  // Peso padrão de uma unidade. O campo decimal permite evolução
+  // futura para fração ideal sem refatoração da base.
+  votingWeight Decimal @default(1) @db.Decimal(12, 6)
+
+  votes AssemblyVote[]
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([assemblyId, unitId])
+  @@index([assemblyId])
+  @@index([unitId])
+  @@index([status])
+  @@index([assemblyId, status])
+}
+
+// =========================================================
+// PROCURAÇÕES E REPRESENTAÇÕES
+//
+// A representação é específica por assembleia e unidade para
+// preservar segurança, validade temporal e auditoria.
+// =========================================================
+
+model AssemblyRepresentation {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  grantorUserId String?
+  grantorUser   User?   @relation("AssemblyRepresentationGrantor", fields: [grantorUserId], references: [id], onDelete: SetNull)
+
+  // =========================================================
+  // ETAPA 51.5.1 - REPRESENTANTE INTERNO OU EXTERNO
+  //
+  // representativeUserId:
+  // preenchido quando a pessoa já possui cadastro no EloGest.
+  //
+  // externalRepresentative*:
+  // permitem registrar representante externo sem criar usuário
+  // artificialmente. A conversão para acesso autenticado poderá
+  // ocorrer posteriormente, antes da votação pelo celular.
+  // =========================================================
+  representativeUserId String?
+  representativeUser   User?   @relation("AssemblyRepresentationRepresentative", fields: [representativeUserId], references: [id], onDelete: SetNull)
+
+  externalRepresentativeName     String?
+  externalRepresentativeEmail    String?
+  externalRepresentativePhone    String?
+  externalRepresentativeDocument String?
+
+  representativeAccessId String?
+  representativeAccess   UserAccess? @relation(fields: [representativeAccessId], references: [id], onDelete: SetNull)
+
+  status AssemblyRepresentationStatus @default(ACTIVE)
+
+  validFrom  DateTime?
+  validUntil DateTime?
+
+  documentUrl       String?
+  documentName      String?
+  documentMimeType  String?
+  documentSizeBytes Int?
+
+  notes    String?
+  metadata Json?
+
+  createdByUserId String
+  createdByUser   User   @relation("AssemblyRepresentationCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  revokedByUserId String?
+  revokedByUser   User?     @relation("AssemblyRepresentationRevokedByUser", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+  revokedAt       DateTime?
+  revokedReason   String?
+
+  votes AssemblyVote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assemblyId])
+  @@index([unitId])
+  @@index([grantorUserId])
+  @@index([representativeUserId])
+  @@index([representativeAccessId])
+  @@index([status])
+  @@index([validFrom])
+  @@index([validUntil])
+  @@index([createdByUserId])
+  @@index([revokedByUserId])
+  @@index([assemblyId, unitId])
+  @@index([assemblyId, representativeUserId])
+}
+
+model AssemblyVote {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  agendaItemId String
+  agendaItem   AssemblyAgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+
+  eligibleUnitId String
+  eligibleUnit   AssemblyEligibleUnit @relation(fields: [eligibleUnitId], references: [id], onDelete: Restrict)
+
+  unitId String
+  unit   Unit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  voterUserId String
+  voterUser   User   @relation("AssemblyVotesByUser", fields: [voterUserId], references: [id], onDelete: Restrict)
+
+  voterAccessId String?
+  voterAccess   UserAccess? @relation(fields: [voterAccessId], references: [id], onDelete: SetNull)
+
+  unitPersonLinkId String?
+  unitPersonLink   UnitPersonLink? @relation(fields: [unitPersonLinkId], references: [id], onDelete: SetNull)
+
+  representationId String?
+  representation   AssemblyRepresentation? @relation(fields: [representationId], references: [id], onDelete: SetNull)
+
+  origin AssemblyVoteOrigin @default(DIRECT_UNIT_LINK)
+
+  // Mantém versão atual e permite registrar alterações sem apagar
+  // o histórico. As opções ficam em tabela própria para atender
+  // escolha única e múltipla escolha com a mesma estrutura.
+  version Int @default(1)
+
+  options   AssemblyVoteOption[]
+  revisions AssemblyVoteRevision[]
+
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  metadata Json?
+
+  @@unique([agendaItemId, eligibleUnitId])
+  @@index([assemblyId])
+  @@index([agendaItemId])
+  @@index([eligibleUnitId])
+  @@index([unitId])
+  @@index([voterUserId])
+  @@index([voterAccessId])
+  @@index([unitPersonLinkId])
+  @@index([representationId])
+  @@index([origin])
+  @@index([submittedAt])
+  @@index([assemblyId, unitId])
+}
+
+model AssemblyVoteOption {
+  id String @id @default(cuid())
+
+  voteId String
+  vote   AssemblyVote @relation(fields: [voteId], references: [id], onDelete: Cascade)
+
+  optionId String
+  option   AssemblyAgendaOption @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([voteId, optionId])
+  @@index([voteId])
+  @@index([optionId])
+}
+
+// =========================================================
+// HISTÓRICO DE ALTERAÇÕES DO VOTO
+//
+// snapshot guarda uma fotografia JSON das opções registradas em
+// cada versão. Assim, o voto atual pode ser consultado rapidamente
+// sem perder a trilha completa de auditoria.
+// =========================================================
+
+model AssemblyVoteRevision {
+  id String @id @default(cuid())
+
+  voteId String
+  vote   AssemblyVote @relation(fields: [voteId], references: [id], onDelete: Cascade)
+
+  version  Int
+  snapshot Json
+
+  changedByUserId String
+  changedByUser   User   @relation("AssemblyVoteRevisionsByUser", fields: [changedByUserId], references: [id], onDelete: Restrict)
+
+  reason   String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([voteId, version])
+  @@index([voteId])
+  @@index([changedByUserId])
+  @@index([createdAt])
+}
+
+model AssemblyAttachment {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  agendaItemId String?
+  agendaItem   AssemblyAgendaItem? @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+
+  uploadedByUserId String
+  uploadedByUser   User   @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  scope AssemblyAttachmentScope @default(CONVOCATION)
+
+  originalName String
+  storedName   String
+  mimeType     String
+  sizeBytes    Int
+  url          String
+
+  description String?
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([assemblyId])
+  @@index([agendaItemId])
+  @@index([uploadedByUserId])
+  @@index([scope])
+  @@index([createdAt])
+}
+
+model AssemblyLog {
+  id String @id @default(cuid())
+
+  assemblyId String
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   AssemblyLogAction
+  message  String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([assemblyId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([assemblyId, createdAt])
+}
+
+// =========================================================
+// ETAPA 52 - ATA COM IA
+//
+// AssemblyMinute:
+// representa a ata principal da assembleia e mantém a versão
+// corrente para consulta rápida.
+//
+// AssemblyMinuteVersion:
+// preserva cada versão integral da minuta/ata, incluindo snapshot
+// dos dados oficiais usados na redação.
+//
+// AssemblyMinuteLog:
+// registra ações operacionais e decisões humanas do fluxo.
+// =========================================================
+
+model AssemblyMinute {
+  id String @id @default(cuid())
+
+  assemblyId String   @unique
+  assembly   Assembly @relation(fields: [assemblyId], references: [id], onDelete: Cascade)
+
+  // Mantidos de forma explícita para facilitar isolamento seguro
+  // por administradora e condomínio nas APIs administrativas.
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String
+  condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  status         AssemblyMinuteStatus         @default(DRAFT)
+  generationMode AssemblyMinuteGenerationMode @default(STRUCTURED)
+
+  title            String
+  executiveSummary String?
+  content          String
+
+  // Alertas de consistência, observações do gerador e dados
+  // auxiliares para revisão humana. Não substituem o histórico.
+  warnings Json?
+  metadata Json?
+
+  // Versão atual publicada no editor. O histórico integral fica
+  // preservado em AssemblyMinuteVersion.
+  currentVersion Int @default(0)
+
+  generatedAt       DateTime?
+  generatedByUserId String?
+  generatedByUser   User?     @relation("AssemblyMinuteGeneratedByUser", fields: [generatedByUserId], references: [id], onDelete: SetNull)
+
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  reviewedByUser   User?     @relation("AssemblyMinuteReviewedByUser", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  approvedAt       DateTime?
+  approvedByUserId String?
+  approvedByUser   User?     @relation("AssemblyMinuteApprovedByUser", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  publishedAt       DateTime?
+  publishedByUserId String?
+  publishedByUser   User?     @relation("AssemblyMinutePublishedByUser", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+
+  archivedAt       DateTime?
+  archivedByUserId String?
+  archivedByUser   User?     @relation("AssemblyMinuteArchivedByUser", fields: [archivedByUserId], references: [id], onDelete: SetNull)
+
+  // Documento oficial congelado após publicação. O armazenamento
+  // persistente poderá usar volume Railway ou Cloudflare R2.
+  officialPdfUrl         String?
+  officialPdfName        String?
+  officialPdfMimeType    String?
+  officialPdfSizeBytes   Int?
+  officialPdfHash        String?
+  officialPdfGeneratedAt DateTime?
+
+  versions AssemblyMinuteVersion[]
+  logs     AssemblyMinuteLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([status])
+  @@index([generationMode])
+  @@index([generatedByUserId])
+  @@index([reviewedByUserId])
+  @@index([approvedByUserId])
+  @@index([publishedByUserId])
+  @@index([archivedByUserId])
+  @@index([publishedAt])
+  @@index([administratorId, condominiumId])
+  @@index([administratorId, status])
+  @@index([condominiumId, status])
+}
+
+model AssemblyMinuteVersion {
+  id String @id @default(cuid())
+
+  minuteId String
+  minute   AssemblyMinute @relation(fields: [minuteId], references: [id], onDelete: Cascade)
+
+  version Int
+  source  AssemblyMinuteVersionSource
+
+  title            String
+  executiveSummary String?
+  content          String
+
+  // sourceSnapshot guarda os dados oficiais consolidados da
+  // assembleia utilizados naquela versão da minuta.
+  sourceSnapshot Json
+  warnings       Json?
+  metadata       Json?
+
+  // Dados técnicos opcionais da camada isolada de IA.
+  // Não devem ser exibidos como termos técnicos na interface.
+  promptVersion String?
+  aiProvider    String?
+  aiModel       String?
+
+  createdByUserId String
+  createdByUser   User   @relation("AssemblyMinuteVersionCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+
+  @@unique([minuteId, version])
+  @@index([minuteId])
+  @@index([source])
+  @@index([createdByUserId])
+  @@index([createdAt])
+}
+
+model AssemblyMinuteLog {
+  id String @id @default(cuid())
+
+  minuteId String
+  minute   AssemblyMinute @relation(fields: [minuteId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   AssemblyMinuteLogAction
+  message  String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([minuteId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([minuteId, createdAt])
+}
+
 model Notification {
   id       String  @id @default(cuid())
   userId   String
   ticketId String?
+
+  // =========================================================
+  // ETAPA 50 - NOTIFICAÇÃO VINCULADA A ENQUETE
+  //
+  // pollId é opcional para manter compatibilidade com chamados
+  // e demais eventos já existentes.
+  // =========================================================
+  pollId String?
+
+  // =========================================================
+  // ETAPA 51 - NOTIFICAÇÃO VINCULADA A ASSEMBLEIA
+  // =========================================================
+  assemblyId String?
 
   // =========================================================
   // ETAPA 27.1 - CONTEXTO DA NOTIFICAÇÃO
@@ -1003,15 +3906,19 @@ model Notification {
 
   readAt DateTime?
 
-  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ticket Ticket?     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  access UserAccess? @relation(fields: [accessId], references: [id])
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket   Ticket?     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  poll     Poll?       @relation(fields: [pollId], references: [id], onDelete: SetNull)
+  assembly Assembly?   @relation(fields: [assemblyId], references: [id], onDelete: SetNull)
+  access   UserAccess? @relation(fields: [accessId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([userId])
   @@index([ticketId])
+  @@index([pollId])
+  @@index([assemblyId])
   @@index([accessId])
   @@index([channel])
   @@index([status])

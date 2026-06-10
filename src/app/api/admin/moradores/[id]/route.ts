@@ -1,4 +1,17 @@
+import {
+  AccessRole,
+  Prisma,
+  Status,
+  UnitPersonLinkType,
+  type Condominium,
+  type Resident,
+  type Ticket,
+  type Unit,
+  type UnitPersonLink,
+  type User,
+} from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -7,42 +20,32 @@ import {
 } from "@/lib/user-access";
 import { canManageResidents } from "@/lib/access-control";
 import { NextResponse } from "next/server";
-import { Status } from "@prisma/client";
-
-
+import {
+  getPlanErrorPayload,
+  isPlanAccessError,
+  isPlanLimitError,
+  MODULE_SLUGS,
+  requireModuleAccess,
+} from "@/lib/plan-limits";
 
 /* =========================================================
-   MORADORES - API DE ATUALIZAÇÃO
+   MORADORES - API ADMINISTRATIVA DE DETALHE
 
-   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+   Arquivo:
+   src/app/api/admin/moradores/[id]/route.ts
 
-   PATCH:
-   - ADMINISTRADORA edita apenas moradores da própria carteira.
-   - ADMINISTRADORA só pode mover morador para unidade da própria
-     carteira.
-   - CPF é normalizado e validado.
-   - CPF duplicado é bloqueado.
-   - E-mail é validado quando informado.
-   - Status é validado.
-   - Tipo de morador é validado.
+   ELOGEST — ETAPA 51.5.3
+   SANEAMENTO CADASTRAL DE PESSOAS, UNIDADES E DIREITO A VOTO
 
-   Regras consolidadas:
-   - /admin é área operacional da ADMINISTRADORA.
-   - SUPER_ADMIN não opera por esta rota; deve usar a área /elogest.
-   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO são bloqueados.
-   - Todas as consultas usam administratorId do activeAccess.
-   - A permissão MANAGE_RESIDENTS é validada no perfil ativo.
+   Métodos:
+   - GET: retorna o vínculo completo do morador.
+   - PATCH: atualiza cadastro, unidade e vínculo formal.
 
-   PADRÃO BRASIL:
-   Tipos de morador mantidos em português sem acento:
-   - PROPRIETARIO
-   - INQUILINO
-   - FAMILIAR
-   - RESPONSAVEL
-   - OUTRO
+   Correção:
+   - O arquivo [id]/route.ts anterior estava com conteúdo duplicado
+     da rota de listagem/criação e não possuía PATCH.
+   - A edição agora sincroniza Resident, UnitPersonLink e UserAccess.
    ========================================================= */
-
-
 
 interface RouteContext {
   params: Promise<{
@@ -50,75 +53,172 @@ interface RouteContext {
   }>;
 }
 
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
 
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
 
-/* =========================================================
-   HELPERS
-   ========================================================= */
+type RequestBody = Record<string, unknown>;
 
-function onlyDigits(value?: string | null) {
+type RelatedTicket = Pick<Ticket, "id" | "status">;
+
+type RelatedUser = Pick<User, "id" | "name" | "email" | "role" | "isActive">;
+
+type FormalUnitLink = Pick<
+  UnitPersonLink,
+  | "id"
+  | "userId"
+  | "residentId"
+  | "condominiumId"
+  | "unitId"
+  | "linkType"
+  | "isPrimary"
+  | "canVote"
+  | "canOpenTickets"
+  | "receivesNotifications"
+  | "status"
+  | "notes"
+>;
+
+type ResidentWithRelations = Resident & {
+  condominium: Condominium;
+  unit: Unit;
+  user: RelatedUser | null;
+  tickets: RelatedTicket[];
+  unitPersonLinks: FormalUnitLink[];
+};
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function onlyDigits(value: unknown) {
   return String(value || "").replace(/\D/g, "");
 }
 
-
-
-function normalizeText(value?: string | null) {
-  const cleaned = String(value || "").trim();
+function normalizeText(value: unknown) {
+  const cleaned = cleanText(value);
   return cleaned.length > 0 ? cleaned : null;
 }
 
-
-
-function normalizeEmail(value?: string | null) {
-  const cleaned = String(value || "").trim().toLowerCase();
+function normalizeEmail(value: unknown) {
+  const cleaned = cleanText(value).toLowerCase();
   return cleaned.length > 0 ? cleaned : null;
 }
 
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
 
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "sim"].includes(normalized)) return true;
+    if (["false", "0", "no", "nao", "não"].includes(normalized)) return false;
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  return fallback;
+}
+
+function normalizeStatus(
+  value: unknown,
+  fallback: Status = Status.ACTIVE
+): Status {
+  const status = cleanText(value || fallback).toUpperCase();
+  return status === Status.INACTIVE ? Status.INACTIVE : Status.ACTIVE;
+}
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-
-
 function isValidCpfFormat(cpf: string) {
   return /^\d{11}$/.test(cpf);
 }
 
+function residentTypeToLinkType(residentType?: string | null): UnitPersonLinkType {
+  if (residentType === "PROPRIETARIO") return UnitPersonLinkType.OWNER;
+  if (residentType === "INQUILINO") return UnitPersonLinkType.TENANT;
+  if (residentType === "FAMILIAR") return UnitPersonLinkType.DEPENDENT;
+  if (residentType === "OUTRO") return UnitPersonLinkType.AUTHORIZED;
+  return UnitPersonLinkType.RESIDENT;
+}
 
+function linkTypeToResidentType(linkType: UnitPersonLinkType) {
+  if (linkType === UnitPersonLinkType.OWNER) return "PROPRIETARIO";
+  if (linkType === UnitPersonLinkType.TENANT) return "INQUILINO";
+  if (linkType === UnitPersonLinkType.DEPENDENT) return "FAMILIAR";
+  if (linkType === UnitPersonLinkType.AUTHORIZED) return "OUTRO";
+  return "RESPONSAVEL";
+}
 
-function normalizeStatus(value?: string | null): Status {
-  const status = String(value || Status.ACTIVE).trim().toUpperCase();
+function normalizeLinkType(
+  value: unknown,
+  fallback: UnitPersonLinkType
+): UnitPersonLinkType {
+  const normalized = cleanText(value).toUpperCase();
 
-  if (status === Status.INACTIVE) {
-    return Status.INACTIVE;
+  if (
+    Object.values(UnitPersonLinkType).includes(
+      normalized as UnitPersonLinkType
+    )
+  ) {
+    return normalized as UnitPersonLinkType;
   }
 
-  return Status.ACTIVE;
+  return fallback;
 }
 
-
-
-function isValidStatus(status: Status) {
-  return [Status.ACTIVE, Status.INACTIVE].includes(status);
+function getDefaultLinkPermissions(linkType: UnitPersonLinkType) {
+  return {
+    canVote: linkType === UnitPersonLinkType.OWNER,
+    canOpenTickets: true,
+    receivesNotifications: true,
+    isPrimary: true,
+  };
 }
 
+function buildFormalAccessLabel({
+  linkType,
+  condominiumName,
+  block,
+  unitNumber,
+}: {
+  linkType: UnitPersonLinkType;
+  condominiumName: string;
+  block?: string | null;
+  unitNumber: string;
+}) {
+  const roleLabel =
+    linkType === UnitPersonLinkType.OWNER ? "Proprietário" : "Morador";
 
+  const unitLabel = `${block ? `Bloco ${block} - ` : ""}Unidade ${unitNumber}`;
 
-function isValidResidentType(residentType?: string | null) {
-  if (!residentType) return true;
-
-  return [
-    "PROPRIETARIO",
-    "INQUILINO",
-    "FAMILIAR",
-    "RESPONSAVEL",
-    "OUTRO",
-  ].includes(residentType);
+  return `${roleLabel} - ${condominiumName} / ${unitLabel}`;
 }
-
-
 
 function countOpenTickets(tickets: Array<{ status: string }>) {
   return tickets.filter(
@@ -126,100 +226,132 @@ function countOpenTickets(tickets: Array<{ status: string }>) {
   ).length;
 }
 
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
 
+const residentInclude = {
+  condominium: true,
+  unit: true,
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+    },
+  },
+  tickets: {
+    select: {
+      id: true,
+      status: true,
+    },
+  },
+  unitPersonLinks: {
+    where: {
+      status: Status.ACTIVE,
+    },
+    orderBy: [
+      {
+        isPrimary: "desc" as const,
+      },
+      {
+        createdAt: "asc" as const,
+      },
+    ],
+    take: 1,
+    select: {
+      id: true,
+      userId: true,
+      residentId: true,
+      condominiumId: true,
+      unitId: true,
+      linkType: true,
+      isPrimary: true,
+      canVote: true,
+      canOpenTickets: true,
+      receivesNotifications: true,
+      status: true,
+      notes: true,
+    },
+  },
+} satisfies Prisma.ResidentInclude;
 
-function formatMoradorResponse(morador: any) {
+function formatMoradorResponse(morador: ResidentWithRelations) {
+  const formalUnitLink = morador.unitPersonLinks[0] || null;
+
   return {
     id: morador.id,
-
     condominiumId: morador.condominiumId,
     unitId: morador.unitId,
-    userId: morador.userId || null,
-
+    userId: morador.user?.id || null,
     condominium: morador.condominium,
     unit: morador.unit,
     user: morador.user,
-
     name: morador.name,
     cpf: morador.cpf,
     email: morador.email,
     phone: morador.phone,
     residentType: morador.residentType,
     status: morador.status,
-
+    formalUnitLink,
+    linkType:
+      formalUnitLink?.linkType ||
+      residentTypeToLinkType(morador.residentType),
+    isPrimary: formalUnitLink?.isPrimary ?? true,
+    canVote:
+      formalUnitLink?.canVote ??
+      residentTypeToLinkType(morador.residentType) === UnitPersonLinkType.OWNER,
+    canOpenTickets: formalUnitLink?.canOpenTickets ?? true,
+    receivesNotifications: formalUnitLink?.receivesNotifications ?? true,
+    formalLinkNotes: formalUnitLink?.notes || null,
     createdAt: morador.createdAt,
     updatedAt: morador.updatedAt,
-
-    totalTickets: morador.tickets?.length || 0,
-    openTickets: countOpenTickets(morador.tickets || []),
+    totalTickets: morador.tickets.length,
+    openTickets: countOpenTickets(morador.tickets),
     hasUser: !!morador.user,
   };
 }
 
-
-
-/* =========================================================
-   USUÁRIO COM CONTEXTO ADMINISTRATIVO
-   ========================================================= */
-
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: ActiveUserAccess | null =
-    await getActiveUserAccessFromCookies({
-      userId: sessionUser.id,
-    });
-
-  if (!activeAccess) {
-    return {
-      ...sessionUser,
-      activeAccess: null,
-    };
-  }
+  const activeAccess = await getActiveUserAccessFromCookies({
+    userId: sessionUser.id,
+  });
 
   return {
     ...sessionUser,
-
-    role: activeAccess.role || sessionUser.role,
-
+    role: activeAccess?.role || sessionUser.role,
     administratorId:
-      activeAccess.administratorId !== undefined
+      activeAccess?.administratorId !== undefined
         ? activeAccess.administratorId
         : sessionUser.administratorId,
-
     condominiumId:
-      activeAccess.condominiumId !== undefined
+      activeAccess?.condominiumId !== undefined
         ? activeAccess.condominiumId
         : sessionUser.condominiumId,
-
     unitId:
-      activeAccess.unitId !== undefined
+      activeAccess?.unitId !== undefined
         ? activeAccess.unitId
         : sessionUser.unitId,
-
     residentId:
-      activeAccess.residentId !== undefined
+      activeAccess?.residentId !== undefined
         ? activeAccess.residentId
         : sessionUser.residentId,
-
     activeAccess,
   };
 }
 
-
-
-/* =========================================================
-   VALIDA CONTEXTO ADMINISTRATIVO
-   ========================================================= */
-
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  if (!activeAccess) {
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  if (!user.activeAccess) {
     return {
       ok: false,
       status: 403,
@@ -227,16 +359,16 @@ function validateAdminContext(user: any) {
     };
   }
 
-  if (!isAdministradoraAccess(activeAccess)) {
+  if (!isAdministradoraAccess(user.activeAccess)) {
     return {
       ok: false,
       status: 403,
       message:
-        "Este contexto não possui acesso ao cadastro administrativo de moradores. Use o portal ou a área EloGest.",
+        "Este contexto não possui acesso ao cadastro administrativo de moradores.",
     };
   }
 
-  if (!activeAccess.administratorId) {
+  if (!user.activeAccess.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -244,7 +376,7 @@ function validateAdminContext(user: any) {
     };
   }
 
-  if (!canManageResidents(activeAccess)) {
+  if (!canManageResidents(user.activeAccess)) {
     return {
       ok: false,
       status: 403,
@@ -259,45 +391,206 @@ function validateAdminContext(user: any) {
   };
 }
 
+async function syncResidentFormalUnitLink({
+  tx,
+  residentId,
+  legacyUserId,
+  administratorId,
+  condominiumId,
+  condominiumName,
+  unitId,
+  unitBlock,
+  unitNumber,
+  linkType,
+  status,
+  canVote,
+  canOpenTickets,
+  receivesNotifications,
+  isPrimary,
+  notes,
+}: {
+  tx: Prisma.TransactionClient;
+  residentId: string;
+  legacyUserId: string | null;
+  administratorId: string;
+  condominiumId: string;
+  condominiumName: string;
+  unitId: string;
+  unitBlock?: string | null;
+  unitNumber: string;
+  linkType: UnitPersonLinkType;
+  status: Status;
+  canVote: boolean;
+  canOpenTickets: boolean;
+  receivesNotifications: boolean;
+  isPrimary: boolean;
+  notes?: string | null;
+}) {
+  const currentLink = await tx.unitPersonLink.findFirst({
+    where: {
+      residentId,
+    },
+    orderBy: [
+      {
+        isPrimary: "desc",
+      },
+      {
+        createdAt: "asc",
+      },
+    ],
+  });
 
+  const linkData = {
+    userId: legacyUserId,
+    residentId,
+    condominiumId,
+    unitId,
+    linkType,
+    isPrimary,
+    canVote,
+    canOpenTickets,
+    receivesNotifications,
+    status,
+    notes: notes || null,
+    metadata: {
+      source: "ADMIN_RESIDENT_FORM",
+      syncedAt: new Date().toISOString(),
+    },
+  };
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+  const formalLink = currentLink
+    ? await tx.unitPersonLink.update({
+        where: {
+          id: currentLink.id,
+        },
+        data: linkData,
+      })
+    : await tx.unitPersonLink.create({
+        data: linkData,
+      });
 
-  return activeAccess?.administratorId || null;
+  await tx.unitPersonLink.updateMany({
+    where: {
+      residentId,
+      id: {
+        not: formalLink.id,
+      },
+    },
+    data: {
+      status: Status.INACTIVE,
+      isPrimary: false,
+    },
+  });
+
+  if (!legacyUserId) {
+    return formalLink;
+  }
+
+  const accessRole =
+    linkType === UnitPersonLinkType.OWNER
+      ? AccessRole.PROPRIETARIO
+      : AccessRole.MORADOR;
+
+  const label = buildFormalAccessLabel({
+    linkType,
+    condominiumName,
+    block: unitBlock,
+    unitNumber,
+  });
+
+  const existingAccess = await tx.userAccess.findFirst({
+    where: {
+      userId: legacyUserId,
+      residentId,
+      role: {
+        in: [AccessRole.MORADOR, AccessRole.PROPRIETARIO],
+      },
+    },
+    orderBy: [
+      {
+        isDefault: "desc",
+      },
+      {
+        createdAt: "asc",
+      },
+    ],
+  });
+
+  const accessData = {
+    administratorId,
+    condominiumId,
+    unitId,
+    residentId,
+    unitPersonLinkId: formalLink.id,
+    role: accessRole,
+    label,
+    isActive: status === Status.ACTIVE,
+  };
+
+  const formalAccess = existingAccess
+    ? await tx.userAccess.update({
+        where: {
+          id: existingAccess.id,
+        },
+        data: accessData,
+      })
+    : await tx.userAccess.create({
+        data: {
+          userId: legacyUserId,
+          ...accessData,
+          isDefault: false,
+        },
+      });
+
+  await tx.userAccess.updateMany({
+    where: {
+      userId: legacyUserId,
+      residentId,
+      role: {
+        in: [AccessRole.MORADOR, AccessRole.PROPRIETARIO],
+      },
+      id: {
+        not: formalAccess.id,
+      },
+    },
+    data: {
+      isActive: false,
+      isDefault: false,
+    },
+  });
+
+  await tx.user.update({
+    where: {
+      id: legacyUserId,
+    },
+    data: {
+      condominiumId,
+      residentId,
+    },
+  });
+
+  return formalLink;
 }
 
-
-
-/* =========================================================
-   PATCH - ATUALIZAR MORADOR
-   ========================================================= */
-
-export async function PATCH(req: Request, context: RouteContext) {
+export async function GET(_req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminContextUser();
-    const { id } = await context.params;
-    const body = await req.json();
+    const adminApiAccess = await requireActiveAdminApiAccess();
 
-    const residentId = String(id || "").trim();
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
 
-    if (!residentId) {
+    const user = await getAdminContextUser();
+    const validation = validateAdminContext(user);
+
+    if (!validation.ok) {
       return NextResponse.json(
-        { error: "ID do morador não informado." },
-        { status: 400 }
+        { error: validation.message },
+        { status: validation.status }
       );
     }
 
-    const contextValidation = validateAdminContext(user);
-
-    if (!contextValidation.ok) {
-      return NextResponse.json(
-        { error: contextValidation.message },
-        { status: contextValidation.status }
-      );
-    }
-
-    const administratorId = getAdministratorIdFromContext(user);
+    const administratorId = user.activeAccess?.administratorId;
 
     if (!administratorId) {
       return NextResponse.json(
@@ -306,9 +599,91 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-    const moradorAtual = await db.resident.findFirst({
+    await requireModuleAccess({
+      administratorId,
+      moduleSlug: MODULE_SLUGS.MORADORES,
+    });
+
+    const { id } = await context.params;
+
+    const morador = await db.resident.findFirst({
       where: {
-        id: residentId,
+        id,
+        condominium: {
+          administratorId,
+        },
+      },
+      include: residentInclude,
+    });
+
+    if (!morador) {
+      return NextResponse.json(
+        { error: "Morador não encontrado ou acesso negado." },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json(
+      formatMoradorResponse(morador as ResidentWithRelations)
+    );
+  } catch (error: unknown) {
+    console.error("ERRO AO CONSULTAR MORADOR:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
+
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+    }
+
+    return NextResponse.json(
+      { error: "Erro ao consultar morador." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(req: Request, context: RouteContext) {
+  try {
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
+    const validation = validateAdminContext(user);
+
+    if (!validation.ok) {
+      return NextResponse.json(
+        { error: validation.message },
+        { status: validation.status }
+      );
+    }
+
+    const administratorId = user.activeAccess?.administratorId;
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
+
+    await requireModuleAccess({
+      administratorId,
+      moduleSlug: MODULE_SLUGS.MORADORES,
+    });
+
+    const { id } = await context.params;
+    const body = (await req.json()) as RequestBody;
+
+    const current = await db.resident.findFirst({
+      where: {
+        id,
         condominium: {
           administratorId,
         },
@@ -319,69 +694,69 @@ export async function PATCH(req: Request, context: RouteContext) {
         user: {
           select: {
             id: true,
-            name: true,
-            email: true,
-            role: true,
             isActive: true,
           },
+        },
+        unitPersonLinks: {
+          orderBy: [
+            {
+              isPrimary: "desc",
+            },
+            {
+              createdAt: "asc",
+            },
+          ],
+          take: 1,
         },
       },
     });
 
-    if (!moradorAtual) {
+    if (!current) {
       return NextResponse.json(
         { error: "Morador não encontrado ou acesso negado." },
         { status: 404 }
       );
     }
 
+    const unitId =
+      body.unitId !== undefined ? cleanText(body.unitId) : current.unitId;
 
+    if (!unitId) {
+      return NextResponse.json(
+        { error: "Unidade é obrigatória." },
+        { status: 400 }
+      );
+    }
 
-    /* =========================================================
-       DEFINIR UNIDADE FINAL
-
-       O frontend não decide livremente o condomínio.
-       O condomínio final sempre vem da unidade validada.
-       ========================================================= */
-
-    let unitId = moradorAtual.unitId;
-    let condominiumId = moradorAtual.condominiumId;
-
-    if (body.unitId !== undefined) {
-      if (!body.unitId) {
-        return NextResponse.json(
-          { error: "Unidade é obrigatória." },
-          { status: 400 }
-        );
-      }
-
-      const unidade = await db.unit.findFirst({
-        where: {
-          id: body.unitId,
-          condominium: {
-            administratorId,
+    const unidade = await db.unit.findFirst({
+      where: {
+        id: unitId,
+        status: Status.ACTIVE,
+        condominium: {
+          administratorId,
+          status: Status.ACTIVE,
+          administrator: {
+            status: Status.ACTIVE,
           },
         },
-        include: {
-          condominium: true,
+      },
+      include: {
+        condominium: true,
+      },
+    });
+
+    if (!unidade) {
+      return NextResponse.json(
+        {
+          error:
+            "Unidade não encontrada, inativa, fora da carteira ou com condomínio/administradora inativos.",
         },
-      });
-
-      if (!unidade) {
-        return NextResponse.json(
-          { error: "Unidade não encontrada ou acesso negado." },
-          { status: 403 }
-        );
-      }
-
-      unitId = unidade.id;
-      condominiumId = unidade.condominiumId;
+        { status: 403 }
+      );
     }
 
     const name =
-      body.name !== undefined
-        ? normalizeText(body.name)
-        : moradorAtual.name;
+      body.name !== undefined ? normalizeText(body.name) : current.name;
 
     if (!name) {
       return NextResponse.json(
@@ -395,29 +770,55 @@ export async function PATCH(req: Request, context: RouteContext) {
         ? body.cpf
           ? onlyDigits(body.cpf)
           : null
-        : moradorAtual.cpf;
+        : current.cpf;
 
     const email =
-      body.email !== undefined
-        ? normalizeEmail(body.email)
-        : moradorAtual.email;
+      body.email !== undefined ? normalizeEmail(body.email) : current.email;
 
     const phone =
       body.phone !== undefined
         ? body.phone
           ? onlyDigits(body.phone)
           : null
-        : moradorAtual.phone;
+        : current.phone;
 
-    const residentType =
-      body.residentType !== undefined
-        ? normalizeText(body.residentType)
-        : moradorAtual.residentType;
+    const currentLink =
+      current.unitPersonLinks[0] || null;
 
-    const status =
-      body.status !== undefined
-        ? normalizeStatus(body.status)
-        : moradorAtual.status;
+    const fallbackLinkType =
+      currentLink?.linkType ||
+      residentTypeToLinkType(current.residentType);
+
+    const linkType = normalizeLinkType(body.linkType, fallbackLinkType);
+    const residentType = linkTypeToResidentType(linkType);
+    const status = normalizeStatus(body.status, current.status);
+    const defaultPermissions = getDefaultLinkPermissions(linkType);
+
+    const canVote = normalizeBoolean(
+      body.canVote,
+      currentLink?.canVote ?? defaultPermissions.canVote
+    );
+
+    const canOpenTickets = normalizeBoolean(
+      body.canOpenTickets,
+      currentLink?.canOpenTickets ?? defaultPermissions.canOpenTickets
+    );
+
+    const receivesNotifications = normalizeBoolean(
+      body.receivesNotifications,
+      currentLink?.receivesNotifications ??
+        defaultPermissions.receivesNotifications
+    );
+
+    const isPrimary = normalizeBoolean(
+      body.isPrimary,
+      currentLink?.isPrimary ?? defaultPermissions.isPrimary
+    );
+
+    const formalLinkNotes =
+      body.formalLinkNotes !== undefined
+        ? normalizeText(body.formalLinkNotes)
+        : currentLink?.notes || null;
 
     if (cpf && !isValidCpfFormat(cpf)) {
       return NextResponse.json(
@@ -433,26 +834,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       );
     }
 
-    if (!isValidStatus(status)) {
-      return NextResponse.json(
-        { error: "Status inválido." },
-        { status: 400 }
-      );
-    }
-
-    if (!isValidResidentType(residentType)) {
-      return NextResponse.json(
-        { error: "Tipo de morador inválido." },
-        { status: 400 }
-      );
-    }
-
     if (cpf) {
-      const existing = await db.resident.findFirst({
+      const existingCpf = await db.resident.findFirst({
         where: {
           cpf,
           NOT: {
-            id: residentId,
+            id: current.id,
           },
         },
         select: {
@@ -460,69 +847,84 @@ export async function PATCH(req: Request, context: RouteContext) {
         },
       });
 
-      if (existing) {
+      if (existingCpf) {
         return NextResponse.json(
-          { error: "Já existe outro morador cadastrado com esse CPF." },
+          { error: "Já existe um morador cadastrado com esse CPF." },
           { status: 409 }
         );
       }
     }
 
-    const morador = await db.resident.update({
-      where: {
-        id: residentId,
-      },
-      data: {
-        condominiumId,
-        unitId,
+    await db.$transaction(async (tx) => {
+      await tx.resident.update({
+        where: {
+          id: current.id,
+        },
+        data: {
+          condominiumId: unidade.condominiumId,
+          unitId: unidade.id,
+          name,
+          cpf,
+          email,
+          phone,
+          residentType,
+          status,
+        },
+      });
 
-        name,
-        cpf,
-        email,
-        phone,
-        residentType,
+      await syncResidentFormalUnitLink({
+        tx,
+        residentId: current.id,
+        legacyUserId: current.user?.id || null,
+        administratorId,
+        condominiumId: unidade.condominiumId,
+        condominiumName: unidade.condominium.name,
+        unitId: unidade.id,
+        unitBlock: unidade.block,
+        unitNumber: unidade.unitNumber,
+        linkType,
         status,
-      },
-      include: {
-        condominium: true,
-        unit: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-            isActive: true,
-          },
-        },
-        tickets: {
-          select: {
-            id: true,
-            status: true,
-          },
-        },
-      },
+        canVote,
+        canOpenTickets,
+        receivesNotifications,
+        isPrimary,
+        notes: formalLinkNotes,
+      });
     });
 
-    return NextResponse.json(formatMoradorResponse(morador));
-  } catch (error: unknown) {
-    console.error("ERRO AO ATUALIZAR MORADOR:", error);
+    const morador = await db.resident.findUnique({
+      where: {
+        id: current.id,
+      },
+      include: residentInclude,
+    });
 
-    if (error instanceof Error && error.message === "UNAUTHORIZED") {
+    if (!morador) {
       return NextResponse.json(
-        { error: "Não autorizado." },
-        { status: 401 }
+        { error: "Morador atualizado, mas não foi possível recarregar os dados." },
+        { status: 500 }
       );
     }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    return NextResponse.json(
+      formatMoradorResponse(morador as ResidentWithRelations)
+    );
+  } catch (error: unknown) {
+    console.error("ERRO AO ATUALIZAR MORADOR:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
+
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
+      return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+    }
+
+    if (isPrismaKnownRequestError(error) && error.code === "P2002") {
       return NextResponse.json(
-        { error: "Já existe um morador cadastrado com esses dados." },
+        { error: "Já existe um morador cadastrado com esse CPF." },
         { status: 409 }
       );
     }

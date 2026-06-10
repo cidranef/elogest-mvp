@@ -5,6 +5,7 @@ import {
   canUseEloGestAreaAccess,
   getActiveUserAccessFromCookies,
   getDefaultHomeForAccess,
+  type ActiveUserAccess,
 } from "@/lib/user-access";
 
 
@@ -33,6 +34,12 @@ import {
    - Perfis de portal são redirecionados para /portal.
    - Sem perfil ativo, o usuário volta para /contexto.
 
+   ETAPA 47 — PLANOS, MÓDULOS E LIMITES
+
+   Correção:
+   - JSX não é mais construído dentro do try/catch, evitando alerta do
+     React Compiler em react-hooks/error-boundaries.
+
    Observação:
    /elogest é a área interna da dona da plataforma.
    Administradoras devem usar /admin.
@@ -48,18 +55,14 @@ export default async function EloGestLayout({
 }: {
   children: ReactNode;
 }) {
+  let activeAccess: ActiveUserAccess | null = null;
+
   try {
     const sessionUser = await getAuthUser();
 
-    const activeAccess = await getActiveUserAccessFromCookies({
+    activeAccess = await getActiveUserAccessFromCookies({
       userId: sessionUser.id,
     });
-
-    if (!canUseEloGestAreaAccess(activeAccess)) {
-      redirect(getDefaultHomeForAccess(activeAccess));
-    }
-
-    return <>{children}</>;
   } catch (error) {
     if (isAuthError(error)) {
       redirect("/login");
@@ -67,4 +70,10 @@ export default async function EloGestLayout({
 
     throw error;
   }
+
+  if (!canUseEloGestAreaAccess(activeAccess)) {
+    redirect(getDefaultHomeForAccess(activeAccess));
+  }
+
+  return <>{children}</>;
 }

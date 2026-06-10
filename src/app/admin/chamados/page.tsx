@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
@@ -15,16 +22,26 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
 
    ETAPA 41.4.3 — PADRONIZAÇÃO VISUAL DOS TÍTULOS
 
-   Ajustes desta revisão:
-   - Adicionado helper formatDisplayTitle().
-   - Títulos dos chamados passam a ser exibidos em padrão visual
-     mais elegante, evitando CAIXA ALTA inconsistente.
-   - A alteração é apenas visual: não altera o dado salvo no banco.
-   - Mantida a estrutura ultra limpa aprovada para a fila.
-   - Mantida toda a lógica funcional aprovada.
+   ETAPA 45.4 — FILTRO AUTOMÁTICO POR CONDOMÍNIO
+   - Página passa a ler /admin/chamados?condominio=ID.
+   - O filtro de condomínio é aplicado automaticamente ao abrir a tela.
+   - O botão Novo chamado já pré-seleciona o condomínio filtrado.
+   - Adicionado aviso visual de filtro vindo do detalhe do condomínio.
+   - Adicionado filtro de condomínio na área de filtros.
+   - Botão limpar filtros remove também o parâmetro da URL.
+   - Métricas passam a respeitar o filtro de condomínio.
+   - Removidos tipos any em payloads.
+   - Ajustado Date.now para evitar erro react-hooks/purity.
+   - Ajustado carregamento inicial para evitar chamada direta de função
+     que altera estado dentro do useEffect.
+   - Ajustado applyUrlFilters para não acessar labels antes da declaração.
    ========================================================= */
 
 
+
+/* =========================================================
+   CONSTANTES
+   ========================================================= */
 
 const TICKET_CATEGORIES = [
   "Manutenção",
@@ -42,31 +59,73 @@ const TICKET_CATEGORIES = [
 
 
 
-type TicketScope = "UNIT" | "CONDOMINIUM";
-
-
-
-const emptyTicketForm = {
-  scope: "CONDOMINIUM" as TicketScope,
-  condominiumId: "",
-  unitId: "",
-  residentId: "",
-  assignedToUserId: "",
-  title: "",
-  description: "",
-  category: "",
-  priority: "MEDIUM",
-};
-
-
-
 const ACTIVE_TICKET_STATUSES = ["OPEN", "IN_PROGRESS"];
+
+const REFERENCE_NOW_MS = Date.now();
 
 
 
 /* =========================================================
-   INTERFACES
+   TYPES
    ========================================================= */
+
+type TicketScope = "UNIT" | "CONDOMINIUM";
+
+type FilterType =
+  | "ALL"
+  | "UNASSIGNED"
+  | "OPEN"
+  | "IN_PROGRESS"
+  | "RESOLVED"
+  | "CANCELED"
+  | "OVERDUE"
+  | "WARNING";
+
+type PriorityFilter = "ALL" | "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+
+
+
+interface TicketFormState {
+  scope: TicketScope;
+  condominiumId: string;
+  unitId: string;
+  residentId: string;
+  assignedToUserId: string;
+  title: string;
+  description: string;
+  category: string;
+  priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+}
+
+
+
+interface CreateTicketPayload {
+  scope: TicketScope;
+  condominiumId: string;
+  title: string;
+  description: string;
+  category: string | null;
+  priority: string;
+  unitId?: string;
+  residentId?: string;
+  assignedToUserId?: string;
+}
+
+
+
+interface UpdateTicketPayload {
+  status?: string;
+  resolutionComment?: string;
+  assignedToUserId?: string;
+}
+
+
+
+interface ApiErrorResponse {
+  error?: string;
+}
+
+
 
 interface Usuario {
   id: string;
@@ -165,19 +224,355 @@ interface Ticket {
 
 
 
-type FilterType =
-  | "ALL"
-  | "UNASSIGNED"
-  | "OPEN"
-  | "IN_PROGRESS"
-  | "RESOLVED"
-  | "CANCELED"
-  | "OVERDUE"
-  | "WARNING";
+const emptyTicketForm: TicketFormState = {
+  scope: "CONDOMINIUM",
+  condominiumId: "",
+  unitId: "",
+  residentId: "",
+  assignedToUserId: "",
+  title: "",
+  description: "",
+  category: "",
+  priority: "MEDIUM",
+};
 
 
 
-type PriorityFilter = "ALL" | "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+/* =========================================================
+   HELPERS GERAIS
+   ========================================================= */
+
+function getApiErrorMessage(data: unknown, fallback: string) {
+  if (typeof data === "object" && data !== null && "error" in data) {
+    const error = (data as ApiErrorResponse).error;
+
+    if (error) {
+      return error;
+    }
+  }
+
+  return fallback;
+}
+
+
+
+function statusLabel(status?: string | null) {
+  return (
+    {
+      OPEN: "Aberto",
+      IN_PROGRESS: "Em andamento",
+      RESOLVED: "Resolvido",
+      CANCELED: "Cancelado",
+    }[status || ""] ||
+    status ||
+    "-"
+  );
+}
+
+
+
+function priorityLabel(priority?: string | null) {
+  return (
+    {
+      LOW: "Baixa",
+      MEDIUM: "Média",
+      HIGH: "Alta",
+      URGENT: "Urgente",
+    }[priority || ""] || "-"
+  );
+}
+
+
+
+function roleLabel(role?: string | null) {
+  return (
+    {
+      SUPER_ADMIN: "Super Admin",
+      ADMINISTRADORA: "Administradora",
+      SINDICO: "Síndico",
+      MORADOR: "Morador",
+      PROPRIETARIO: "Proprietário",
+    }[role || ""] ||
+    role ||
+    "-"
+  );
+}
+
+
+
+function residentTypeLabel(type?: string | null) {
+  return (
+    {
+      PROPRIETARIO: "Proprietário",
+      INQUILINO: "Inquilino",
+      FAMILIAR: "Familiar",
+      RESPONSAVEL: "Responsável",
+      OUTRO: "Outro",
+    }[type || ""] ||
+    type ||
+    ""
+  );
+}
+
+
+
+function formatDisplayTitle(value?: string | null) {
+  const text = String(value || "").trim();
+
+  if (!text) return "-";
+
+  const smallWords = new Set([
+    "a",
+    "à",
+    "ao",
+    "as",
+    "às",
+    "o",
+    "os",
+    "de",
+    "da",
+    "das",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "no",
+    "na",
+    "nos",
+    "nas",
+    "com",
+    "para",
+    "por",
+    "sem",
+    "sob",
+    "sobre",
+  ]);
+
+  return text
+    .toLocaleLowerCase("pt-BR")
+    .split(" ")
+    .map((word, index) => {
+      if (!word) return word;
+
+      if (index > 0 && smallWords.has(word)) {
+        return word;
+      }
+
+      return word.charAt(0).toLocaleUpperCase("pt-BR") + word.slice(1);
+    })
+    .join(" ");
+}
+
+
+
+function isActiveTicket(ticket: Ticket) {
+  return ACTIVE_TICKET_STATUSES.includes(ticket.status);
+}
+
+
+
+function getSlaLimitHours(priority?: string | null) {
+  if (priority === "URGENT") return 4;
+  if (priority === "HIGH") return 24;
+  if (priority === "MEDIUM") return 48;
+
+  return 72;
+}
+
+
+
+function getSla(ticket: Ticket) {
+  if (ticket.status === "RESOLVED" || ticket.status === "CANCELED") {
+    return {
+      status: "DONE",
+      label: "Prazo encerrado",
+      className: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
+    };
+  }
+
+  const createdAt = new Date(ticket.createdAt).getTime();
+  const elapsedHours = Math.floor(
+    (REFERENCE_NOW_MS - createdAt) / (1000 * 60 * 60)
+  );
+  const remainingHours = getSlaLimitHours(ticket.priority) - elapsedHours;
+  const warningThreshold = Math.max(
+    2,
+    Math.ceil(getSlaLimitHours(ticket.priority) * 0.25)
+  );
+
+  if (remainingHours <= 0) {
+    return {
+      status: "OVERDUE",
+      label: `Prazo vencido há ${Math.abs(remainingHours)}h`,
+      className: "border-red-200 bg-red-50 text-red-700",
+    };
+  }
+
+  if (remainingHours <= warningThreshold) {
+    return {
+      status: "WARNING",
+      label: `Prazo vence em ${remainingHours}h`,
+      className: "border-orange-200 bg-orange-50 text-orange-700",
+    };
+  }
+
+  return {
+    status: "OK",
+    label: `${remainingHours}h restantes`,
+    className: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
+  };
+}
+
+
+
+function statusClass(status: string) {
+  return (
+    {
+      OPEN: "border-[#DDE5DF] bg-white text-[#17211B]",
+      IN_PROGRESS: "border-yellow-200 bg-yellow-50 text-yellow-800",
+      RESOLVED: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
+      CANCELED: "border-red-200 bg-red-50 text-red-700",
+    }[status] || "border-[#DDE5DF] bg-[#F6F8F7] text-[#5E6B63]"
+  );
+}
+
+
+
+function priorityBadgeClass(priority?: string | null) {
+  return (
+    {
+      LOW: "border-[#DDE5DF] bg-white text-[#5E6B63]",
+      MEDIUM: "border-[#DDE5DF] bg-white text-[#5E6B63]",
+      HIGH: "border-orange-200 bg-orange-50 text-orange-700",
+      URGENT: "border-red-200 bg-red-50 text-red-700",
+    }[priority || ""] || "border-[#DDE5DF] bg-white text-[#5E6B63]"
+  );
+}
+
+
+
+function shouldShowSlaBadge(ticket: Ticket) {
+  const sla = getSla(ticket);
+
+  return sla.status === "OVERDUE" || sla.status === "WARNING";
+}
+
+
+
+function getTicketScopeLabel(ticket: Ticket) {
+  if (ticket.scope === "CONDOMINIUM") {
+    return "Condomínio";
+  }
+
+  return "Unidade";
+}
+
+
+
+function getTicketLocationLabel(ticket: Ticket) {
+  if (ticket.scope === "CONDOMINIUM") {
+    return "Condomínio / Área comum";
+  }
+
+  if (ticket.unit) {
+    return `Unidade ${
+      ticket.unit.block ? ticket.unit.block + " - " : ""
+    }${ticket.unit.unitNumber}`;
+  }
+
+  return "Condomínio / Área comum";
+}
+
+
+
+function getOriginLine(ticket: Ticket) {
+  const senderName =
+    ticket.resident?.name ||
+    ticket.createdByUser?.name ||
+    "Solicitante não identificado";
+
+  const condominiumName = ticket.condominium?.name || "Condomínio não informado";
+  const location = getTicketLocationLabel(ticket);
+
+  return `Enviado por ${senderName} • ${condominiumName} • ${location}`;
+}
+
+
+
+function getUnitLabel(unit: Unidade) {
+  return `${unit.block ? unit.block + " - " : ""}${unit.unitNumber}`;
+}
+
+
+
+function getShortDescription(description?: string | null) {
+  const text = String(description || "").trim();
+
+  if (!text) return "Sem descrição informada.";
+
+  if (text.length <= 180) return text;
+
+  return `${text.slice(0, 180).trim()}...`;
+}
+
+
+
+function getLatestLog(ticket: Ticket) {
+  const logs = ticket.logs || [];
+
+  if (logs.length === 0) return null;
+
+  return [...logs].sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  )[0];
+}
+
+
+
+function getLatestMovementLabel(ticket: Ticket) {
+  const latestLog = getLatestLog(ticket);
+
+  if (!latestLog) {
+    return "Sem movimentação recente.";
+  }
+
+  if (latestLog.action === "CREATED") return "Chamado criado.";
+  if (latestLog.action === "STATUS_CHANGED") return "Status atualizado.";
+  if (latestLog.action === "ASSIGNED") return "Responsável atribuído.";
+  if (latestLog.action === "COMMENT_PUBLIC") return "Resposta pública registrada.";
+  if (latestLog.action === "COMMENT_INTERNAL") return "Comentário interno registrado.";
+  if (latestLog.action === "COMMENT") return "Comentário registrado.";
+  if (latestLog.action === "ATTACHMENT_ADDED") return "Anexo adicionado.";
+  if (latestLog.action === "ATTACHMENT_REMOVED") return "Anexo removido.";
+
+  return "Movimentação registrada.";
+}
+
+
+
+function getFilterLabel(currentFilter: FilterType) {
+  if (currentFilter === "ALL") return "Todos";
+  if (currentFilter === "UNASSIGNED") return "Sem responsável";
+  if (currentFilter === "OPEN") return "Abertos";
+  if (currentFilter === "IN_PROGRESS") return "Em andamento";
+  if (currentFilter === "RESOLVED") return "Resolvidos";
+  if (currentFilter === "CANCELED") return "Cancelados";
+  if (currentFilter === "OVERDUE") return "Prazo vencido";
+  if (currentFilter === "WARNING") return "Próximo do prazo";
+
+  return currentFilter;
+}
+
+
+
+function isValidCondominioFilter(value: string, condominios: Condominio[]) {
+  if (value === "ALL") {
+    return true;
+  }
+
+  return condominios.some((condominio) => condominio.id === value);
+}
 
 
 
@@ -187,6 +582,7 @@ type PriorityFilter = "ALL" | "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 
 export default function ChamadosPage() {
   const searchParams = useSearchParams();
+  const initialCondominioFilter = searchParams.get("condominio") || "ALL";
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
@@ -202,6 +598,9 @@ export default function ChamadosPage() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("ALL");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [responsibleFilter, setResponsibleFilter] = useState("ALL");
+  const [condominioFilter, setCondominioFilter] = useState(
+    initialCondominioFilter
+  );
   const [urlFilterMessage, setUrlFilterMessage] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -209,7 +608,11 @@ export default function ChamadosPage() {
   const [updatingTicketId, setUpdatingTicketId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [form, setForm] = useState(emptyTicketForm);
+  const [form, setForm] = useState<TicketFormState>({
+    ...emptyTicketForm,
+    condominiumId:
+      initialCondominioFilter !== "ALL" ? initialCondominioFilter : "",
+  });
 
 
 
@@ -217,182 +620,21 @@ export default function ChamadosPage() {
      MENSAGENS
      ========================================================= */
 
-  function showSuccess(message: string) {
+  const showSuccess = useCallback((message: string) => {
     setSuccess(message);
     setError("");
 
     window.setTimeout(() => {
       setSuccess("");
     }, 4500);
-  }
+  }, []);
 
 
 
-  function showError(message: string) {
+  const showError = useCallback((message: string) => {
     setError(message);
     setSuccess("");
-  }
-
-
-
-  /* =========================================================
-     CARREGAMENTO DE DADOS
-     ========================================================= */
-
-  async function loadCurrentUser() {
-    try {
-      const res = await fetch("/api/admin/me", { cache: "no-store" });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setCurrentUser(null);
-        return;
-      }
-
-      setCurrentUser(data);
-    } catch (err) {
-      console.error(err);
-      setCurrentUser(null);
-    }
-  }
-
-
-
-  async function loadActiveAccess() {
-    try {
-      const res = await fetch("/api/user/active-access", {
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setActiveAccess(null);
-        return;
-      }
-
-      setActiveAccess(data?.activeAccess || null);
-    } catch (err) {
-      console.error(err);
-      setActiveAccess(null);
-    }
-  }
-
-
-
-  async function loadTickets() {
-    try {
-      setError("");
-
-      const res = await fetch("/api/admin/chamados", { cache: "no-store" });
-      const data = await res.json();
-
-      if (!res.ok) {
-        showError(data?.error || "Erro ao carregar chamados");
-        setTickets([]);
-        return;
-      }
-
-      if (!Array.isArray(data)) {
-        showError("Resposta inválida da API.");
-        setTickets([]);
-        return;
-      }
-
-      setTickets(data);
-    } catch (err) {
-      console.error(err);
-      showError("Erro ao carregar chamados");
-      setTickets([]);
-    }
-  }
-
-
-
-  async function loadMeta() {
-    try {
-      const res = await fetch("/api/admin/chamados/meta", {
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setCondominios([]);
-        setUsuarios([]);
-        return;
-      }
-
-      setCondominios(Array.isArray(data.condominiums) ? data.condominiums : []);
-      setUsuarios(Array.isArray(data.users) ? data.users : []);
-    } catch (err) {
-      console.error(err);
-      setCondominios([]);
-      setUsuarios([]);
-    }
-  }
-
-
-
-  /* =========================================================
-     FILTROS VINDOS DA URL / DASHBOARD
-     ========================================================= */
-
-  function applyUrlFilters() {
-    const status = searchParams.get("status");
-    const priority = searchParams.get("priority");
-    const assigned = searchParams.get("assigned");
-    const sla = searchParams.get("sla");
-
-    const appliedMessages: string[] = [];
-
-    setFilter("ALL");
-    setPriorityFilter("ALL");
-    setCategoryFilter("ALL");
-    setResponsibleFilter("ALL");
-    setSearchTerm("");
-
-    if (
-      status === "OPEN" ||
-      status === "IN_PROGRESS" ||
-      status === "RESOLVED" ||
-      status === "CANCELED"
-    ) {
-      setFilter(status as FilterType);
-      appliedMessages.push(`Status: ${statusLabel(status)}`);
-    }
-
-    if (
-      priority === "LOW" ||
-      priority === "MEDIUM" ||
-      priority === "HIGH" ||
-      priority === "URGENT"
-    ) {
-      setPriorityFilter(priority);
-      appliedMessages.push(`Prioridade: ${priorityLabel(priority)}`);
-    }
-
-    if (assigned === "none") {
-      setFilter("UNASSIGNED");
-      appliedMessages.push("Sem responsável");
-    }
-
-    if (sla === "overdue") {
-      setFilter("OVERDUE");
-      appliedMessages.push("Prazo vencido");
-    }
-
-    if (sla === "warning" || sla === "near_due") {
-      setFilter("WARNING");
-      appliedMessages.push("Próximo do prazo");
-    }
-
-    setUrlFilterMessage(
-      appliedMessages.length > 0
-        ? `Filtro vindo do dashboard aplicado: ${appliedMessages.join(" • ")}.`
-        : ""
-    );
-  }
+  }, []);
 
 
 
@@ -434,11 +676,126 @@ export default function ChamadosPage() {
 
 
   /* =========================================================
+     CARREGAR CHAMADOS PARA RELOADS
+     ========================================================= */
+
+  const loadTickets = useCallback(async () => {
+    try {
+      setError("");
+
+      const res = await fetch("/api/admin/chamados", { cache: "no-store" });
+      const data: unknown = await res.json();
+
+      if (!res.ok) {
+        showError(getApiErrorMessage(data, "Erro ao carregar chamados"));
+        setTickets([]);
+        return;
+      }
+
+      if (!Array.isArray(data)) {
+        showError("Resposta inválida da API.");
+        setTickets([]);
+        return;
+      }
+
+      setTickets(data as Ticket[]);
+    } catch (err) {
+      console.error(err);
+      showError("Erro ao carregar chamados");
+      setTickets([]);
+    }
+  }, [showError]);
+
+
+
+  /* =========================================================
+     FILTROS VINDOS DA URL / DASHBOARD / CONDOMÍNIO
+     ========================================================= */
+
+  const applyUrlFilters = useCallback(() => {
+    const status = searchParams.get("status");
+    const priority = searchParams.get("priority");
+    const assigned = searchParams.get("assigned");
+    const sla = searchParams.get("sla");
+    const condominium = searchParams.get("condominio");
+
+    const appliedMessages: string[] = [];
+
+    setFilter("ALL");
+    setPriorityFilter("ALL");
+    setCategoryFilter("ALL");
+    setResponsibleFilter("ALL");
+    setSearchTerm("");
+
+    if (condominium) {
+      setCondominioFilter(condominium);
+
+      setForm((prev) => ({
+        ...prev,
+        condominiumId: condominium,
+        unitId: "",
+        residentId: "",
+      }));
+
+      appliedMessages.push("Condomínio selecionado");
+    } else {
+      setCondominioFilter("ALL");
+    }
+
+    if (
+      status === "OPEN" ||
+      status === "IN_PROGRESS" ||
+      status === "RESOLVED" ||
+      status === "CANCELED"
+    ) {
+      setFilter(status as FilterType);
+      appliedMessages.push(`Status: ${statusLabel(status)}`);
+    }
+
+    if (
+      priority === "LOW" ||
+      priority === "MEDIUM" ||
+      priority === "HIGH" ||
+      priority === "URGENT"
+    ) {
+      setPriorityFilter(priority);
+      appliedMessages.push(`Prioridade: ${priorityLabel(priority)}`);
+    }
+
+    if (assigned === "none") {
+      setFilter("UNASSIGNED");
+      appliedMessages.push("Sem responsável");
+    }
+
+    if (sla === "overdue") {
+      setFilter("OVERDUE");
+      appliedMessages.push("Prazo vencido");
+    }
+
+    if (sla === "warning" || sla === "near_due") {
+      setFilter("WARNING");
+      appliedMessages.push("Próximo do prazo");
+    }
+
+    setUrlFilterMessage(
+      appliedMessages.length > 0
+        ? `Filtro aplicado: ${appliedMessages.join(" • ")}.`
+        : ""
+    );
+  }, [searchParams]);
+
+
+
+  /* =========================================================
      MODAL
      ========================================================= */
 
   function openCreateModal() {
-    setForm(emptyTicketForm);
+    setForm({
+      ...emptyTicketForm,
+      condominiumId: condominioFilter !== "ALL" ? condominioFilter : "",
+    });
+
     setModalOpen(true);
   }
 
@@ -447,7 +804,11 @@ export default function ChamadosPage() {
   function closeCreateModal() {
     if (creating) return;
 
-    setForm(emptyTicketForm);
+    setForm({
+      ...emptyTicketForm,
+      condominiumId: condominioFilter !== "ALL" ? condominioFilter : "",
+    });
+
     setModalOpen(false);
   }
 
@@ -457,11 +818,13 @@ export default function ChamadosPage() {
      CRIAÇÃO DE CHAMADO ADMINISTRATIVO
      ========================================================= */
 
-  async function createTicket(e: React.FormEvent) {
+  async function createTicket(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!canCreateAdminTicket()) {
-      alert("Este perfil de acesso não possui permissão para criar chamado administrativo.");
+      alert(
+        "Este perfil de acesso não possui permissão para criar chamado administrativo."
+      );
       return;
     }
 
@@ -478,7 +841,7 @@ export default function ChamadosPage() {
     try {
       setCreating(true);
 
-      const payload: any = {
+      const payload: CreateTicketPayload = {
         scope: form.scope,
         condominiumId: form.condominiumId,
         title: form.title.trim(),
@@ -505,14 +868,18 @@ export default function ChamadosPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao criar chamado.");
+        alert(getApiErrorMessage(data, "Erro ao criar chamado."));
         return;
       }
 
-      setForm(emptyTicketForm);
+      setForm({
+        ...emptyTicketForm,
+        condominiumId: condominioFilter !== "ALL" ? condominioFilter : "",
+      });
+
       setModalOpen(false);
       setFilter("OPEN");
 
@@ -533,7 +900,7 @@ export default function ChamadosPage() {
      ATUALIZAÇÃO DE CHAMADO
      ========================================================= */
 
-  async function updateTicket(id: string, payload: any) {
+  async function updateTicket(id: string, payload: UpdateTicketPayload) {
     try {
       setUpdatingTicketId(id);
 
@@ -544,8 +911,8 @@ export default function ChamadosPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        alert(err.error || "Erro ao atualizar chamado.");
+        const err: unknown = await res.json();
+        alert(getApiErrorMessage(err, "Erro ao atualizar chamado."));
         return;
       }
 
@@ -611,31 +978,18 @@ export default function ChamadosPage() {
     setPriorityFilter("ALL");
     setCategoryFilter("ALL");
     setResponsibleFilter("ALL");
+    setCondominioFilter("ALL");
     setUrlFilterMessage("");
+
+    setForm((prev) => ({
+      ...prev,
+      condominiumId: "",
+      unitId: "",
+      residentId: "",
+    }));
 
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/admin/chamados");
-    }
-  }
-
-
-
-  /* =========================================================
-     CARREGAMENTO INICIAL
-     ========================================================= */
-
-  async function loadInitialData() {
-    try {
-      setLoading(true);
-
-      await Promise.all([
-        loadActiveAccess(),
-        loadTickets(),
-        loadMeta(),
-        loadCurrentUser(),
-      ]);
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -646,16 +1000,160 @@ export default function ChamadosPage() {
      ========================================================= */
 
   useEffect(() => {
-    loadInitialData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let isMounted = true;
+
+    Promise.all([
+      fetch("/api/user/active-access", {
+        cache: "no-store",
+      }).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+
+      fetch("/api/admin/chamados", {
+        cache: "no-store",
+      }).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+
+      fetch("/api/admin/chamados/meta", {
+        cache: "no-store",
+      }).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+
+      fetch("/api/admin/me", {
+        cache: "no-store",
+      }).then(async (res) => {
+        const data: unknown = await res.json();
+
+        return {
+          ok: res.ok,
+          data,
+        };
+      }),
+    ])
+      .then(([activeAccessResponse, ticketsResponse, metaResponse, meResponse]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        if (activeAccessResponse.ok) {
+          const data = activeAccessResponse.data;
+
+          if (
+            typeof data === "object" &&
+            data !== null &&
+            "activeAccess" in data
+          ) {
+            setActiveAccess((data as { activeAccess?: ActiveAccess }).activeAccess || null);
+          } else {
+            setActiveAccess(null);
+          }
+        } else {
+          setActiveAccess(null);
+        }
+
+        if (!ticketsResponse.ok) {
+          showError(getApiErrorMessage(ticketsResponse.data, "Erro ao carregar chamados"));
+          setTickets([]);
+        } else if (!Array.isArray(ticketsResponse.data)) {
+          showError("Resposta inválida da API.");
+          setTickets([]);
+        } else {
+          setTickets(ticketsResponse.data as Ticket[]);
+        }
+
+        if (metaResponse.ok && typeof metaResponse.data === "object" && metaResponse.data !== null) {
+          const metaData = metaResponse.data as {
+            condominiums?: Condominio[];
+            users?: Usuario[];
+          };
+
+          const condominiums = Array.isArray(metaData.condominiums)
+            ? metaData.condominiums
+            : [];
+
+          setCondominios(condominiums);
+          setUsuarios(Array.isArray(metaData.users) ? metaData.users : []);
+
+          if (
+            initialCondominioFilter !== "ALL" &&
+            !isValidCondominioFilter(initialCondominioFilter, condominiums)
+          ) {
+            setCondominioFilter("ALL");
+
+            setForm((prev) => ({
+              ...prev,
+              condominiumId: "",
+              unitId: "",
+              residentId: "",
+            }));
+
+            showError(
+              "O condomínio informado no filtro não foi encontrado nesta carteira."
+            );
+          }
+        } else {
+          setCondominios([]);
+          setUsuarios([]);
+        }
+
+        if (meResponse.ok && typeof meResponse.data === "object" && meResponse.data !== null) {
+          setCurrentUser(meResponse.data as Usuario);
+        } else {
+          setCurrentUser(null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!isMounted) {
+          return;
+        }
+
+        console.error(err);
+        showError("Erro ao carregar chamados.");
+        setTickets([]);
+        setCondominios([]);
+        setUsuarios([]);
+        setCurrentUser(null);
+        setActiveAccess(null);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [initialCondominioFilter, showError]);
 
 
 
   useEffect(() => {
-    applyUrlFilters();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+    const timer = window.setTimeout(() => {
+      applyUrlFilters();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [applyUrlFilters]);
 
 
 
@@ -668,6 +1166,19 @@ export default function ChamadosPage() {
       return !condominio.status || condominio.status === "ACTIVE";
     });
   }, [condominios]);
+
+
+
+  const selectedCondominioFilter = useMemo(() => {
+    if (condominioFilter === "ALL") {
+      return null;
+    }
+
+    return (
+      condominios.find((condominio) => condominio.id === condominioFilter) ||
+      null
+    );
+  }, [condominioFilter, condominios]);
 
 
 
@@ -766,312 +1277,16 @@ export default function ChamadosPage() {
 
 
   /* =========================================================
-     LABELS E HELPERS
+     BASE FILTRADA POR CONDOMÍNIO
      ========================================================= */
 
-  const statusLabel = (status?: string | null) =>
-    ({
-      OPEN: "Aberto",
-      IN_PROGRESS: "Em andamento",
-      RESOLVED: "Resolvido",
-      CANCELED: "Cancelado",
-    }[status || ""] || status || "-");
-
-
-
-  const priorityLabel = (priority?: string | null) =>
-    ({
-      LOW: "Baixa",
-      MEDIUM: "Média",
-      HIGH: "Alta",
-      URGENT: "Urgente",
-    }[priority || ""] || "-");
-
-
-
-  const roleLabel = (role?: string | null) =>
-    ({
-      SUPER_ADMIN: "Super Admin",
-      ADMINISTRADORA: "Administradora",
-      SINDICO: "Síndico",
-      MORADOR: "Morador",
-      PROPRIETARIO: "Proprietário",
-    }[role || ""] || role || "-");
-
-
-
-  const residentTypeLabel = (type?: string | null) =>
-    ({
-      PROPRIETARIO: "Proprietário",
-      INQUILINO: "Inquilino",
-      FAMILIAR: "Familiar",
-      RESPONSAVEL: "Responsável",
-      OUTRO: "Outro",
-    }[type || ""] || type || "");
-
-
-
-  function formatDisplayTitle(value?: string | null) {
-    const text = String(value || "").trim();
-
-    if (!text) return "-";
-
-    const smallWords = new Set([
-      "a",
-      "à",
-      "ao",
-      "as",
-      "às",
-      "o",
-      "os",
-      "de",
-      "da",
-      "das",
-      "do",
-      "dos",
-      "e",
-      "em",
-      "no",
-      "na",
-      "nos",
-      "nas",
-      "com",
-      "para",
-      "por",
-      "sem",
-      "sob",
-      "sobre",
-    ]);
-
-    return text
-      .toLocaleLowerCase("pt-BR")
-      .split(" ")
-      .map((word, index) => {
-        if (!word) return word;
-
-        if (index > 0 && smallWords.has(word)) {
-          return word;
-        }
-
-        return word.charAt(0).toLocaleUpperCase("pt-BR") + word.slice(1);
-      })
-      .join(" ");
-  }
-
-
-
-  function isActiveTicket(ticket: Ticket) {
-    return ACTIVE_TICKET_STATUSES.includes(ticket.status);
-  }
-
-
-
-  function getSlaLimitHours(priority?: string | null) {
-    if (priority === "URGENT") return 4;
-    if (priority === "HIGH") return 24;
-    if (priority === "MEDIUM") return 48;
-    return 72;
-  }
-
-
-
-  function getSla(ticket: Ticket) {
-    if (ticket.status === "RESOLVED" || ticket.status === "CANCELED") {
-      return {
-        status: "DONE",
-        label: "Prazo encerrado",
-        className: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
-      };
+  const condominiumFilteredTickets = useMemo(() => {
+    if (condominioFilter === "ALL") {
+      return tickets;
     }
 
-    const createdAt = new Date(ticket.createdAt).getTime();
-    const elapsedHours = Math.floor((Date.now() - createdAt) / (1000 * 60 * 60));
-    const remainingHours = getSlaLimitHours(ticket.priority) - elapsedHours;
-    const warningThreshold = Math.max(
-      2,
-      Math.ceil(getSlaLimitHours(ticket.priority) * 0.25)
-    );
-
-    if (remainingHours <= 0) {
-      return {
-        status: "OVERDUE",
-        label: `Prazo vencido há ${Math.abs(remainingHours)}h`,
-        className: "border-red-200 bg-red-50 text-red-700",
-      };
-    }
-
-    if (remainingHours <= warningThreshold) {
-      return {
-        status: "WARNING",
-        label: `Prazo vence em ${remainingHours}h`,
-        className: "border-orange-200 bg-orange-50 text-orange-700",
-      };
-    }
-
-    return {
-      status: "OK",
-      label: `${remainingHours}h restantes`,
-      className: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
-    };
-  }
-
-
-
-  const statusClass = (status: string) =>
-    ({
-      OPEN: "border-[#DDE5DF] bg-white text-[#17211B]",
-      IN_PROGRESS: "border-yellow-200 bg-yellow-50 text-yellow-800",
-      RESOLVED: "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]",
-      CANCELED: "border-red-200 bg-red-50 text-red-700",
-    }[status] || "border-[#DDE5DF] bg-[#F6F8F7] text-[#5E6B63]");
-
-
-
-  const priorityBadgeClass = (priority?: string | null) =>
-    ({
-      LOW: "border-[#DDE5DF] bg-white text-[#5E6B63]",
-      MEDIUM: "border-[#DDE5DF] bg-white text-[#5E6B63]",
-      HIGH: "border-orange-200 bg-orange-50 text-orange-700",
-      URGENT: "border-red-200 bg-red-50 text-red-700",
-    }[priority || ""] || "border-[#DDE5DF] bg-white text-[#5E6B63]");
-
-
-
-  function shouldShowSlaBadge(ticket: Ticket) {
-    const sla = getSla(ticket);
-
-    return sla.status === "OVERDUE" || sla.status === "WARNING";
-  }
-
-
-
-  function getTicketScopeLabel(ticket: Ticket) {
-    if (ticket.scope === "CONDOMINIUM") {
-      return "Condomínio";
-    }
-
-    return "Unidade";
-  }
-
-
-
-  function getTicketLocationLabel(ticket: Ticket) {
-    if (ticket.scope === "CONDOMINIUM") {
-      return "Condomínio / Área comum";
-    }
-
-    if (ticket.unit) {
-      return `Unidade ${
-        ticket.unit.block ? ticket.unit.block + " - " : ""
-      }${ticket.unit.unitNumber}`;
-    }
-
-    return "Condomínio / Área comum";
-  }
-
-
-
-  function getOriginLine(ticket: Ticket) {
-    const senderName =
-      ticket.resident?.name ||
-      ticket.createdByUser?.name ||
-      "Solicitante não identificado";
-
-    const condominiumName = ticket.condominium?.name || "Condomínio não informado";
-    const location = getTicketLocationLabel(ticket);
-
-    return `Enviado por ${senderName} • ${condominiumName} • ${location}`;
-  }
-
-
-
-  function getUnitLabel(unit: Unidade) {
-    return `${unit.block ? unit.block + " - " : ""}${unit.unitNumber}`;
-  }
-
-
-
-  function getShortDescription(description?: string | null) {
-    const text = String(description || "").trim();
-
-    if (!text) return "Sem descrição informada.";
-
-    if (text.length <= 180) return text;
-
-    return `${text.slice(0, 180).trim()}...`;
-  }
-
-
-
-  function getLatestLog(ticket: Ticket) {
-    const logs = ticket.logs || [];
-
-    if (logs.length === 0) return null;
-
-    return [...logs].sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    )[0];
-  }
-
-
-
-  function getLatestMovementLabel(ticket: Ticket) {
-    const latestLog = getLatestLog(ticket);
-
-    if (!latestLog) {
-      return "Sem movimentação recente.";
-    }
-
-    if (latestLog.action === "CREATED") {
-      return "Chamado criado.";
-    }
-
-    if (latestLog.action === "STATUS_CHANGED") {
-      return "Status atualizado.";
-    }
-
-    if (latestLog.action === "ASSIGNED") {
-      return "Responsável atribuído.";
-    }
-
-    if (latestLog.action === "COMMENT_PUBLIC") {
-      return "Resposta pública registrada.";
-    }
-
-    if (latestLog.action === "COMMENT_INTERNAL") {
-      return "Comentário interno registrado.";
-    }
-
-    if (latestLog.action === "COMMENT") {
-      return "Comentário registrado.";
-    }
-
-    if (latestLog.action === "ATTACHMENT_ADDED") {
-      return "Anexo adicionado.";
-    }
-
-    if (latestLog.action === "ATTACHMENT_REMOVED") {
-      return "Anexo removido.";
-    }
-
-    return "Movimentação registrada.";
-  }
-
-
-
-  function getFilterLabel(currentFilter: FilterType) {
-    if (currentFilter === "ALL") return "Todos";
-    if (currentFilter === "UNASSIGNED") return "Sem responsável";
-    if (currentFilter === "OPEN") return "Abertos";
-    if (currentFilter === "IN_PROGRESS") return "Em andamento";
-    if (currentFilter === "RESOLVED") return "Resolvidos";
-    if (currentFilter === "CANCELED") return "Cancelados";
-    if (currentFilter === "OVERDUE") return "Prazo vencido";
-    if (currentFilter === "WARNING") return "Próximo do prazo";
-
-    return currentFilter;
-  }
+    return tickets.filter((ticket) => ticket.condominium?.id === condominioFilter);
+  }, [tickets, condominioFilter]);
 
 
 
@@ -1080,28 +1295,30 @@ export default function ChamadosPage() {
      ========================================================= */
 
   const metrics = useMemo(() => {
-    const activeTickets = tickets.filter((ticket) => isActiveTicket(ticket));
+    const activeTickets = condominiumFilteredTickets.filter((ticket) =>
+      isActiveTicket(ticket)
+    );
 
     return {
-      total: tickets.length,
+      total: condominiumFilteredTickets.length,
       unassigned: activeTickets.filter((t) => !t.assignedToUser).length,
-      open: tickets.filter((t) => t.status === "OPEN").length,
-      progress: tickets.filter((t) => t.status === "IN_PROGRESS").length,
-      resolved: tickets.filter((t) => t.status === "RESOLVED").length,
-      canceled: tickets.filter((t) => t.status === "CANCELED").length,
+      open: condominiumFilteredTickets.filter((t) => t.status === "OPEN").length,
+      progress: condominiumFilteredTickets.filter((t) => t.status === "IN_PROGRESS").length,
+      resolved: condominiumFilteredTickets.filter((t) => t.status === "RESOLVED").length,
+      canceled: condominiumFilteredTickets.filter((t) => t.status === "CANCELED").length,
       overdue: activeTickets.filter((t) => getSla(t).status === "OVERDUE").length,
       warning: activeTickets.filter((t) => getSla(t).status === "WARNING").length,
     };
-  }, [tickets]);
+  }, [condominiumFilteredTickets]);
 
 
 
   const overdueTickets = useMemo(
     () =>
-      tickets.filter(
+      condominiumFilteredTickets.filter(
         (ticket) => isActiveTicket(ticket) && getSla(ticket).status === "OVERDUE"
       ),
-    [tickets]
+    [condominiumFilteredTickets]
   );
 
 
@@ -1111,7 +1328,7 @@ export default function ChamadosPage() {
      ========================================================= */
 
   const categoryOptions = useMemo(() => {
-    const legacyCategories = tickets
+    const legacyCategories = condominiumFilteredTickets
       .map((ticket) => ticket.category?.trim())
       .filter((category): category is string => !!category);
 
@@ -1120,12 +1337,12 @@ export default function ChamadosPage() {
     );
 
     return mergedCategories.sort((a, b) => a.localeCompare(b, "pt-BR"));
-  }, [tickets]);
+  }, [condominiumFilteredTickets]);
 
 
 
   const responsibleOptions = useMemo(() => {
-    const responsaveis = tickets
+    const responsaveis = condominiumFilteredTickets
       .map((ticket) => ticket.assignedToUser)
       .filter((user): user is { id?: string; name: string } => !!user?.name);
 
@@ -1139,7 +1356,7 @@ export default function ChamadosPage() {
     return Array.from(uniqueMap.values()).sort((a, b) =>
       a.name.localeCompare(b.name, "pt-BR")
     );
-  }, [tickets]);
+  }, [condominiumFilteredTickets]);
 
 
 
@@ -1149,37 +1366,41 @@ export default function ChamadosPage() {
 
   const statusFilteredTickets = useMemo(() => {
     if (filter === "UNASSIGNED") {
-      return tickets.filter((t) => isActiveTicket(t) && !t.assignedToUser);
+      return condominiumFilteredTickets.filter(
+        (t) => isActiveTicket(t) && !t.assignedToUser
+      );
     }
 
-    if (filter === "OPEN") return tickets.filter((t) => t.status === "OPEN");
+    if (filter === "OPEN") {
+      return condominiumFilteredTickets.filter((t) => t.status === "OPEN");
+    }
 
     if (filter === "IN_PROGRESS") {
-      return tickets.filter((t) => t.status === "IN_PROGRESS");
+      return condominiumFilteredTickets.filter((t) => t.status === "IN_PROGRESS");
     }
 
     if (filter === "RESOLVED") {
-      return tickets.filter((t) => t.status === "RESOLVED");
+      return condominiumFilteredTickets.filter((t) => t.status === "RESOLVED");
     }
 
     if (filter === "CANCELED") {
-      return tickets.filter((t) => t.status === "CANCELED");
+      return condominiumFilteredTickets.filter((t) => t.status === "CANCELED");
     }
 
     if (filter === "OVERDUE") {
-      return tickets.filter(
+      return condominiumFilteredTickets.filter(
         (t) => isActiveTicket(t) && getSla(t).status === "OVERDUE"
       );
     }
 
     if (filter === "WARNING") {
-      return tickets.filter(
+      return condominiumFilteredTickets.filter(
         (t) => isActiveTicket(t) && getSla(t).status === "WARNING"
       );
     }
 
-    return tickets;
-  }, [tickets, filter]);
+    return condominiumFilteredTickets;
+  }, [condominiumFilteredTickets, filter]);
 
 
 
@@ -1249,6 +1470,7 @@ export default function ChamadosPage() {
   const hasAnyFilter =
     filter !== "ALL" ||
     hasAdvancedFilters ||
+    condominioFilter !== "ALL" ||
     !!urlFilterMessage;
 
 
@@ -1283,10 +1505,6 @@ export default function ChamadosPage() {
         description="Acompanhe, filtre, priorize, atribua responsáveis e atualize o andamento dos chamados."
       >
         <div className="space-y-6">
-          {/* =====================================================
-              TÍTULO DA PÁGINA
-              ===================================================== */}
-
           <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#256D3C]">
@@ -1298,7 +1516,8 @@ export default function ChamadosPage() {
               </h1>
 
               <p className="mt-2 max-w-4xl text-sm leading-6 text-[#5E6B63]">
-                Acompanhe a fila administrativa, priorize atendimentos, atribua responsáveis e atualize o andamento dos chamados.
+                Acompanhe a fila administrativa, priorize atendimentos, atribua
+                responsáveis e atualize o andamento dos chamados.
               </p>
             </div>
 
@@ -1315,9 +1534,36 @@ export default function ChamadosPage() {
 
 
 
-          {/* =====================================================
-              RESUMO OPERACIONAL
-              ===================================================== */}
+          {selectedCondominioFilter && (
+            <section className="rounded-[28px] border border-[#CFE6D4] bg-[#EAF7EE] p-5 shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#256D3C]">
+                    Filtro aplicado
+                  </p>
+
+                  <h2 className="mt-1 text-xl font-semibold text-[#17211B]">
+                    {selectedCondominioFilter.name}
+                  </h2>
+
+                  <p className="mt-1 text-sm leading-6 text-[#5E6B63]">
+                    Exibindo apenas chamados deste condomínio. Este filtro veio
+                    da página de detalhe do condomínio.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="inline-flex h-11 w-fit items-center justify-center rounded-2xl border border-[#CFE6D4] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"
+                >
+                  Limpar filtro
+                </button>
+              </div>
+            </section>
+          )}
+
+
 
           <section className="overflow-hidden rounded-[32px] border border-[#DDE5DF] bg-white shadow-sm">
             <div className="border-b border-[#DDE5DF] bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAF9_62%,#EAF7EE_135%)] p-6">
@@ -1328,7 +1574,8 @@ export default function ChamadosPage() {
                   </h2>
 
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-[#5E6B63]">
-                    Resumo dos chamados da carteira administrativa, com foco nos casos ativos, prazos e responsáveis.
+                    Resumo dos chamados da carteira administrativa, com foco nos
+                    casos ativos, prazos e responsáveis.
                   </p>
                 </div>
 
@@ -1401,7 +1648,10 @@ export default function ChamadosPage() {
                 </p>
 
                 <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
-                  Exibindo <strong className="text-[#17211B]">{filteredTickets.length}</strong>{" "}
+                  Exibindo{" "}
+                  <strong className="text-[#17211B]">
+                    {filteredTickets.length}
+                  </strong>{" "}
                   chamado(s) conforme filtros aplicados.
                 </p>
               </div>
@@ -1409,10 +1659,6 @@ export default function ChamadosPage() {
           </section>
 
 
-
-          {/* =====================================================
-              AVISOS
-              ===================================================== */}
 
           {activeAccess && !isAdminContext() && (
             <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm leading-6 text-yellow-800">
@@ -1431,7 +1677,7 @@ export default function ChamadosPage() {
                 onClick={clearAllFilters}
                 className="inline-flex h-10 items-center justify-center rounded-2xl bg-[#256D3C] px-4 text-sm font-semibold text-white transition hover:bg-[#1F5A32]"
               >
-                Limpar filtro do dashboard
+                Limpar filtro
               </button>
             </div>
           )}
@@ -1449,10 +1695,6 @@ export default function ChamadosPage() {
           )}
 
 
-
-          {/* =====================================================
-              MODAL NOVO CHAMADO
-              ===================================================== */}
 
           {modalOpen && canCreateAdminTicket() && (
             <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#17211B]/65 p-4 backdrop-blur-sm">
@@ -1594,8 +1836,8 @@ export default function ChamadosPage() {
 
                         {form.unitId && selectedUnitResidents.length > 0 && (
                           <p className="mt-1 text-xs text-[#7A877F]">
-                            Campo opcional. Use quando a ocorrência estiver ligada
-                            a um morador específico.
+                            Campo opcional. Use quando a ocorrência estiver
+                            ligada a um morador específico.
                           </p>
                         )}
                       </FormField>
@@ -1662,7 +1904,10 @@ export default function ChamadosPage() {
                     <select
                       value={form.priority}
                       onChange={(e) =>
-                        setForm((prev) => ({ ...prev, priority: e.target.value }))
+                        setForm((prev) => ({
+                          ...prev,
+                          priority: e.target.value as TicketFormState["priority"],
+                        }))
                       }
                       className="form-input"
                     >
@@ -1673,8 +1918,9 @@ export default function ChamadosPage() {
                     </select>
 
                     <p className="mt-1 text-xs text-[#7A877F]">
-                      Use “Urgente” apenas para ocorrências que exigem ação imediata
-                      ou possam causar risco, prejuízo ou impacto relevante.
+                      Use “Urgente” apenas para ocorrências que exigem ação
+                      imediata ou possam causar risco, prejuízo ou impacto
+                      relevante.
                     </p>
                   </FormField>
 
@@ -1718,10 +1964,6 @@ export default function ChamadosPage() {
 
 
 
-          {/* =====================================================
-              ALERTA PRAZO
-              ===================================================== */}
-
           {overdueTickets.length > 0 && (
             <div className="flex flex-col gap-4 rounded-2xl border border-red-200 bg-red-50 p-4 md:flex-row md:items-center md:justify-between">
               <div>
@@ -1730,7 +1972,8 @@ export default function ChamadosPage() {
                 </strong>
 
                 <p className="mt-1 text-sm text-red-700/80">
-                  Existem chamados ativos fora do prazo. Recomendamos priorizar estes atendimentos.
+                  Existem chamados ativos fora do prazo. Recomendamos priorizar
+                  estes atendimentos.
                 </p>
               </div>
 
@@ -1745,14 +1988,12 @@ export default function ChamadosPage() {
 
 
 
-          {/* =====================================================
-              PRIORIDADES DA FILA
-              ===================================================== */}
-
           <ResponsiveSection
             title="Prioridades da Fila"
             description="Indicadores operacionais para priorização dos chamados."
-            defaultOpenMobile={metrics.overdue > 0 || metrics.warning > 0 || metrics.unassigned > 0}
+            defaultOpenMobile={
+              metrics.overdue > 0 || metrics.warning > 0 || metrics.unassigned > 0
+            }
           >
             <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
               <MetricButton
@@ -1820,13 +2061,9 @@ export default function ChamadosPage() {
 
 
 
-          {/* =====================================================
-              FILTROS
-              ===================================================== */}
-
           <ResponsiveSection
             title="Filtros da Fila"
-            description="Refine a visualização por texto, prioridade, categoria ou responsável."
+            description="Refine a visualização por texto, condomínio, prioridade, categoria ou responsável."
             defaultOpenMobile
           >
             <section className="rounded-[28px] border border-[#DDE5DF] bg-white p-5 shadow-sm">
@@ -1837,7 +2074,8 @@ export default function ChamadosPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-[#5E6B63]">
-                    Refine a visualização por texto, prioridade, categoria ou responsável.
+                    Refine a visualização por texto, condomínio, prioridade,
+                    categoria ou responsável.
                   </p>
                 </div>
 
@@ -1853,7 +2091,7 @@ export default function ChamadosPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-                <div className="lg:col-span-5">
+                <div className="lg:col-span-4">
                   <label className="text-sm font-semibold text-[#17211B]">
                     Buscar
                   </label>
@@ -1864,6 +2102,42 @@ export default function ChamadosPage() {
                     className="form-input mt-1"
                     placeholder="Buscar por título, morador, unidade, condomínio, responsável..."
                   />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <label className="text-sm font-semibold text-[#17211B]">
+                    Condomínio
+                  </label>
+
+                  <select
+                    value={condominioFilter}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+
+                      setCondominioFilter(nextValue);
+
+                      setForm((prev) => ({
+                        ...prev,
+                        condominiumId: nextValue !== "ALL" ? nextValue : "",
+                        unitId: "",
+                        residentId: "",
+                      }));
+
+                      if (nextValue === "ALL" && typeof window !== "undefined") {
+                        window.history.replaceState(null, "", "/admin/chamados");
+                      }
+                    }}
+                    className="form-input mt-1"
+                  >
+                    <option value="ALL">Todos</option>
+
+                    {condominios.map((condominio) => (
+                      <option key={condominio.id} value={condominio.id}>
+                        {condominio.name}
+                        {condominio.status === "INACTIVE" ? " — Inativo" : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="lg:col-span-2">
@@ -1926,43 +2200,39 @@ export default function ChamadosPage() {
                     ))}
                   </select>
                 </div>
-
-                <div className="flex items-end lg:col-span-1">
-                  <button
-                    onClick={clearAdvancedFilters}
-                    disabled={!hasAdvancedFilters}
-                    className="inline-flex h-12 w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-5 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C] disabled:cursor-not-allowed disabled:bg-[#F6F8F7] disabled:text-[#9AA7A0]"
-                  >
-                    Limpar
-                  </button>
-                </div>
               </div>
 
               <div className="mt-4 flex flex-col gap-2 text-sm text-[#5E6B63] md:flex-row md:items-center md:justify-between">
                 <p>
                   Filtro principal:{" "}
-                  <strong className="text-[#17211B]">{getFilterLabel(filter)}</strong> •
-                  Exibindo{" "}
-                  <strong className="text-[#17211B]">{filteredTickets.length}</strong>{" "}
+                  <strong className="text-[#17211B]">
+                    {getFilterLabel(filter)}
+                  </strong>{" "}
+                  • Exibindo{" "}
+                  <strong className="text-[#17211B]">
+                    {filteredTickets.length}
+                  </strong>{" "}
                   de{" "}
-                  <strong className="text-[#17211B]">{statusFilteredTickets.length}</strong>{" "}
+                  <strong className="text-[#17211B]">
+                    {statusFilteredTickets.length}
+                  </strong>{" "}
                   chamado(s).
                 </p>
 
                 {hasAdvancedFilters && (
-                  <p className="font-semibold text-[#256D3C]">
-                    Filtros avançados aplicados.
-                  </p>
+                  <button
+                    type="button"
+                    onClick={clearAdvancedFilters}
+                    className="font-semibold text-[#256D3C] transition hover:text-[#1F5A32]"
+                  >
+                    Limpar filtros avançados
+                  </button>
                 )}
               </div>
             </section>
           </ResponsiveSection>
 
 
-
-          {/* =====================================================
-              LISTA ULTRA LIMPA
-              ===================================================== */}
 
           <ResponsiveSection
             title="Chamados da Fila"
@@ -1976,8 +2246,8 @@ export default function ChamadosPage() {
                 </h2>
 
                 <p className="mx-auto max-w-2xl text-sm leading-6 text-[#5E6B63]">
-                  Não encontramos chamados com os filtros atuais. Você pode limpar
-                  os filtros para voltar à fila completa.
+                  Não encontramos chamados com os filtros atuais. Você pode
+                  limpar os filtros para voltar à fila completa.
                 </p>
 
                 <button
@@ -2119,10 +2389,7 @@ export default function ChamadosPage() {
                               value={getTicketScopeLabel(ticket)}
                             />
 
-                            <InfoLine
-                              label="Prazo"
-                              value={sla.label}
-                            />
+                            <InfoLine label="Prazo" value={sla.label} />
 
                             <InfoLine
                               label="Criado por"
@@ -2136,7 +2403,11 @@ export default function ChamadosPage() {
 
                             <InfoLine
                               label="Solicitante"
-                              value={ticket.resident?.name || ticket.createdByUser?.name || "-"}
+                              value={
+                                ticket.resident?.name ||
+                                ticket.createdByUser?.name ||
+                                "-"
+                              }
                             />
 
                             <InfoLine
@@ -2306,9 +2577,7 @@ function QueueMetricBox({
       </strong>
 
       {description && (
-        <p className="mt-1 text-xs text-[#5E6B63]">
-          {description}
-        </p>
+        <p className="mt-1 text-xs text-[#5E6B63]">{description}</p>
       )}
     </button>
   );
@@ -2432,18 +2701,15 @@ function FormField({
 }: {
   label: string;
   required?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div>
       <label className="text-sm font-semibold text-[#17211B]">
-        {label}{" "}
-        {required && <span className="text-red-600">*</span>}
+        {label} {required && <span className="text-red-600">*</span>}
       </label>
 
-      <div className="mt-1">
-        {children}
-      </div>
+      <div className="mt-1">{children}</div>
     </div>
   );
 }

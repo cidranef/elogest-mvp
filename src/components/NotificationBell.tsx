@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 
 
@@ -46,6 +46,7 @@ interface NotificationItem {
   id: string;
   userId: string;
   ticketId?: string | null;
+  assemblyId?: string | null;
   channel: string;
   status: "UNREAD" | "READ" | "ARCHIVED" | string;
   type: string;
@@ -134,6 +135,14 @@ function notificationTypeLabel(type?: string | null) {
     TICKET_STATUS_CHANGED: "Status alterado",
     TICKET_RESOLVED: "Chamado resolvido",
     TICKET_RATED: "Chamado avaliado",
+    POLL_PUBLISHED: "Nova enquete",
+    POLL_EXTENDED: "Prazo da enquete prorrogado",
+    POLL_RESULTS_PUBLISHED: "Resultado da enquete disponível",
+    POLL_EXPIRED_ADMIN_REMINDER: "Prazo da enquete encerrado",
+    ASSEMBLY_CONVOCATION_PUBLISHED: "Convocação de assembleia",
+    ASSEMBLY_VOTING_REMINDER: "Lembrete de votação",
+    ASSEMBLY_VOTING_DEADLINE_EXTENDED: "Prazo da votação prorrogado",
+    ASSEMBLY_RESULTS_PUBLISHED: "Resultados da assembleia",
     EMAIL_PENDING: "E-mail pendente",
     WHATSAPP_PENDING: "WhatsApp pendente",
   };
@@ -176,6 +185,38 @@ function notificationToneClass(type?: string | null) {
     return "border-yellow-200 bg-yellow-50 text-yellow-700";
   }
 
+  if (type === "POLL_PUBLISHED") {
+    return "border-purple-200 bg-purple-50 text-purple-700";
+  }
+
+  if (type === "POLL_EXTENDED") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  if (type === "POLL_RESULTS_PUBLISHED") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
+  if (type === "POLL_EXPIRED_ADMIN_REMINDER") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (type === "ASSEMBLY_CONVOCATION_PUBLISHED") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
+  if (type === "ASSEMBLY_VOTING_REMINDER") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (type === "ASSEMBLY_VOTING_DEADLINE_EXTENDED") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  if (type === "ASSEMBLY_RESULTS_PUBLISHED") {
+    return "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]";
+  }
+
   if (type === "EMAIL_PENDING") {
     return "border-blue-200 bg-blue-50 text-blue-700";
   }
@@ -190,7 +231,12 @@ function notificationToneClass(type?: string | null) {
 
 
 function isPortalRole(role?: string | null) {
-  return role === "SINDICO" || role === "MORADOR" || role === "PROPRIETARIO";
+  return (
+    role === "SINDICO" ||
+    role === "CONSELHEIRO" ||
+    role === "MORADOR" ||
+    role === "PROPRIETARIO"
+  );
 }
 
 
@@ -199,6 +245,32 @@ function isAdminRole(role?: string | null) {
   return role === "SUPER_ADMIN" || role === "ADMINISTRADORA";
 }
 
+
+
+function isAssemblyNotification(type?: string | null) {
+  return Boolean(type?.startsWith("ASSEMBLY_"));
+}
+
+
+function resolveNotificationHref(
+  notification: NotificationItem,
+  fallbackHref: string,
+) {
+  // ETAPA 51.9.3 — garante que notificações de assembleia abram
+  // diretamente a convocação correta, inclusive para registros
+  // antigos cujo href tenha sido gravado de forma genérica.
+  if (isAssemblyNotification(notification.type) && notification.assemblyId) {
+    return `/portal/assembleias?assemblyId=${encodeURIComponent(notification.assemblyId)}`;
+  }
+
+  return notification.href || fallbackHref;
+}
+
+
+function notifyAssemblyMenuToRefresh(type?: string | null) {
+  if (!isAssemblyNotification(type)) return;
+  window.dispatchEvent(new CustomEvent("elogest:assemblies-updated"));
+}
 
 
 function BellIcon() {
@@ -307,7 +379,7 @@ export default function NotificationBell({
      CARREGAR PERFIL DE ACESSO ATIVO
      ========================================================= */
 
-  async function loadActiveAccess() {
+  const loadActiveAccess = useCallback(async () => {
     try {
       const res = await fetch("/api/user/active-access", {
         cache: "no-store",
@@ -325,7 +397,7 @@ export default function NotificationBell({
       console.error("Erro ao carregar perfil de acesso ativo:", err);
       setActiveAccess(null);
     }
-  }
+  }, []);
 
 
 
@@ -333,7 +405,7 @@ export default function NotificationBell({
      CARREGAR NOTIFICAÇÕES DO SINO
      ========================================================= */
 
-  async function loadNotifications() {
+  const loadNotifications = useCallback(async () => {
     try {
       setLoadingNotifications(true);
       setErrorMessage("");
@@ -370,7 +442,7 @@ export default function NotificationBell({
     } finally {
       setLoadingNotifications(false);
     }
-  }
+  }, []);
 
 
 
@@ -378,12 +450,12 @@ export default function NotificationBell({
      ATUALIZAR TUDO
      ========================================================= */
 
-  async function refreshNotifications() {
+  const refreshNotifications = useCallback(async () => {
     await Promise.all([
       loadActiveAccess(),
       loadNotifications(),
     ]);
-  }
+  }, [loadActiveAccess, loadNotifications]);
 
 
 
@@ -438,6 +510,8 @@ export default function NotificationBell({
             : item
         )
       );
+
+      notifyAssemblyMenuToRefresh(notification.type);
     } catch (err) {
       console.error("Erro ao marcar notificação como lida:", err);
     }
@@ -482,6 +556,8 @@ export default function NotificationBell({
           };
         })
       );
+
+      window.dispatchEvent(new CustomEvent("elogest:assemblies-updated"));
     } catch (err) {
       console.error("Erro ao marcar todas como lidas:", err);
       setErrorMessage("Erro ao marcar notificações como lidas.");
@@ -530,7 +606,41 @@ export default function NotificationBell({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [refreshNotifications]);
+
+
+
+  /* =========================================================
+     ATUALIZAÇÃO LEVE DO SINO
+
+     - Atualiza ao receber evento interno do módulo de enquetes.
+     - Atualiza quando a janela volta a receber foco.
+     - Mantém uma verificação periódica discreta para refletir
+       notificações criadas em outra aba ou sessão.
+     ========================================================= */
+
+  useEffect(() => {
+    function handlePollsUpdated() {
+      refreshNotifications();
+    }
+
+    function handleWindowFocus() {
+      refreshNotifications();
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshNotifications();
+    }, 30000);
+
+    window.addEventListener("elogest:polls-updated", handlePollsUpdated);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("elogest:polls-updated", handlePollsUpdated);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [refreshNotifications]);
 
 
 
@@ -539,8 +649,14 @@ export default function NotificationBell({
      ========================================================= */
 
   useEffect(() => {
-    refreshNotifications();
-  }, []);
+    const timeoutId = window.setTimeout(() => {
+      void refreshNotifications();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [refreshNotifications]);
 
 
 
@@ -646,7 +762,7 @@ export default function NotificationBell({
             ) : (
               <div className="divide-y divide-[#DDE5DF]">
                 {notifications.map((notification) => {
-                  const href = notification.href || safeFallbackHref;
+                  const href = resolveNotificationHref(notification, safeFallbackHref);
                   const unread = notification.status === "UNREAD";
 
                   return (

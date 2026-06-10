@@ -1,3 +1,10 @@
+import {
+  Prisma,
+  Role,
+  Status,
+  TicketPriority,
+  type Ticket,
+} from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser, type AuthUser } from "@/lib/auth-guard";
@@ -15,7 +22,14 @@ import {
   type ActiveUserAccess,
 } from "@/lib/user-access";
 import { NextResponse } from "next/server";
-import { Role, Status, TicketPriority } from "@prisma/client";
+import {
+  getPlanErrorPayload,
+  isPlanAccessError,
+  isPlanLimitError,
+  MODULE_SLUGS,
+  requireCanCreateTicket,
+  requireModuleAccess,
+} from "@/lib/plan-limits";
 
 
 
@@ -28,21 +42,26 @@ import { Role, Status, TicketPriority } from "@prisma/client";
    - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
      quando a administradora estiver inativa.
 
-   Objetivo desta revisão:
-   - A rota /admin passa a operar somente com perfil ativo
-     ADMINISTRADORA.
+   ETAPA 45.5 — FILTROS SERVER-SIDE E PAGINAÇÃO INICIAL
+   - GET passa a aceitar ?condominio=ID.
+   - GET passa a aceitar ?page=1&limit=50.
+   - Mantém retorno em array quando page/limit não são enviados,
+     preservando compatibilidade com telas existentes.
+   - Quando page/limit são enviados, retorna objeto paginado:
+     { items, pagination }.
+   - Mantido isolamento por administradora ativa e activeAccess.
+   - Removidos tipos any.
+   - Mantidas regras de permissão por perfil ativo.
+
+   Objetivo consolidado:
+   - A rota /admin opera somente com perfil ativo ADMINISTRADORA.
    - SUPER_ADMIN não opera pela área /admin; deve usar rotas
      próprias da área /elogest.
-   - Todas as regras de carteira passam a considerar o contexto
-     ativo, não apenas session.user.role.
+   - Todas as regras de carteira consideram o contexto ativo.
    - Criação de chamado grava createdByAccessId quando o perfil
      ativo vem de UserAccess real.
    - Logs gravam accessId, actorRole e actorLabel com base no
      perfil ativo.
-   - Mantidas regras de segurança já existentes:
-     administradora só vê/opera sua própria carteira;
-     síndico/morador/proprietário não acessam /admin;
-     registros inativos não entram em fluxos operacionais.
    ========================================================= */
 
 
@@ -107,6 +126,12 @@ type AdminContextUser = Omit<AuthUser, "activeAccess"> & {
   activeAccess: ActiveUserAccess | null;
 };
 
+
+
+type RequestBody = Record<string, unknown>;
+
+
+
 type AssignedValidationResult = {
   assignedToUserId: string | null;
   assignedUser: {
@@ -117,6 +142,29 @@ type AssignedValidationResult = {
   } | null;
   error: string | null;
   status: number;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+type PaginationParams = {
+  page: number;
+  limit: number;
+  skip: number;
+  shouldPaginate: boolean;
 };
 
 
@@ -135,6 +183,48 @@ function normalizeNullableText(value: unknown) {
   const text = normalizeText(value);
 
   return text ? text : null;
+}
+
+
+
+function normalizeQueryId(value: string | null) {
+  const text = normalizeText(value);
+
+  return text || null;
+}
+
+
+
+function parsePositiveInteger(value: string | null, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
+
+
+function getPaginationParams(url: URL): PaginationParams {
+  const pageParam = url.searchParams.get("page");
+  const limitParam = url.searchParams.get("limit");
+
+  const shouldPaginate = !!pageParam || !!limitParam;
+
+  const page = parsePositiveInteger(pageParam, 1);
+  const rawLimit = parsePositiveInteger(limitParam, 50);
+
+  const limit = Math.min(Math.max(rawLimit, 1), 200);
+  const skip = (page - 1) * limit;
+
+  return {
+    page,
+    limit,
+    skip,
+    shouldPaginate,
+  };
 }
 
 
@@ -240,11 +330,23 @@ function isAdminContext(user: AdminContextUser) {
 
 /* =========================================================
    FILTRO DE CARTEIRA ADMINISTRATIVA
+
+   ETAPA 45.5:
+   - Sempre prende a consulta ao administratorId do activeAccess.
+   - Se condominio=ID for enviado, também filtra por condomínio.
    ========================================================= */
 
-function getAdminTicketWhere(user: AdminContextUser) {
+function getAdminTicketWhere({
+  user,
+  condominiumId,
+}: {
+  user: AdminContextUser;
+  condominiumId?: string | null;
+}): Prisma.TicketWhereInput {
   if (isAdminContext(user) && user.administratorId) {
     return {
+      ...(condominiumId ? { condominiumId } : {}),
+
       condominium: {
         administratorId: user.administratorId,
       },
@@ -262,7 +364,9 @@ function getAdminTicketWhere(user: AdminContextUser) {
    VALIDA ADMINISTRADORA ATIVA / CONTEXTO
    ========================================================= */
 
-function validateAdministratorContext(user: AdminContextUser) {
+function validateAdministratorContext(
+  user: AdminContextUser
+): ContextValidationResult {
   if (!isAdminContext(user)) {
     return {
       ok: false,
@@ -366,10 +470,38 @@ async function validateAssignedUser({
 
 
 /* =========================================================
+   RESPOSTA PAGINADA
+   ========================================================= */
+
+function buildPaginatedResponse({
+  items,
+  total,
+  pagination,
+}: {
+  items: Ticket[];
+  total: number;
+  pagination: PaginationParams;
+}) {
+  return {
+    items,
+    pagination: {
+      page: pagination.page,
+      limit: pagination.limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pagination.limit)),
+      hasNextPage: pagination.page * pagination.limit < total,
+      hasPreviousPage: pagination.page > 1,
+    },
+  };
+}
+
+
+
+/* =========================================================
    GET - LISTAR CHAMADOS ADMINISTRATIVOS
    ========================================================= */
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const adminApiAccess = await requireActiveAdminApiAccess();
 
@@ -404,17 +536,67 @@ export async function GET() {
       );
     }
 
+    await requireModuleAccess({
+      administratorId,
+      moduleSlug: MODULE_SLUGS.CHAMADOS,
+    });
+
+    const url = new URL(req.url);
+    const condominiumId = normalizeQueryId(url.searchParams.get("condominio"));
+    const pagination = getPaginationParams(url);
+
+    const where = getAdminTicketWhere({
+      user,
+      condominiumId,
+    });
+
+
+
+    /* =========================================================
+       PAGINAÇÃO OPCIONAL
+
+       Compatibilidade:
+       - Sem page/limit: retorna array puro.
+       - Com page/limit: retorna { items, pagination }.
+       ========================================================= */
+
     const chamados = await db.ticket.findMany({
-      where: getAdminTicketWhere(user),
+      where,
       include: ticketInclude,
       orderBy: {
         createdAt: "desc",
       },
+      ...(pagination.shouldPaginate
+        ? {
+            skip: pagination.skip,
+            take: pagination.limit,
+          }
+        : {}),
     });
 
-    return NextResponse.json(chamados);
+    if (!pagination.shouldPaginate) {
+      return NextResponse.json(chamados);
+    }
+
+    const total = await db.ticket.count({
+      where,
+    });
+
+    return NextResponse.json(
+      buildPaginatedResponse({
+        items: chamados,
+        total,
+        pagination,
+      })
+    );
   } catch (error: unknown) {
     console.error("ERRO AO LISTAR CHAMADOS:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
 
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
@@ -445,7 +627,7 @@ export async function POST(req: Request) {
     }
 
     const user = await getAdminContextUser();
-    const body = await req.json();
+    const body = (await req.json()) as RequestBody;
 
     const contextValidation = validateAdministratorContext(user);
 
@@ -471,6 +653,8 @@ export async function POST(req: Request) {
         { status: 403 }
       );
     }
+
+    await requireCanCreateTicket(administratorId);
 
     const scope = body.scope === "CONDOMINIUM" ? "CONDOMINIUM" : "UNIT";
 
@@ -787,6 +971,12 @@ export async function POST(req: Request) {
     return NextResponse.json(updated || chamado);
   } catch (error: unknown) {
     console.error("ERRO AO CRIAR CHAMADO:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
 
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(

@@ -1,4 +1,12 @@
+import {
+  Prisma,
+  type Condominium,
+  type Resident,
+  type Ticket,
+  type Unit,
+} from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import {
   getActiveUserAccessFromCookies,
@@ -7,6 +15,14 @@ import {
 } from "@/lib/user-access";
 import { canManageUnits } from "@/lib/access-control";
 import { NextResponse } from "next/server";
+import {
+  getPlanErrorPayload,
+  isPlanAccessError,
+  isPlanLimitError,
+  MODULE_SLUGS,
+  requireCanCreateUnit,
+  requireModuleAccess,
+} from "@/lib/plan-limits";
 
 
 
@@ -15,9 +31,25 @@ import { NextResponse } from "next/server";
 
    ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
 
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
+
+   ETAPA 45.5 — FILTROS SERVER-SIDE E PAGINAÇÃO INICIAL
+   - GET passa a aceitar ?condominio=ID.
+   - GET passa a aceitar ?page=1&limit=50.
+   - Mantém retorno em array quando page/limit não são enviados,
+     preservando compatibilidade com telas existentes.
+   - Quando page/limit são enviados, retorna objeto paginado:
+     { items, pagination }.
+   - Removidos tipos any.
+   - Mantido isolamento por administradora ativa e activeAccess.
+
    GET:
    - ADMINISTRADORA vê apenas unidades dos condomínios da sua
      carteira ativa.
+   - Se informado condominio=ID, lista apenas unidades daquele
+     condomínio, desde que pertença à carteira ativa.
 
    POST:
    - ADMINISTRADORA cria nova unidade apenas em condomínio da
@@ -37,6 +69,70 @@ import { NextResponse } from "next/server";
    - Campos são normalizados antes de salvar.
    - Duplicidade de unidade no mesmo condomínio recebe mensagem amigável.
    ========================================================= */
+
+
+
+/* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type RequestBody = Record<string, unknown>;
+
+
+
+type RelatedResident = Pick<Resident, "id" | "status">;
+
+
+
+type RelatedTicket = Pick<Ticket, "id" | "status">;
+
+
+
+type UnitWithRelations = Unit & {
+  condominium: Condominium;
+  residents: RelatedResident[];
+  tickets: RelatedTicket[];
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+type PaginationParams = {
+  page: number;
+  limit: number;
+  skip: number;
+  shouldPaginate: boolean;
+};
 
 
 
@@ -67,7 +163,7 @@ function normalizeBlock(value: unknown) {
 
 
 function normalizeUnitNumber(value: unknown) {
-  return cleanText(value);
+  return cleanText(value).toUpperCase();
 }
 
 
@@ -78,7 +174,7 @@ function normalizeUnitType(value: unknown) {
 
 
 
-function normalizeStatus(value: unknown) {
+function normalizeStatus(value: unknown): "ACTIVE" | "INACTIVE" {
   const status = cleanText(value || "ACTIVE").toUpperCase();
 
   if (status === "ACTIVE" || status === "INACTIVE") {
@@ -90,6 +186,56 @@ function normalizeStatus(value: unknown) {
 
 
 
+function normalizeQueryId(value: string | null) {
+  const text = cleanText(value);
+
+  return text || null;
+}
+
+
+
+function parsePositiveInteger(value: string | null, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
+
+
+function getPaginationParams(url: URL): PaginationParams {
+  const pageParam = url.searchParams.get("page");
+  const limitParam = url.searchParams.get("limit");
+
+  const shouldPaginate = !!pageParam || !!limitParam;
+
+  const page = parsePositiveInteger(pageParam, 1);
+  const rawLimit = parsePositiveInteger(limitParam, 50);
+
+  const limit = Math.min(Math.max(rawLimit, 1), 200);
+  const skip = (page - 1) * limit;
+
+  return {
+    page,
+    limit,
+    skip,
+    shouldPaginate,
+  };
+}
+
+
+
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
    USUÁRIO COM CONTEXTO ADMINISTRATIVO
 
@@ -97,8 +243,8 @@ function normalizeStatus(value: unknown) {
    O contexto ativo define o papel/carteira em uso.
    ========================================================= */
 
-async function getAdminContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -155,8 +301,8 @@ async function getAdminContextUser() {
    SUPER_ADMIN fica reservado para /elogest.
    ========================================================= */
 
-function validateAdminContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateAdminContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -200,10 +346,35 @@ function validateAdminContext(user: any) {
 
 
 
-function getAdministratorIdFromContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
+}
 
-  return activeAccess?.administratorId || null;
+
+
+/* =========================================================
+   WHERE BASE DE ACESSO
+
+   ADMINISTRADORA:
+   - só enxerga unidades de condomínios da própria carteira.
+   - se condominio=ID vier na URL, o filtro continua preso ao
+     administratorId do activeAccess.
+   ========================================================= */
+
+function buildUnitWhere({
+  administratorId,
+  condominiumId,
+}: {
+  administratorId: string;
+  condominiumId?: string | null;
+}): Prisma.UnitWhereInput {
+  return {
+    ...(condominiumId ? { condominiumId } : {}),
+
+    condominium: {
+      administratorId,
+    },
+  };
 }
 
 
@@ -212,14 +383,13 @@ function getAdministratorIdFromContext(user: any) {
    RETORNO PADRONIZADO
    ========================================================= */
 
-function buildUnitPayload(unidade: any) {
+function buildUnitPayload(unidade: UnitWithRelations) {
   const chamadosAbertos = unidade.tickets.filter(
-    (ticket: any) =>
-      ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
+    (ticket) => ticket.status === "OPEN" || ticket.status === "IN_PROGRESS"
   ).length;
 
   const moradoresAtivos = unidade.residents.filter(
-    (resident: any) => resident.status === "ACTIVE"
+    (resident) => resident.status === "ACTIVE"
   ).length;
 
   return {
@@ -249,9 +419,15 @@ function buildUnitPayload(unidade: any) {
    GET - LISTAR UNIDADES
    ========================================================= */
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const user: any = await getAdminContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
 
     const contextValidation = validateAdminContext(user);
 
@@ -271,12 +447,32 @@ export async function GET() {
       );
     }
 
+    await requireModuleAccess({
+      administratorId,
+      moduleSlug: MODULE_SLUGS.UNIDADES,
+    });
+
+    const url = new URL(req.url);
+    const condominiumId = normalizeQueryId(url.searchParams.get("condominio"));
+    const pagination = getPaginationParams(url);
+
+    const where = buildUnitWhere({
+      administratorId,
+      condominiumId,
+    });
+
+
+
+    /* =========================================================
+       PAGINAÇÃO OPCIONAL
+
+       Compatibilidade:
+       - Sem page/limit: retorna array puro.
+       - Com page/limit: retorna { items, pagination }.
+       ========================================================= */
+
     const unidades = await db.unit.findMany({
-      where: {
-        condominium: {
-          administratorId,
-        },
-      },
+      where,
       include: {
         condominium: true,
 
@@ -310,13 +506,43 @@ export async function GET() {
           unitNumber: "asc",
         },
       ],
+      ...(pagination.shouldPaginate
+        ? {
+            skip: pagination.skip,
+            take: pagination.limit,
+          }
+        : {}),
     });
 
     const result = unidades.map((unidade) => buildUnitPayload(unidade));
 
-    return NextResponse.json(result);
+    if (!pagination.shouldPaginate) {
+      return NextResponse.json(result);
+    }
+
+    const total = await db.unit.count({
+      where,
+    });
+
+    return NextResponse.json({
+      items: result,
+      pagination: {
+        page: pagination.page,
+        limit: pagination.limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / pagination.limit)),
+        hasNextPage: pagination.page * pagination.limit < total,
+        hasPreviousPage: pagination.page > 1,
+      },
+    });
   } catch (error: unknown) {
     console.error("ERRO AO LISTAR UNIDADES:", error);
+
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
 
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
@@ -340,8 +566,14 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const user: any = await getAdminContextUser();
-    const body = await req.json();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminContextUser();
+    const body = (await req.json()) as RequestBody;
 
     const contextValidation = validateAdminContext(user);
 
@@ -361,11 +593,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const condominiumId = cleanText(body?.condominiumId);
-    const block = normalizeBlock(body?.block);
-    const unitNumber = normalizeUnitNumber(body?.unitNumber);
-    const unitType = normalizeUnitType(body?.unitType);
-    const status = normalizeStatus(body?.status);
+    const condominiumId = cleanText(body.condominiumId);
+    const block = normalizeBlock(body.block);
+    const unitNumber = normalizeUnitNumber(body.unitNumber);
+    const unitType = normalizeUnitType(body.unitType);
+    const status = normalizeStatus(body.status);
 
     if (!condominiumId) {
       return NextResponse.json(
@@ -414,6 +646,8 @@ export async function POST(req: Request) {
         { status: 403 }
       );
     }
+
+    await requireCanCreateUnit(administratorId);
 
 
 
@@ -478,6 +712,12 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error("ERRO AO CRIAR UNIDADE:", error);
 
+    if (isPlanAccessError(error) || isPlanLimitError(error)) {
+      return NextResponse.json(getPlanErrorPayload(error), {
+        status: error.statusCode,
+      });
+    }
+
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
@@ -485,12 +725,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "P2002"
-    ) {
+    if (isPrismaKnownRequestError(error) && error.code === "P2002") {
       return NextResponse.json(
         {
           error:

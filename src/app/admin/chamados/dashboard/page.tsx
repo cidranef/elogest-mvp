@@ -984,7 +984,18 @@ export default function ChamadosDashboardPage() {
      ========================================================= */
 
   useEffect(() => {
-    loadTickets();
+    let isMounted = true;
+
+    void Promise.resolve().then(async () => {
+      if (!isMounted) return;
+
+      await loadTickets();
+    });
+
+    return () => {
+      isMounted = false;
+    };
+     
   }, []);
 
 

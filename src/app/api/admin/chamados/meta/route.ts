@@ -1,8 +1,14 @@
+import { Prisma, Role, Status } from "@prisma/client";
 import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
+import { canCreateAdminTicket } from "@/lib/access-control";
+import {
+  getActiveUserAccessFromCookies,
+  isAdministradoraAccess,
+  type ActiveUserAccess,
+} from "@/lib/user-access";
 import { NextResponse } from "next/server";
-import { Role, Status, type Prisma } from "@prisma/client";
-import { getActiveUserAccessFromCookies } from "@/lib/user-access";
 
 
 
@@ -11,20 +17,75 @@ import { getActiveUserAccessFromCookies } from "@/lib/user-access";
 
    ETAPA 35.5 — FILTROS DE REGISTROS ATIVOS NOS FLUXOS OPERACIONAIS
 
-   Usado no modal "+ Novo Chamado" da área administrativa.
+   ETAPA 43 — ARQUITETURA DE PERFIS, VÍNCULOS E PERMISSÕES
+   - A área /admin passa a operar somente com perfil ativo
+     ADMINISTRADORA.
+   - SUPER_ADMIN deve usar a área /elogest.
+   - SÍNDICO, MORADOR, PROPRIETÁRIO e CONSELHEIRO devem usar o portal.
+
+   ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   - Adicionado requireActiveAdminApiAccess() para bloquear APIs /api/admin/*
+     quando a administradora estiver inativa.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO
+   - Removidos tipos any.
+   - Tipado contexto administrativo.
+   - Mantido isolamento por administratorId do activeAccess.
+   - Mantidos apenas registros ativos nos selects operacionais.
+
+   Usado no modal "Novo Chamado" da área administrativa.
 
    Retorna:
-   - condomínios ativos permitidos ao contexto ativo;
+   - condomínios ativos da carteira da administradora ativa;
    - unidades ativas de cada condomínio;
    - moradores ativos por unidade;
    - usuários ativos para atribuição de responsável.
 
+   Responsável permitido:
+   - usuário ADMINISTRADORA da própria carteira;
+   - usuário SINDICO do condomínio da carteira.
+
    Regras:
-   - SUPER_ADMIN em contexto SUPER_ADMIN vê condomínios ativos.
-   - ADMINISTRADORA vê apenas condomínios ativos da própria carteira.
-   - SÍNDICO / MORADOR devem usar o portal, não esta rota administrativa.
+   - /admin é área operacional da ADMINISTRADORA.
+   - SUPER_ADMIN não opera por esta rota.
+   - Dados retornados são sempre da carteira do activeAccess.
    - Registros inativos permanecem no histórico, mas não entram nos selects.
    ========================================================= */
+
+
+
+/* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
 
 
 
@@ -36,16 +97,17 @@ import { getActiveUserAccessFromCookies } from "@/lib/user-access";
    operando naquele momento.
    ========================================================= */
 
-async function getMetaContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getMetaContextUser(): Promise<AdminContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
   }
 
-  const activeAccess: any = await getActiveUserAccessFromCookies({
-    userId: sessionUser.id,
-  });
+  const activeAccess: ActiveUserAccess | null =
+    await getActiveUserAccessFromCookies({
+      userId: sessionUser.id,
+    });
 
   if (!activeAccess) {
     return {
@@ -88,17 +150,31 @@ async function getMetaContextUser() {
 /* =========================================================
    VALIDA CONTEXTO ADMINISTRATIVO
 
-   Esta API é usada pelo modal administrativo de criação de
-   chamado, portanto somente faz sentido para:
-
-   - SUPER_ADMIN
-   - ADMINISTRADORA
-
-   Outros perfis devem usar o portal.
+   Esta API alimenta o modal administrativo de criação de chamado,
+   portanto somente faz sentido para ADMINISTRADORA em perfil ativo.
    ========================================================= */
 
-function validateMetaContext(user: any) {
-  if (user.role === Role.ADMINISTRADORA && !user.administratorId) {
+function validateMetaContext(user: AdminContextUser): ContextValidationResult {
+  const activeAccess = user.activeAccess;
+
+  if (!activeAccess) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Não foi possível identificar o contexto de acesso.",
+    };
+  }
+
+  if (!isAdministradoraAccess(activeAccess)) {
+    return {
+      ok: false,
+      status: 403,
+      message:
+        "Este contexto não possui acesso aos metadados administrativos de chamados. Use o portal ou a área EloGest.",
+    };
+  }
+
+  if (!activeAccess.administratorId) {
     return {
       ok: false,
       status: 403,
@@ -106,29 +182,11 @@ function validateMetaContext(user: any) {
     };
   }
 
-  if (user.role === Role.SINDICO) {
+  if (!canCreateAdminTicket(activeAccess)) {
     return {
       ok: false,
       status: 403,
-      message:
-        "Síndico deve abrir chamados pelo portal, não pela rota administrativa.",
-    };
-  }
-
-  if (user.role === Role.MORADOR || user.role === "PROPRIETARIO") {
-    return {
-      ok: false,
-      status: 403,
-      message:
-        "Morador/proprietário deve abrir chamados pelo portal, não pela rota administrativa.",
-    };
-  }
-
-  if (user.role !== Role.SUPER_ADMIN && user.role !== Role.ADMINISTRADORA) {
-    return {
-      ok: false,
-      status: 403,
-      message: "Usuário sem permissão para carregar dados administrativos.",
+      message: "Usuário sem permissão para criar chamados administrativos.",
     };
   }
 
@@ -141,13 +199,25 @@ function validateMetaContext(user: any) {
 
 
 
+function getAdministratorIdFromContext(user: AdminContextUser) {
+  return user.activeAccess?.administratorId || null;
+}
+
+
+
 /* =========================================================
    GET - CARREGAR META DO CHAMADO
    ========================================================= */
 
 export async function GET() {
   try {
-    const user: any = await getMetaContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getMetaContextUser();
 
     const contextValidation = validateMetaContext(user);
 
@@ -158,41 +228,36 @@ export async function GET() {
       );
     }
 
+    const administratorId = getAdministratorIdFromContext(user);
+
+    if (!administratorId) {
+      return NextResponse.json(
+        { error: "Contexto de administradora sem vínculo com administradora." },
+        { status: 403 }
+      );
+    }
+
 
 
     /* =========================================================
        FILTRO DE CONDOMÍNIOS
 
-       SUPER_ADMIN:
-       - todos os condomínios ativos de administradoras ativas.
-
        ADMINISTRADORA:
        - somente condomínios ativos da administradora ativa.
        ========================================================= */
 
-    const condominiumWhere: Prisma.CondominiumWhereInput =
-      user.role === Role.SUPER_ADMIN
-        ? {
-            status: Status.ACTIVE,
-            administrator: {
-              status: Status.ACTIVE,
-            },
-          }
-        : {
-            administratorId: user.administratorId,
-            status: Status.ACTIVE,
-            administrator: {
-              status: Status.ACTIVE,
-            },
-          };
+    const condominiumWhere: Prisma.CondominiumWhereInput = {
+      administratorId,
+      status: Status.ACTIVE,
+      administrator: {
+        status: Status.ACTIVE,
+      },
+    };
 
 
 
     /* =========================================================
        FILTRO DE USUÁRIOS PARA ATRIBUIÇÃO
-
-       SUPER_ADMIN:
-       - usuários ativos administrativos/síndicos.
 
        ADMINISTRADORA:
        - usuários ativos da administradora ativa;
@@ -203,56 +268,28 @@ export async function GET() {
        - SINDICO do condomínio.
        ========================================================= */
 
-    const userWhere: Prisma.UserWhereInput =
-      user.role === Role.SUPER_ADMIN
-        ? {
-            isActive: true,
-            role: {
-              in: [Role.SUPER_ADMIN, Role.ADMINISTRADORA, Role.SINDICO],
+    const userWhere: Prisma.UserWhereInput = {
+      isActive: true,
+      OR: [
+        {
+          role: Role.ADMINISTRADORA,
+          administratorId,
+          administrator: {
+            status: Status.ACTIVE,
+          },
+        },
+        {
+          role: Role.SINDICO,
+          condominium: {
+            administratorId,
+            status: Status.ACTIVE,
+            administrator: {
+              status: Status.ACTIVE,
             },
-            OR: [
-              {
-                role: Role.SUPER_ADMIN,
-              },
-              {
-                role: Role.ADMINISTRADORA,
-                administrator: {
-                  status: Status.ACTIVE,
-                },
-              },
-              {
-                role: Role.SINDICO,
-                condominium: {
-                  status: Status.ACTIVE,
-                  administrator: {
-                    status: Status.ACTIVE,
-                  },
-                },
-              },
-            ],
-          }
-        : {
-            isActive: true,
-            OR: [
-              {
-                role: Role.ADMINISTRADORA,
-                administratorId: user.administratorId,
-                administrator: {
-                  status: Status.ACTIVE,
-                },
-              },
-              {
-                role: Role.SINDICO,
-                condominium: {
-                  administratorId: user.administratorId,
-                  status: Status.ACTIVE,
-                  administrator: {
-                    status: Status.ACTIVE,
-                  },
-                },
-              },
-            ],
-          };
+          },
+        },
+      ],
+    };
 
 
 
@@ -336,16 +373,14 @@ export async function GET() {
       }),
     ]);
 
-
-
     return NextResponse.json({
       condominiums,
       users,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("ERRO AO CARREGAR META DE CHAMADOS:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }

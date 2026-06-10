@@ -32,11 +32,14 @@ import {
      somente se a administradora estiver ACTIVE.
    - Perfis de portal operam em /portal e /api/portal/*.
 
-   Correção de build:
-   - Adicionada validação explícita de activeAccess antes de retornar
-     o objeto do guard.
-   - Isso evita o erro TypeScript:
-     Type 'ActiveUserAccess | null' is not assignable to type 'ActiveUserAccess'.
+   ETAPA 48 — COMUNICADOS E CONFIRMAÇÃO DE LEITURA
+
+   Atualização:
+   - Adicionado helper central para validar módulos comerciais
+     da administradora pelo plano e por overrides.
+   - Adicionado guard específico para o módulo Comunicados.
+   - A regra de plano/módulo fica centralizada aqui, evitando
+     duplicação nas rotas /api/admin/comunicados/*.
 
    Uso recomendado nas rotas /api/admin/*:
 
@@ -49,6 +52,16 @@ import {
    const { activeAccess, administratorId } = auth;
 
    Depois disso, usar administratorId nos filtros Prisma.
+
+   Uso recomendado nas rotas /api/admin/comunicados/*:
+
+   const auth = await requireAdminModuleApiAccess("comunicados");
+
+   if ("error" in auth) {
+     return auth.error;
+   }
+
+   const { administratorId } = auth;
    ========================================================= */
 
 
@@ -79,11 +92,37 @@ export type ActiveAdminApiAccess = {
 
 
 
+export type AdminModuleApiAccess = ActiveAdminApiAccess & {
+  module: {
+    slug: string;
+    enabled: boolean;
+    source: "PLAN" | "OVERRIDE";
+  };
+};
+
+
+
 export type AdminApiGuardResult =
   | ActiveAdminApiAccess
   | {
       error: NextResponse;
     };
+
+
+
+export type AdminModuleApiGuardResult =
+  | AdminModuleApiAccess
+  | {
+      error: NextResponse;
+    };
+
+
+
+type AdministratorModuleAccessInfo = {
+  hasAccess: boolean;
+  source: "PLAN" | "OVERRIDE" | "NONE";
+  moduleSlug: string;
+};
 
 
 
@@ -128,6 +167,173 @@ function inactiveAdministratorResponse() {
       status: 403,
     }
   );
+}
+
+
+
+function moduleNotAvailableResponse(moduleName = "este módulo") {
+  return NextResponse.json(
+    {
+      error: `O módulo ${moduleName} não está liberado para o plano atual da administradora.`,
+      code: "MODULE_NOT_AVAILABLE",
+      upgradeAvailable: true,
+    },
+    {
+      status: 403,
+    }
+  );
+}
+
+
+
+/* =========================================================
+   HELPERS INTERNOS - MÓDULOS COMERCIAIS
+
+   Regra consolidada:
+   1. Override ativo da administradora tem prioridade.
+      - enabled true libera.
+      - enabled false bloqueia.
+   2. Sem override válido, usa módulos do plano.
+   3. Módulo precisa estar ACTIVE.
+   4. Vínculo PlanModule precisa estar enabled.
+   ========================================================= */
+
+function isDateWindowActive({
+  startsAt,
+  expiresAt,
+  now,
+}: {
+  startsAt?: Date | null;
+  expiresAt?: Date | null;
+  now: Date;
+}) {
+  if (startsAt && startsAt > now) {
+    return false;
+  }
+
+  if (expiresAt && expiresAt < now) {
+    return false;
+  }
+
+  return true;
+}
+
+
+
+async function getAdministratorModuleAccess({
+  administratorId,
+  moduleSlug,
+}: {
+  administratorId: string;
+  moduleSlug: string;
+}): Promise<AdministratorModuleAccessInfo> {
+  const normalizedModuleSlug = String(moduleSlug || "").trim().toLowerCase();
+
+  if (!normalizedModuleSlug) {
+    return {
+      hasAccess: false,
+      source: "NONE",
+      moduleSlug: normalizedModuleSlug,
+    };
+  }
+
+  const now = new Date();
+
+  const administrator = await db.administrator.findUnique({
+    where: {
+      id: administratorId,
+    },
+    select: {
+      id: true,
+      planId: true,
+      plan: {
+        select: {
+          id: true,
+          status: true,
+          modules: {
+            where: {
+              enabled: true,
+              module: {
+                slug: normalizedModuleSlug,
+                status: "ACTIVE",
+              },
+            },
+            select: {
+              id: true,
+              enabled: true,
+              module: {
+                select: {
+                  id: true,
+                  slug: true,
+                  status: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      moduleOverrides: {
+        where: {
+          module: {
+            slug: normalizedModuleSlug,
+            status: "ACTIVE",
+          },
+        },
+        select: {
+          id: true,
+          enabled: true,
+          startsAt: true,
+          expiresAt: true,
+          module: {
+            select: {
+              id: true,
+              slug: true,
+              status: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!administrator) {
+    return {
+      hasAccess: false,
+      source: "NONE",
+      moduleSlug: normalizedModuleSlug,
+    };
+  }
+
+  const activeOverride = administrator.moduleOverrides.find((override) =>
+    isDateWindowActive({
+      startsAt: override.startsAt,
+      expiresAt: override.expiresAt,
+      now,
+    })
+  );
+
+  if (activeOverride) {
+    return {
+      hasAccess: activeOverride.enabled === true,
+      source: "OVERRIDE",
+      moduleSlug: normalizedModuleSlug,
+    };
+  }
+
+  const planHasEnabledModule =
+    administrator.plan?.status === "ACTIVE" &&
+    administrator.plan.modules.some(
+      (planModule) =>
+        planModule.enabled === true &&
+        planModule.module.slug === normalizedModuleSlug &&
+        planModule.module.status === "ACTIVE"
+    );
+
+  return {
+    hasAccess: planHasEnabledModule,
+    source: planHasEnabledModule ? "PLAN" : "NONE",
+    moduleSlug: normalizedModuleSlug,
+  };
 }
 
 
@@ -241,6 +447,77 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
       ),
     };
   }
+}
+
+
+
+/* =========================================================
+   GUARD DE MÓDULO ADMINISTRATIVO
+
+   Use este helper quando uma rota /api/admin/* depender
+   de um módulo comercial específico do plano.
+
+   Exemplo:
+   const auth = await requireAdminModuleApiAccess("comunicados");
+   ========================================================= */
+
+export async function requireAdminModuleApiAccess(
+  moduleSlug: string,
+  moduleName = "solicitado"
+): Promise<AdminModuleApiGuardResult> {
+  const auth = await requireActiveAdminApiAccess();
+
+  if ("error" in auth) {
+    return auth;
+  }
+
+  try {
+    const moduleAccess = await getAdministratorModuleAccess({
+      administratorId: auth.administratorId,
+      moduleSlug,
+    });
+
+    if (!moduleAccess.hasAccess) {
+      return {
+        error: moduleNotAvailableResponse(moduleName),
+      };
+    }
+
+    return {
+      ...auth,
+      module: {
+        slug: moduleAccess.moduleSlug,
+        enabled: true,
+        source: moduleAccess.source === "OVERRIDE" ? "OVERRIDE" : "PLAN",
+      },
+    };
+  } catch (error) {
+    console.error("Erro ao validar módulo administrativo:", error);
+
+    return {
+      error: NextResponse.json(
+        {
+          error: "Não foi possível validar o módulo da administradora.",
+        },
+        {
+          status: 500,
+        }
+      ),
+    };
+  }
+}
+
+
+
+/* =========================================================
+   GUARD ESPECÍFICO - COMUNICADOS
+
+   Etapa 48:
+   Centraliza a validação do módulo Comunicados.
+   ========================================================= */
+
+export async function requireAnnouncementsAdminApiAccess(): Promise<AdminModuleApiGuardResult> {
+  return requireAdminModuleApiAccess("comunicados", "Comunicados");
 }
 
 

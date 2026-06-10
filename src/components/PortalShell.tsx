@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import LogoutButton from "@/components/LogoutButton";
 import ActiveAccessBadge from "@/components/ActiveAccessBadge";
 import NotificationBell from "@/components/NotificationBell";
@@ -75,6 +75,48 @@ import NotificationBell from "@/components/NotificationBell";
    - Em telas menores, o badge aparece em uma faixa secundária,
      evitando que o usuário acesse o portal sem saber qual
      condomínio/unidade/perfil está em uso.
+
+   ETAPA 48.7 — MENU DE COMUNICADOS
+
+   Ajustes desta revisão:
+   - Adicionada chave "comunicados" ao PortalNavKey.
+   - Adicionado item "Comunicados" na navegação do portal.
+   - Adicionado ícone "announcement" para comunicados oficiais.
+   - Página /portal/comunicados passa a ter item próprio no menu.
+
+   ETAPA 49 — MENU DE REUNIÕES DE CONSELHO
+
+   Ajustes desta revisão:
+   - Adicionada chave "reunioes-conselho" ao PortalNavKey.
+   - Adicionado item "Reuniões De Conselho" na navegação do portal.
+   - Adicionado ícone "meeting" para governança e reuniões.
+   - Página /portal/reunioes-conselho passa a ter item próprio no menu.
+   - Mantida a estrutura já aprovada do portal sem alterar chamadas existentes.
+
+   ETAPA 50 — MENU DE ENQUETES
+
+   Ajustes desta revisão:
+   - Adicionada chave "enquetes" ao PortalNavKey.
+   - Adicionado item "Enquetes" na navegação do portal.
+   - Adicionado ícone "poll" para consultas condominiais.
+   - Página /portal/enquetes passa a ter item próprio no menu.
+   - O item aparece quando o perfil possui acesso ao módulo ou quando
+     o usuário já está navegando na rota de enquetes.
+
+   ETAPA 51.8.1 — MENU DE ASSEMBLEIAS
+
+   Ajustes desta revisão:
+   - Adicionada chave "assembleias" ao PortalNavKey.
+   - Adicionado item "Assembleias" na navegação do portal.
+   - Adicionado contador de assembleias com votação pendente.
+   - A visibilidade é calculada pela API /api/portal/assembleias.
+
+   ETAPA 50 — SININHO DE ENQUETES PENDENTES
+
+   Ajustes desta revisão:
+   - Adicionado contador de enquetes abertas ainda não respondidas.
+   - Aplicado o mesmo padrão visual do sininho de Comunicados.
+   - O contador é atualizado após resposta registrada no portal.
    ========================================================= */
 
 
@@ -82,6 +124,10 @@ import NotificationBell from "@/components/NotificationBell";
 type PortalNavKey =
   | "dashboard"
   | "chamados"
+  | "comunicados"
+  | "enquetes"
+  | "assembleias"
+  | "reunioes-conselho"
   | "perfil";
 
 interface PortalShellProps {
@@ -217,6 +263,11 @@ function PortalIcon({
     | "close"
     | "dashboard"
     | "ticket"
+    | "announcement"
+    | "poll"
+    | "assembly"
+    | "meeting"
+    | "bell"
     | "profile"
     | "home"
     | "search";
@@ -270,6 +321,80 @@ function PortalIcon({
         </>
       )}
 
+      {type === "announcement" && (
+        <>
+          <path
+            {...common}
+            d="M5 10v4a2 2 0 0 0 2 2h2l4 4v-4h2l4 3V5l-4 3H7a2 2 0 0 0-2 2z"
+          />
+          <path {...common} d="M15 8v8" />
+        </>
+      )}
+
+      {type === "poll" && (
+        <>
+          <path
+            {...common}
+            d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"
+          />
+          <path {...common} d="M8 10h8" />
+          <path {...common} d="M8 14h4" />
+          <path {...common} d="M16 13l1.5 1.5L20 12" />
+        </>
+      )}
+
+      {type === "assembly" && (
+        <>
+          <path {...common} d="M4 20h16" />
+          <path {...common} d="M6 20V9l6-4 6 4v11" />
+          <path {...common} d="M9 20v-5h6v5" />
+          <path {...common} d="M8 11h8" />
+        </>
+      )}
+
+      {type === "meeting" && (
+        <>
+          <path
+            {...common}
+            d="M7 4v3"
+          />
+          <path
+            {...common}
+            d="M17 4v3"
+          />
+          <path
+            {...common}
+            d="M5 8h14"
+          />
+          <path
+            {...common}
+            d="M6 6h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"
+          />
+          <path
+            {...common}
+            d="M8 13h4"
+          />
+          <path
+            {...common}
+            d="M8 16h8"
+          />
+          <path
+            {...common}
+            d="M15 12.5l2 1.5-2 1.5z"
+          />
+        </>
+      )}
+
+      {type === "bell" && (
+        <>
+          <path
+            {...common}
+            d="M18 9a6 6 0 0 0-12 0c0 5-2 6-2 6h16s-2-1-2-6"
+          />
+          <path {...common} d="M10 19a2 2 0 0 0 4 0" />
+        </>
+      )}
+
       {type === "profile" && (
         <>
           <circle {...common} cx="12" cy="8" r="4" />
@@ -300,7 +425,12 @@ function PortalIcon({
    NAVEGAÇÃO DO PORTAL
    ========================================================= */
 
-function getPortalNavItems(canSwitchProfile: boolean) {
+function getPortalNavItems(
+  canSwitchProfile: boolean,
+  showCouncilMeetings: boolean,
+  showPolls: boolean,
+  showAssemblies: boolean,
+) {
   const items: {
     key: PortalNavKey;
     label: string;
@@ -319,7 +449,40 @@ function getPortalNavItems(canSwitchProfile: boolean) {
       href: "/portal/chamados",
       icon: "ticket",
     },
+    {
+      key: "comunicados",
+      label: "Comunicados",
+      href: "/portal/comunicados",
+      icon: "announcement",
+    },
   ];
+
+  if (showPolls) {
+    items.push({
+      key: "enquetes",
+      label: "Enquetes",
+      href: "/portal/enquetes",
+      icon: "poll",
+    });
+  }
+
+  if (showAssemblies) {
+    items.push({
+      key: "assembleias",
+      label: "Assembleias",
+      href: "/portal/assembleias",
+      icon: "assembly",
+    });
+  }
+
+  if (showCouncilMeetings) {
+    items.push({
+      key: "reunioes-conselho",
+      label: "Reuniões De Conselho",
+      href: "/portal/reunioes-conselho",
+      icon: "meeting",
+    });
+  }
 
   if (canSwitchProfile) {
     items.push({
@@ -364,14 +527,31 @@ function isNavActive({
 function PortalSidebar({
   current,
   canSwitchProfile,
+  unreadAnnouncementsCount,
+  pendingPollsCount,
+  pendingAssembliesCount,
+  showCouncilMeetings,
+  showPolls,
+  showAssemblies,
   onNavigate,
 }: {
   current?: PortalNavKey;
   canSwitchProfile: boolean;
+  unreadAnnouncementsCount: number;
+  pendingPollsCount: number;
+  pendingAssembliesCount: number;
+  showCouncilMeetings: boolean;
+  showPolls: boolean;
+  showAssemblies: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const navItems = getPortalNavItems(canSwitchProfile);
+  const navItems = getPortalNavItems(
+    canSwitchProfile,
+    showCouncilMeetings,
+    showPolls,
+    showAssemblies,
+  );
 
   return (
     <aside className="flex h-full flex-col overflow-hidden bg-[#17211B] text-white">
@@ -425,6 +605,54 @@ function PortalSidebar({
                 <span className="min-w-0 flex-1 truncate">
                   {item.label}
                 </span>
+
+                {item.key === "comunicados" && unreadAnnouncementsCount > 0 && (
+                  <span
+                    className={[
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-bold transition",
+                      active
+                        ? "border-white/20 bg-white/14 text-white"
+                        : "border-[#8ED08E]/30 bg-[#8ED08E]/12 text-[#EAF7EE] group-hover:border-[#8ED08E]/45 group-hover:bg-[#8ED08E]/18",
+                    ].join(" ")}
+                    title={`${unreadAnnouncementsCount} comunicado(s) pendente(s)`}
+                    aria-label={`${unreadAnnouncementsCount} comunicado(s) pendente(s) de leitura`}
+                  >
+                    <PortalIcon type="bell" className="h-3.5 w-3.5" />
+                    <span>{unreadAnnouncementsCount > 99 ? "99+" : unreadAnnouncementsCount}</span>
+                  </span>
+                )}
+
+                {item.key === "enquetes" && pendingPollsCount > 0 && (
+                  <span
+                    className={[
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-bold transition",
+                      active
+                        ? "border-white/20 bg-white/14 text-white"
+                        : "border-[#8ED08E]/30 bg-[#8ED08E]/12 text-[#EAF7EE] group-hover:border-[#8ED08E]/45 group-hover:bg-[#8ED08E]/18",
+                    ].join(" ")}
+                    title={`${pendingPollsCount} enquete(s) pendente(s)`}
+                    aria-label={`${pendingPollsCount} enquete(s) aguardando resposta`}
+                  >
+                    <PortalIcon type="bell" className="h-3.5 w-3.5" />
+                    <span>{pendingPollsCount > 99 ? "99+" : pendingPollsCount}</span>
+                  </span>
+                )}
+
+                {item.key === "assembleias" && pendingAssembliesCount > 0 && (
+                  <span
+                    className={[
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-bold transition",
+                      active
+                        ? "border-white/20 bg-white/14 text-white"
+                        : "border-[#8ED08E]/30 bg-[#8ED08E]/12 text-[#EAF7EE] group-hover:border-[#8ED08E]/45 group-hover:bg-[#8ED08E]/18",
+                    ].join(" ")}
+                    title={`${pendingAssembliesCount} aviso(s) ou pendência(s) de assembleia`}
+                    aria-label={`${pendingAssembliesCount} aviso(s) ou pendência(s) de assembleia`}
+                  >
+                    <PortalIcon type="bell" className="h-3.5 w-3.5" />
+                    <span>{pendingAssembliesCount > 99 ? "99+" : pendingAssembliesCount}</span>
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -584,7 +812,17 @@ function PortalTopbar({
    FOOTER
    ========================================================= */
 
-function PortalFooter({ canSwitchProfile }: { canSwitchProfile: boolean }) {
+function PortalFooter({
+  canSwitchProfile,
+  showCouncilMeetings,
+  showPolls,
+  showAssemblies,
+}: {
+  canSwitchProfile: boolean;
+  showCouncilMeetings: boolean;
+  showPolls: boolean;
+  showAssemblies: boolean;
+}) {
   return (
     <footer className="mt-10 border-t border-[#DDE5DF] py-6">
       <div className="flex flex-col gap-4 text-xs text-[#7A877F] md:flex-row md:items-center md:justify-between">
@@ -606,6 +844,28 @@ function PortalFooter({ canSwitchProfile }: { canSwitchProfile: boolean }) {
           <Link href="/portal/chamados" className="font-semibold hover:text-[#256D3C]">
             Chamados
           </Link>
+
+          <Link href="/portal/comunicados" className="font-semibold hover:text-[#256D3C]">
+            Comunicados
+          </Link>
+
+          {showPolls && (
+            <Link href="/portal/enquetes" className="font-semibold hover:text-[#256D3C]">
+              Enquetes
+            </Link>
+          )}
+
+          {showAssemblies && (
+            <Link href="/portal/assembleias" className="font-semibold hover:text-[#256D3C]">
+              Assembleias
+            </Link>
+          )}
+
+          {showCouncilMeetings && (
+            <Link href="/portal/reunioes-conselho" className="font-semibold hover:text-[#256D3C]">
+              Reuniões De Conselho
+            </Link>
+          )}
 
           {canSwitchProfile && (
             <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
@@ -631,6 +891,270 @@ export default function PortalShell({
   canSwitchProfile = false,
 }: PortalShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [unreadAnnouncementsCount, setUnreadAnnouncementsCount] = useState(0);
+  const [pendingPollsCount, setPendingPollsCount] = useState(0);
+  const [pendingAssembliesCount, setPendingAssembliesCount] = useState(0);
+  const [unreadAssemblyNotificationsCount, setUnreadAssemblyNotificationsCount] = useState(0);
+  const [showCouncilMeetings, setShowCouncilMeetings] = useState(
+    current === "reunioes-conselho",
+  );
+  const [showPolls, setShowPolls] = useState(current === "enquetes");
+  const [showAssemblies, setShowAssemblies] = useState(current === "assembleias");
+  const pathname = usePathname();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadUnreadAnnouncementsCount() {
+      try {
+        const response = await fetch(
+          "/api/portal/comunicados?read=unread&limit=1",
+          {
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok) {
+          if (isMounted) {
+            setUnreadAnnouncementsCount(0);
+          }
+          return;
+        }
+
+        const data = (await response.json()) as {
+          kpis?: {
+            unread?: number;
+          };
+        };
+
+        if (isMounted) {
+          setUnreadAnnouncementsCount(Math.max(0, data.kpis?.unread ?? 0));
+        }
+      } catch {
+        if (isMounted) {
+          setUnreadAnnouncementsCount(0);
+        }
+      }
+    }
+
+    loadUnreadAnnouncementsCount();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCouncilMeetingsAccess() {
+      if (pathname.startsWith("/portal/reunioes-conselho")) {
+        setShowCouncilMeetings(true);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/portal/reunioes-conselho?limit=1", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          if (isMounted) {
+            setShowCouncilMeetings(false);
+          }
+          return;
+        }
+
+        const data = (await response.json()) as {
+          kpis?: {
+            total?: number;
+          };
+          activeAccess?: {
+            isGovernanceProfile?: boolean | null;
+          } | null;
+        };
+
+        if (isMounted) {
+          setShowCouncilMeetings(
+            Boolean(data.activeAccess?.isGovernanceProfile) ||
+              Number(data.kpis?.total ?? 0) > 0,
+          );
+        }
+      } catch {
+        if (isMounted) {
+          setShowCouncilMeetings(false);
+        }
+      }
+    }
+
+    loadCouncilMeetingsAccess();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPollsAccess() {
+      try {
+        const response = await fetch("/api/portal/enquetes?limit=1", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          if (isMounted) {
+            setShowPolls(pathname.startsWith("/portal/enquetes"));
+            setPendingPollsCount(0);
+          }
+          return;
+        }
+
+        const data = (await response.json()) as {
+          kpis?: {
+            pending?: number;
+            totalPending?: number;
+          };
+        };
+
+        if (isMounted) {
+          setShowPolls(true);
+          setPendingPollsCount(
+            Math.max(0, data.kpis?.totalPending ?? data.kpis?.pending ?? 0),
+          );
+        }
+      } catch {
+        if (isMounted) {
+          setShowPolls(pathname.startsWith("/portal/enquetes"));
+          setPendingPollsCount(0);
+        }
+      }
+    }
+
+    void loadPollsAccess();
+
+    window.addEventListener("elogest:polls-updated", loadPollsAccess);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("elogest:polls-updated", loadPollsAccess);
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAssembliesAccess() {
+      try {
+        const response = await fetch("/api/portal/assembleias?limit=1", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          if (isMounted) {
+            setShowAssemblies(pathname.startsWith("/portal/assembleias"));
+            setPendingAssembliesCount(0);
+          }
+          return;
+        }
+
+        const data = (await response.json()) as {
+          kpis?: {
+            total?: number;
+            totalPending?: number;
+          };
+        };
+
+        if (isMounted) {
+          setShowAssemblies(true);
+          setPendingAssembliesCount(Math.max(0, data.kpis?.totalPending ?? 0));
+        }
+      } catch {
+        if (isMounted) {
+          setShowAssemblies(pathname.startsWith("/portal/assembleias"));
+          setPendingAssembliesCount(0);
+        }
+      }
+    }
+
+    void loadAssembliesAccess();
+
+    window.addEventListener("elogest:assemblies-updated", loadAssembliesAccess);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("elogest:assemblies-updated", loadAssembliesAccess);
+    };
+  }, [pathname]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadUnreadAssemblyNotificationsCount() {
+      try {
+        const response = await fetch("/api/notifications?take=100", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          if (isMounted) setUnreadAssemblyNotificationsCount(0);
+          return;
+        }
+
+        const data = (await response.json()) as {
+          notifications?: Array<{
+            status?: string | null;
+            type?: string | null;
+          }>;
+        };
+
+        const unreadAssemblyNotifications = Array.isArray(data.notifications)
+          ? data.notifications.filter(
+              (notification) =>
+                notification.status === "UNREAD" &&
+                Boolean(notification.type?.startsWith("ASSEMBLY_")),
+            ).length
+          : 0;
+
+        if (isMounted) {
+          setUnreadAssemblyNotificationsCount(unreadAssemblyNotifications);
+        }
+      } catch {
+        if (isMounted) setUnreadAssemblyNotificationsCount(0);
+      }
+    }
+
+    function handleWindowFocus() {
+      void loadUnreadAssemblyNotificationsCount();
+    }
+
+    void loadUnreadAssemblyNotificationsCount();
+
+    window.addEventListener(
+      "elogest:assemblies-updated",
+      loadUnreadAssemblyNotificationsCount,
+    );
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener(
+        "elogest:assemblies-updated",
+        loadUnreadAssemblyNotificationsCount,
+      );
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [pathname]);
+
+  // ETAPA 51.9.3 — o menu deve sinalizar tanto pendências de voto
+  // quanto avisos de assembleia ainda não lidos. Usamos o maior valor
+  // para evitar dupla contagem quando uma notificação corresponde à
+  // mesma pendência já identificada pela API do módulo.
+  const assemblyMenuBadgeCount = Math.max(
+    pendingAssembliesCount,
+    unreadAssemblyNotificationsCount,
+  );
 
   return (
     <div className="min-h-screen bg-[linear-gradient(135deg,#F6F8F7_0%,#FFFFFF_45%,#EAF7EE_120%)] text-[#17211B]">
@@ -639,6 +1163,12 @@ export default function PortalShell({
         <PortalSidebar
           current={current}
           canSwitchProfile={canSwitchProfile}
+          unreadAnnouncementsCount={unreadAnnouncementsCount}
+          pendingPollsCount={pendingPollsCount}
+          pendingAssembliesCount={assemblyMenuBadgeCount}
+          showCouncilMeetings={showCouncilMeetings}
+          showPolls={showPolls}
+          showAssemblies={showAssemblies}
         />
       </div>
 
@@ -658,6 +1188,12 @@ export default function PortalShell({
             <PortalSidebar
               current={current}
               canSwitchProfile={canSwitchProfile}
+              unreadAnnouncementsCount={unreadAnnouncementsCount}
+              pendingPollsCount={pendingPollsCount}
+              pendingAssembliesCount={assemblyMenuBadgeCount}
+              showCouncilMeetings={showCouncilMeetings}
+              showPolls={showPolls}
+              showAssemblies={showAssemblies}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -692,7 +1228,12 @@ export default function PortalShell({
 
             {children}
 
-            <PortalFooter canSwitchProfile={canSwitchProfile} />
+            <PortalFooter
+              canSwitchProfile={canSwitchProfile}
+              showCouncilMeetings={showCouncilMeetings}
+              showPolls={showPolls}
+              showAssemblies={showAssemblies}
+            />
           </div>
         </main>
       </div>

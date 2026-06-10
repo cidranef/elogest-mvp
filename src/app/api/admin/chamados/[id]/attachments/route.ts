@@ -1,13 +1,12 @@
-import { db } from "@/lib/db";
-import { getAuthUser } from "@/lib/auth-guard";
-import { NextResponse } from "next/server";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { Status } from "@prisma/client";
-import {
-  canUploadAttachment,
-} from "@/lib/access-control";
+import { Prisma, Status } from "@prisma/client";
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
+import { getAuthUser } from "@/lib/auth-guard";
+import { canUploadAttachment } from "@/lib/access-control";
 import {
   buildActorLabel,
   buildActorRole,
@@ -42,6 +41,43 @@ type RouteContext = {
 
 
 /* =========================================================
+   TYPES
+   ========================================================= */
+
+type AuthSessionUser = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  residentId?: string | null;
+};
+
+
+
+type AdminAttachmentContextUser = AuthSessionUser & {
+  activeAccess: ActiveUserAccess | null;
+};
+
+
+
+type ContextValidationResult =
+  | {
+      ok: true;
+      status: 200;
+      message: "";
+    }
+  | {
+      ok: false;
+      status: 403;
+      message: string;
+    };
+
+
+
+/* =========================================================
    CONFIGURAÇÕES DO UPLOAD
    ========================================================= */
 
@@ -66,10 +102,6 @@ function cleanText(value: unknown) {
 
 
 
-/* =========================================================
-   FUNÇÃO AUXILIAR - EXTENSÃO SEGURA
-   ========================================================= */
-
 function getSafeExtension(filename: string) {
   const ext = path.extname(filename || "").toLowerCase();
 
@@ -86,14 +118,6 @@ function getSafeExtension(filename: string) {
 
 
 
-/* =========================================================
-   ACCESS ID SEGURO PARA BANCO
-
-   UserAccess real pode ser salvo como FK.
-   Contexto fallback/sintético não existe na tabela UserAccess,
-   então deve gravar null em TicketLog.accessId.
-   ========================================================= */
-
 function getDatabaseAccessId(access: ActiveUserAccess | null) {
   if (!access) {
     return null;
@@ -104,35 +128,20 @@ function getDatabaseAccessId(access: ActiveUserAccess | null) {
 
 
 
+function isPrismaKnownRequestError(
+  error: unknown
+): error is Prisma.PrismaClientKnownRequestError {
+  return error instanceof Prisma.PrismaClientKnownRequestError;
+}
+
+
+
 /* =========================================================
-   ETAPA 35.5 - USUÁRIO COM CONTEXTO ATIVO
-
-   A sessão base identifica quem está logado.
-   O contexto ativo define com qual papel/carteira ele está
-   operando naquele momento.
-
-   Decisão de segurança:
-   - Rotas /api/admin/... são exclusivas para:
-     SUPER_ADMIN
-     ADMINISTRADORA
-
-   Portanto:
-   - SÍNDICO deve usar rotas do portal.
-   - MORADOR / PROPRIETÁRIO também devem usar rotas do portal.
-
-   ETAPA 40.3 — AUDITORIA DOS CHAMADOS PONTA A PONTA
-
-   Ajustes desta revisão:
-   - Perfis administrativos passam a ser validados por helpers
-     da matriz central.
-   - Upload passa a validar canUploadAttachment().
-   - accessId só é salvo quando for UserAccess real.
-   - ID da rota é normalizado.
-   - Mantidas as validações de tipo, tamanho e extensão.
+   USUÁRIO COM CONTEXTO ATIVO
    ========================================================= */
 
-async function getAdminAttachmentContextUser() {
-  const sessionUser: any = await getAuthUser();
+async function getAdminAttachmentContextUser(): Promise<AdminAttachmentContextUser> {
+  const sessionUser = (await getAuthUser()) as AuthSessionUser | null;
 
   if (!sessionUser?.id) {
     throw new Error("UNAUTHORIZED");
@@ -182,42 +191,13 @@ async function getAdminAttachmentContextUser() {
 
 
 /* =========================================================
-   VALIDA ACESSO ADMINISTRATIVO
-
-   Permitidos nesta rota:
-   - SUPER_ADMIN
-   - ADMINISTRADORA
-
-   Bloqueados:
-   - SINDICO
-   - MORADOR
-   - PROPRIETARIO
-   - CONSELHEIRO
-   ========================================================= */
-
-function canUseAdminAttachmentRoute(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
-
-  return !!activeAccess && isAdministradoraAccess(activeAccess);
-}
-
-
-
-/* =========================================================
    VALIDAÇÃO DO CONTEXTO
-
-   ADMINISTRADORA:
-   precisa ter administratorId ativo.
-
-   SUPER_ADMIN:
-   pode seguir sem administratorId.
-
-   SÍNDICO / MORADOR / PROPRIETÁRIO:
-   bloqueados nesta rota administrativa.
    ========================================================= */
 
-function validateAdminAttachmentContext(user: any) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+function validateAdminAttachmentContext(
+  user: AdminAttachmentContextUser
+): ContextValidationResult {
+  const activeAccess = user.activeAccess;
 
   if (!activeAccess) {
     return {
@@ -227,12 +207,7 @@ function validateAdminAttachmentContext(user: any) {
     };
   }
 
-  /*
-     Etapa 43:
-     /admin é a área operacional da administradora.
-     SUPER_ADMIN deve operar pela área /elogest.
-  */
-  if (!canUseAdminAttachmentRoute(user)) {
+  if (!isAdministradoraAccess(activeAccess)) {
     return {
       ok: false,
       status: 403,
@@ -260,25 +235,16 @@ function validateAdminAttachmentContext(user: any) {
 
 /* =========================================================
    FILTRO DE ACESSO AO CHAMADO
-
-   SUPER_ADMIN:
-   - pode acessar qualquer chamado.
-
-   ADMINISTRADORA:
-   - acessa chamados da administradora ativa.
-
-   Demais perfis:
-   - bloqueados antes deste filtro.
    ========================================================= */
 
 function getAttachmentTicketWhere({
   user,
   ticketId,
 }: {
-  user: any;
+  user: AdminAttachmentContextUser;
   ticketId: string;
-}) {
-  const activeAccess = user?.activeAccess as ActiveUserAccess | null;
+}): Prisma.TicketWhereInput {
+  const activeAccess = user.activeAccess;
 
   if (activeAccess && isAdministradoraAccess(activeAccess) && user.administratorId) {
     return {
@@ -297,36 +263,18 @@ function getAttachmentTicketWhere({
 
 
 /* =========================================================
-   GARANTE UM ACTIVE ACCESS PARA LOGS
-
-   A rota precisa gravar:
-   - accessId quando for UserAccess real;
-   - actorRole;
-   - actorLabel.
-
-   Se não houver contexto ativo, bloqueia para evitar log sem
-   rastreabilidade.
-   ========================================================= */
-
-function getRequiredActiveAccess(user: any): ActiveUserAccess | null {
-  return user?.activeAccess || null;
-}
-
-
-
-/* =========================================================
    GET - LISTAR ANEXOS DO CHAMADO
-
-   Observação:
-   - O GET preserva histórico.
-   - Mesmo se o condomínio/chamado estiver inativo/finalizado,
-     os anexos antigos podem continuar visíveis para quem tem
-     permissão administrativa.
    ========================================================= */
 
-export async function GET(req: Request, context: RouteContext) {
+export async function GET(_req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminAttachmentContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminAttachmentContextUser();
     const { id } = await context.params;
 
     const ticketId = cleanText(id);
@@ -394,6 +342,13 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
+    if (isPrismaKnownRequestError(error)) {
+      return NextResponse.json(
+        { error: "Erro ao consultar anexos." },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(
       { error: "Erro ao listar anexos." },
       { status: 500 }
@@ -405,20 +360,17 @@ export async function GET(req: Request, context: RouteContext) {
 
 /* =========================================================
    POST - ENVIAR ANEXO DO CHAMADO
-
-   Regras:
-   - exige contexto ativo;
-   - restrito a SUPER_ADMIN / ADMINISTRADORA;
-   - exige permissão UPLOAD_ATTACHMENT;
-   - chamado não pode estar RESOLVED ou CANCELED;
-   - condomínio e administradora do chamado precisam estar ativos;
-   - arquivo deve respeitar tipo e tamanho;
-   - grava log com actorRole e actorLabel.
    ========================================================= */
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    const user: any = await getAdminAttachmentContextUser();
+    const adminApiAccess = await requireActiveAdminApiAccess();
+
+    if ("error" in adminApiAccess) {
+      return adminApiAccess.error;
+    }
+
+    const user = await getAdminAttachmentContextUser();
     const { id } = await context.params;
 
     const ticketId = cleanText(id);
@@ -439,7 +391,7 @@ export async function POST(req: Request, context: RouteContext) {
       );
     }
 
-    const activeAccess = getRequiredActiveAccess(user);
+    const activeAccess = user.activeAccess;
 
     if (!activeAccess) {
       return NextResponse.json(
@@ -454,18 +406,6 @@ export async function POST(req: Request, context: RouteContext) {
         { status: 403 }
       );
     }
-
-
-
-    /* =========================================================
-       BUSCA DO CHAMADO E VALIDAÇÃO DE ACESSO
-
-       SUPER_ADMIN:
-       - acessa qualquer chamado.
-
-       ADMINISTRADORA:
-       - acessa apenas chamados da carteira ativa.
-       ========================================================= */
 
     const chamado = await db.ticket.findFirst({
       where: getAttachmentTicketWhere({
@@ -498,15 +438,6 @@ export async function POST(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       REGRA DE NEGÓCIO
-
-       Chamado finalizado/cancelado não recebe novos anexos.
-       Os anexos antigos continuam visíveis.
-       ========================================================= */
-
     if (chamado.status === "RESOLVED" || chamado.status === "CANCELED") {
       return NextResponse.json(
         {
@@ -516,15 +447,6 @@ export async function POST(req: Request, context: RouteContext) {
         { status: 400 }
       );
     }
-
-
-
-    /* =========================================================
-       BLOQUEIO OPERACIONAL POR REGISTRO INATIVO
-
-       Histórico permanece visível via GET, mas novo upload é
-       bloqueado se condomínio ou administradora estiver inativo.
-       ========================================================= */
 
     if (
       chamado.condominium?.status !== Status.ACTIVE ||
@@ -539,12 +461,6 @@ export async function POST(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       LEITURA DO FORM DATA
-       ========================================================= */
-
     const formData = await req.formData();
     const file = formData.get("file");
 
@@ -554,12 +470,6 @@ export async function POST(req: Request, context: RouteContext) {
         { status: 400 }
       );
     }
-
-
-
-    /* =========================================================
-       VALIDAÇÕES DO ARQUIVO
-       ========================================================= */
 
     if (!ALLOWED_MIME_TYPES.includes(file.type)) {
       return NextResponse.json(
@@ -587,15 +497,6 @@ export async function POST(req: Request, context: RouteContext) {
       );
     }
 
-
-
-    /* =========================================================
-       SALVAMENTO FÍSICO DO ARQUIVO
-
-       Caminho final:
-       /public/uploads/chamados/[ticketId]/arquivo.ext
-       ========================================================= */
-
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
@@ -615,12 +516,6 @@ export async function POST(req: Request, context: RouteContext) {
     await writeFile(fullPath, buffer);
 
     const publicUrl = `/uploads/chamados/${chamado.id}/${storedName}`;
-
-
-
-    /* =========================================================
-       REGISTRO NO BANCO
-       ========================================================= */
 
     const attachment = await db.ticketAttachment.create({
       data: {
@@ -644,18 +539,6 @@ export async function POST(req: Request, context: RouteContext) {
       },
     });
 
-
-
-    /* =========================================================
-       LOG NA LINHA DO TEMPO
-
-       Grava o contexto ativo de quem anexou.
-
-       accessId:
-       - só salva quando for UserAccess real;
-       - fallback/legado/sintético grava null.
-       ========================================================= */
-
     const dbAccessId = getDatabaseAccessId(activeAccess);
 
     await db.ticketLog.create({
@@ -678,6 +561,13 @@ export async function POST(req: Request, context: RouteContext) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
+      );
+    }
+
+    if (isPrismaKnownRequestError(error)) {
+      return NextResponse.json(
+        { error: "Erro ao registrar anexo." },
+        { status: 500 }
       );
     }
 

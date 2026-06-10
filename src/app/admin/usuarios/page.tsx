@@ -1,6 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import AdminShell from "@/components/AdminShell";
 import ResponsiveSection from "@/components/ui/ResponsiveSection";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
@@ -13,79 +22,79 @@ import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
    ETAPA 15.6.8
 
    Ajustes anteriores:
-   - SÍNDICO pode ter morador vinculado opcional
-   - MORADOR continua exigindo morador vinculado
-   - Ao selecionar morador, nome/e-mail são preenchidos automaticamente
-   - Edição mantém o morador atualmente vinculado no select
+   - SÍNDICO pode ter morador vinculado opcional.
+   - MORADOR continua exigindo morador vinculado.
+   - Ao selecionar morador, nome/e-mail são preenchidos automaticamente.
+   - Edição mantém o morador atualmente vinculado no select.
    - Lê parâmetros vindos de /admin/moradores:
      /admin/usuarios?action=create&role=MORADOR&residentId=...
      /admin/usuarios?action=edit&userId=...
      /admin/usuarios?action=edit&userId=...&residentId=...
-   - Ao cancelar/salvar vindo de /admin/moradores, volta para /admin/moradores
-   - Remove IDs técnicos dos cards
-   - Mostra vínculo do acesso de forma amigável
+   - Ao cancelar/salvar vindo de /admin/moradores, volta para /admin/moradores.
+   - Remove IDs técnicos dos cards.
+   - Mostra vínculo do acesso de forma amigável.
 
    ETAPA 35.4:
    Refinamento do fluxo morador x acesso ao portal.
 
    ETAPA 39.12 — NOVO VISUAL COM ADMINSHELL
 
-   Atualização:
-   - Página passa a usar AdminShell.
-   - Página passa a usar current="usuarios".
-   - Removido AdminTopActions da própria página.
-   - Topbar, sidebar, sino, perfil ativo, logout e footer ficam no shell.
-   - Layout migrado do tema escuro antigo para o padrão claro EloGest.
-   - Cards, filtros, listagem, modais e formulários recebem visual novo.
-   - Mantida toda a lógica funcional já existente.
-
    ETAPA 39.17.11 — PADRONIZAÇÃO DO CARREGAMENTO
-
-   Atualização:
-   - Loading inicial passa a usar EloGestLoadingScreen.
-   - Evita montar AdminShell durante carregamento inicial.
-   - Mantém AdminShell apenas após os dados principais carregarem.
-   - Mantidas listagem, filtros, métricas, modais e ações existentes.
 
    ETAPA 41 — REFINAMENTO PREMIUM DOS CADASTROS
 
-   Ajustes desta revisão:
-   - Título principal fora do card.
-   - Card de Visão da Carteira no topo.
-   - Lista de usuários mais compacta.
-   - Dados secundários agrupados em Mais Informações.
-   - Métricas mais neutras, seguindo Condomínios, Unidades e Moradores.
-   - Mantida toda a lógica funcional existente.
-
    ETAPA 42.8 — SEGURANÇA DE SENHA
-   - Removida senha padrão fraca na criação de usuários.
-   - Formulário passa a exibir checklist de senha forte.
-   - Front bloqueia senha fraca antes de chamar a API.
-   - API continua sendo a autoridade final da política.
+
+   ETAPA 45 — CADASTRO CONDOMINIAL AVANÇADO / ACESSOS
+   - Mantido fluxo morador -> usuário -> portal.
+   - Mantidos parâmetros vindos de /admin/moradores/[id]/acesso.
+   - Corrigido carregamento inicial para evitar lint
+     react-hooks/set-state-in-effect.
+   - Removidos tipos any.
+   - Removidos componentes não utilizados.
+   - Corrigidos casts dos filtros.
+   - Mantida política forte de senha no front.
+   - Mantida compatibilidade com APIs administrativas existentes.
    ========================================================= */
 
 
 
+/* =========================================================
+   TYPES
+   ========================================================= */
+
 type UserRole = "SUPER_ADMIN" | "ADMINISTRADORA" | "SINDICO" | "MORADOR";
+
+type RoleFilter = "ALL" | UserRole;
+
+type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
+
+
 
 interface Administradora {
   id: string;
   name: string;
-  status?: string;
+  status?: string | null;
 }
+
+
 
 interface Condominio {
   id: string;
   name: string;
-  administratorId?: string;
-  status?: string;
+  administratorId?: string | null;
+  status?: string | null;
 }
+
+
 
 interface Unidade {
   id: string;
   block?: string | null;
   unitNumber: string;
 }
+
+
 
 interface Morador {
   id: string;
@@ -98,6 +107,8 @@ interface Morador {
   condominium?: Condominio | null;
   unit?: Unidade | null;
 }
+
+
 
 interface Usuario {
   id: string;
@@ -124,6 +135,18 @@ interface Usuario {
     name: string;
   } | null;
 
+  userAccesses?: {
+    id: string;
+    role: string;
+    label?: string | null;
+    isActive?: boolean | null;
+    condominiumId?: string | null;
+    condominium?: {
+      id: string;
+      name: string;
+    } | null;
+  }[];
+
   resident?: {
     id: string;
     name: string;
@@ -140,8 +163,10 @@ interface Usuario {
     } | null;
   } | null;
 
-  createdAt?: string;
+  createdAt?: string | null;
 }
+
+
 
 interface UserFormState {
   name: string;
@@ -152,8 +177,57 @@ interface UserFormState {
   administratorId: string;
   condominiumId: string;
   residentId: string;
+  councilAccessEnabled: boolean;
+  councilAccessTitle: string;
+  councilAccessCondominiumId: string;
   isActive: boolean;
 }
+
+
+
+interface ApiErrorResponse {
+  error?: string;
+}
+
+
+
+interface UsuariosMetaResponse {
+  administrators?: Administradora[];
+  condominiums?: Condominio[];
+  residents?: Morador[];
+}
+
+
+
+type UserPayload = {
+  name: string;
+  email: string;
+  phone: string | null;
+  role: UserRole;
+  isActive: boolean;
+  password?: string;
+  administratorId?: string;
+  condominiumId?: string;
+  residentId?: string;
+  councilAccess?: {
+    enabled: boolean;
+    title?: string;
+    condominiumId?: string;
+  };
+};
+
+
+
+type FetchArrayResult<T> =
+  | {
+      ok: true;
+      items: T[];
+    }
+  | {
+      ok: false;
+      items: T[];
+      error: string;
+    };
 
 
 
@@ -166,6 +240,9 @@ const emptyCreateForm: UserFormState = {
   administratorId: "",
   condominiumId: "",
   residentId: "",
+  councilAccessEnabled: false,
+  councilAccessTitle: "",
+  councilAccessCondominiumId: "",
   isActive: true,
 };
 
@@ -180,6 +257,9 @@ const emptyEditForm: UserFormState = {
   administratorId: "",
   condominiumId: "",
   residentId: "",
+  councilAccessEnabled: false,
+  councilAccessTitle: "",
+  councilAccessCondominiumId: "",
   isActive: true,
 };
 
@@ -232,15 +312,24 @@ function formatPhoneDisplay(phone?: string | null) {
   if (!normalized) return "-";
 
   if (normalized.length === 13 && normalized.startsWith("55")) {
-    return `+55 (${normalized.slice(2, 4)}) ${normalized.slice(4, 9)}-${normalized.slice(9)}`;
+    return `+55 (${normalized.slice(2, 4)}) ${normalized.slice(
+      4,
+      9
+    )}-${normalized.slice(9)}`;
   }
 
   if (normalized.length === 11) {
-    return `(${normalized.slice(0, 2)}) ${normalized.slice(2, 7)}-${normalized.slice(7)}`;
+    return `(${normalized.slice(0, 2)}) ${normalized.slice(
+      2,
+      7
+    )}-${normalized.slice(7)}`;
   }
 
   if (normalized.length === 10) {
-    return `(${normalized.slice(0, 2)}) ${normalized.slice(2, 6)}-${normalized.slice(6)}`;
+    return `(${normalized.slice(0, 2)}) ${normalized.slice(
+      2,
+      6
+    )}-${normalized.slice(6)}`;
   }
 
   return normalized;
@@ -320,6 +409,376 @@ function validatePasswordForForm(password: string, editing = false) {
 
 
 
+function getApiErrorMessage(data: unknown, fallback: string) {
+  if (typeof data === "object" && data !== null && "error" in data) {
+    const error = (data as ApiErrorResponse).error;
+
+    if (error) {
+      return error;
+    }
+  }
+
+  return fallback;
+}
+
+
+
+function isUserRole(value: string): value is UserRole {
+  return (
+    value === "SUPER_ADMIN" ||
+    value === "ADMINISTRADORA" ||
+    value === "SINDICO" ||
+    value === "MORADOR"
+  );
+}
+
+
+
+function toUserRole(value: string, fallback: UserRole = "MORADOR"): UserRole {
+  return isUserRole(value) ? value : fallback;
+}
+
+
+
+function toRoleFilter(value: string): RoleFilter {
+  if (value === "ALL") return "ALL";
+
+  return toUserRole(value);
+}
+
+
+
+function toStatusFilter(value: string): StatusFilter {
+  if (value === "ACTIVE" || value === "INACTIVE") {
+    return value;
+  }
+
+  return "ALL";
+}
+
+
+
+function roleLabel(role?: string | null) {
+  return (
+    {
+      SUPER_ADMIN: "Admin global EloGest",
+      ADMINISTRADORA: "Administradora",
+      SINDICO: "Síndico",
+      MORADOR: "Morador",
+    }[role || ""] ||
+    role ||
+    "-"
+  );
+}
+
+
+
+function roleClass(role?: string | null) {
+  return role === "SUPER_ADMIN"
+    ? "border-red-200 bg-red-50 text-red-700"
+    : "border-[#DDE5DF] bg-white text-[#5E6B63]";
+}
+
+
+
+function statusLabel(active: boolean) {
+  return active ? "Ativo" : "Inativo";
+}
+
+
+
+function statusClass(active: boolean) {
+  return active
+    ? "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]"
+    : "border-red-200 bg-red-50 text-red-700";
+}
+
+
+
+function getUnitLabel(unit?: Unidade | null) {
+  if (!unit) return "-";
+
+  return `${unit.block ? `Bloco ${unit.block} - ` : ""}Unidade ${
+    unit.unitNumber
+  }`;
+}
+
+
+
+
+
+
+function getCouncilAccess(usuario: Usuario) {
+  return (
+    usuario.userAccesses?.find(
+      (access) => access.role === "CONSELHEIRO" && access.isActive !== false
+    ) || null
+  );
+}
+
+function getCouncilAccessTitle(usuario: Usuario) {
+  const councilAccess = getCouncilAccess(usuario);
+
+  if (!councilAccess) {
+    return "-";
+  }
+
+  const label = String(councilAccess.label || "Conselheiro").trim();
+
+  if (!label) {
+    return "Conselheiro";
+  }
+
+  const [title] = label.split(" - ");
+
+  return title?.trim() || label;
+}
+
+function getCouncilAccessCondominiumName(usuario: Usuario) {
+  const councilAccess = getCouncilAccess(usuario);
+
+  if (!councilAccess) {
+    return "-";
+  }
+
+  return (
+    councilAccess.condominium?.name ||
+    usuario.condominium?.name ||
+    usuario.resident?.condominium?.name ||
+    "Condomínio não identificado"
+  );
+}
+
+function getCouncilAccessLabel(usuario: Usuario) {
+  const councilAccess = getCouncilAccess(usuario);
+
+  if (!councilAccess) {
+    return "-";
+  }
+
+  const title = getCouncilAccessTitle(usuario);
+  const condominiumName = getCouncilAccessCondominiumName(usuario);
+
+  return `${title} • ${condominiumName}`;
+}
+
+function getAccessMainLabel(usuario: Usuario) {
+  if (usuario.role === "SUPER_ADMIN") {
+    return "Acesso global da plataforma";
+  }
+
+  if (usuario.role === "ADMINISTRADORA") {
+    return usuario.administrator?.name || "Administradora não vinculada";
+  }
+
+  if (usuario.role === "SINDICO") {
+    return usuario.condominium?.name || "Condomínio não vinculado";
+  }
+
+  if (usuario.role === "MORADOR") {
+    return usuario.resident?.name || "Morador não vinculado";
+  }
+
+  return "-";
+}
+
+
+
+function getAccessDetailLabel(usuario: Usuario) {
+  if (usuario.role === "SUPER_ADMIN") {
+    return "Pode administrar toda a plataforma.";
+  }
+
+  if (usuario.role === "ADMINISTRADORA") {
+    return "Acesso administrativo da carteira da administradora.";
+  }
+
+  if (usuario.role === "SINDICO") {
+    if (usuario.resident) {
+      return `Também vinculado como morador: ${
+        usuario.resident.name
+      } • ${getUnitLabel(usuario.resident.unit)}`;
+    }
+
+    return "Acesso de gestão do condomínio.";
+  }
+
+  if (usuario.role === "MORADOR") {
+    const condominiumName = usuario.resident?.condominium?.name || "-";
+    const unitLabel = getUnitLabel(usuario.resident?.unit);
+
+    return `${condominiumName} • ${unitLabel}`;
+  }
+
+  return "-";
+}
+
+
+
+function getUserLinkLabel(usuario: Usuario) {
+  const main = getAccessMainLabel(usuario);
+  const detail = getAccessDetailLabel(usuario);
+
+  const parts = [main, detail !== "-" ? detail : ""].filter(Boolean);
+
+  return parts.join(" • ");
+}
+
+
+
+function buildUserPayload(
+  source: UserFormState,
+  includePasswordRequired: boolean
+): UserPayload {
+  const payload: UserPayload = {
+    name: source.name.trim(),
+    email: normalizeEmail(source.email),
+    phone: normalizePhoneForForm(source.phone) || null,
+    role: source.role,
+    isActive: source.isActive,
+    councilAccess: {
+      enabled: source.councilAccessEnabled,
+      title: source.councilAccessTitle.trim() || undefined,
+      condominiumId: source.councilAccessCondominiumId || source.condominiumId || undefined,
+    },
+  };
+
+  if (includePasswordRequired || source.password.trim()) {
+    payload.password = source.password;
+  }
+
+  if (source.role === "ADMINISTRADORA") {
+    payload.administratorId = source.administratorId;
+  }
+
+  if (source.role === "SINDICO") {
+    payload.condominiumId = source.condominiumId;
+
+    if (source.residentId) {
+      payload.residentId = source.residentId;
+    }
+  }
+
+  if (source.role === "MORADOR") {
+    payload.residentId = source.residentId;
+  }
+
+  return payload;
+}
+
+
+
+function validateUserForm(
+  source: UserFormState,
+  availableResidents: Morador[],
+  editing = false
+) {
+  if (!source.name.trim()) {
+    return "Informe o nome do usuário.";
+  }
+
+  if (!source.email.trim()) {
+    return "Informe o e-mail do usuário.";
+  }
+
+  if (!isValidEmail(source.email)) {
+    return "Informe um e-mail válido.";
+  }
+
+  if (!isValidPhoneForForm(source.phone)) {
+    return "Informe um telefone válido com DDD para notificações/WhatsApp ou deixe o campo em branco.";
+  }
+
+  const passwordError = validatePasswordForForm(source.password, editing);
+
+  if (passwordError) {
+    return passwordError;
+  }
+
+  if (source.role === "ADMINISTRADORA" && !source.administratorId) {
+    return "Selecione a administradora.";
+  }
+
+  if (source.role === "SINDICO" && !source.condominiumId) {
+    return "Selecione o condomínio do síndico.";
+  }
+
+  if (source.councilAccessEnabled && !(source.councilAccessCondominiumId || source.condominiumId)) {
+    return "Selecione o condomínio do perfil de conselheiro.";
+  }
+
+  if (source.role === "MORADOR" && !source.residentId) {
+    if (availableResidents.length === 0) {
+      return "Não há moradores sem usuário disponível para este filtro. Cadastre primeiro um novo morador ou verifique se o morador já possui usuário vinculado.";
+    }
+
+    return "Selecione o morador vinculado.";
+  }
+
+  return "";
+}
+
+
+
+async function fetchUsuarios(): Promise<FetchArrayResult<Usuario>> {
+  const res = await fetch("/api/admin/usuarios", {
+    cache: "no-store",
+  });
+
+  const data: unknown = await res.json();
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      items: [],
+      error: getApiErrorMessage(data, "Erro ao carregar usuários."),
+    };
+  }
+
+  if (!Array.isArray(data)) {
+    return {
+      ok: false,
+      items: [],
+      error: "Resposta inválida da API.",
+    };
+  }
+
+  return {
+    ok: true,
+    items: data as Usuario[],
+  };
+}
+
+
+
+async function fetchUsuariosMeta() {
+  const res = await fetch("/api/admin/usuarios/meta", {
+    cache: "no-store",
+  });
+
+  const data: unknown = await res.json();
+
+  if (!res.ok || typeof data !== "object" || data === null) {
+    return {
+      administrators: [],
+      condominiums: [],
+      residents: [],
+    };
+  }
+
+  const meta = data as UsuariosMetaResponse;
+
+  return {
+    administrators: Array.isArray(meta.administrators)
+      ? meta.administrators
+      : [],
+    condominiums: Array.isArray(meta.condominiums) ? meta.condominiums : [],
+    residents: Array.isArray(meta.residents) ? meta.residents : [],
+  };
+}
+
+
+
 /* =========================================================
    PÁGINA
    ========================================================= */
@@ -348,10 +807,8 @@ export default function UsuariosPage() {
   const [selectedUsuario, setSelectedUsuario] = useState<Usuario | null>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"ALL" | UserRole>("ALL");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">(
-    "ALL"
-  );
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
 
   const [form, setForm] = useState<UserFormState>(emptyCreateForm);
   const [editForm, setEditForm] = useState<UserFormState>(emptyEditForm);
@@ -362,102 +819,78 @@ export default function UsuariosPage() {
      MENSAGENS
      ========================================================= */
 
-  function showSuccess(message: string) {
+  const showSuccess = useCallback((message: string) => {
     setSuccess(message);
     setError("");
 
     window.setTimeout(() => {
       setSuccess("");
     }, 4500);
-  }
+  }, []);
 
 
 
-  function showError(message: string) {
+  const showError = useCallback((message: string) => {
     setError(message);
     setSuccess("");
-  }
+  }, []);
 
 
 
   /* =========================================================
-     CARREGAR USUÁRIOS
+     RECARREGAMENTO APÓS AÇÕES
+
+     Não usado no carregamento inicial para evitar chamada direta
+     de função que altera estado dentro do useEffect.
      ========================================================= */
 
-  async function loadUsuarios() {
-    try {
-      setLoading(true);
-      setError("");
+  const reloadUsuarios = useCallback(
+    async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
+      try {
+        if (showLoading) {
+          setLoading(true);
+        }
 
-      const res = await fetch("/api/admin/usuarios", {
-        cache: "no-store",
-      });
+        const result = await fetchUsuarios();
 
-      const data = await res.json();
+        if (!result.ok) {
+          showError(result.error);
+          setUsuarios([]);
+          return;
+        }
 
-      if (!res.ok) {
-        showError(data?.error || "Erro ao carregar usuários.");
+        setUsuarios(result.items);
+      } catch (err) {
+        console.error(err);
+        showError("Erro ao carregar usuários.");
         setUsuarios([]);
-        return;
+      } finally {
+        if (showLoading) {
+          setLoading(false);
+        }
       }
-
-      if (!Array.isArray(data)) {
-        showError("Resposta inválida da API.");
-        setUsuarios([]);
-        return;
-      }
-
-      setUsuarios(data);
-    } catch (err) {
-      console.error(err);
-      showError("Erro ao carregar usuários.");
-      setUsuarios([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [showError]
+  );
 
 
 
-  /* =========================================================
-     CARREGAR META DADOS
-     ========================================================= */
-
-  async function loadMeta() {
+  const reloadMeta = useCallback(async () => {
     try {
-      setMetaLoaded(false);
+      const meta = await fetchUsuariosMeta();
 
-      const res = await fetch("/api/admin/usuarios/meta", {
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setAdministradoras([]);
-        setCondominios([]);
-        setMoradores([]);
-        return;
-      }
-
-      setAdministradoras(
-        Array.isArray(data.administrators) ? data.administrators : []
-      );
-
-      setCondominios(
-        Array.isArray(data.condominiums) ? data.condominiums : []
-      );
-
-      setMoradores(Array.isArray(data.residents) ? data.residents : []);
+      setAdministradoras(meta.administrators);
+      setCondominios(meta.condominiums);
+      setMoradores(meta.residents);
+      setMetaLoaded(true);
     } catch (err) {
       console.error(err);
       setAdministradoras([]);
       setCondominios([]);
       setMoradores([]);
-    } finally {
       setMetaLoaded(true);
     }
-  }
+  }, []);
 
 
 
@@ -521,7 +954,7 @@ export default function UsuariosPage() {
      CRIAR USUÁRIO
      ========================================================= */
 
-  async function createUsuario(e: React.FormEvent) {
+  async function createUsuario(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const availableResidents =
@@ -549,17 +982,17 @@ export default function UsuariosPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao criar usuário.");
+        alert(getApiErrorMessage(data, "Erro ao criar usuário."));
         return;
       }
 
       setForm(emptyCreateForm);
 
-      await loadUsuarios();
-      await loadMeta();
+      await reloadUsuarios();
+      await reloadMeta();
 
       finishUserModalAfterSave();
 
@@ -579,6 +1012,9 @@ export default function UsuariosPage() {
      ========================================================= */
 
   function openEditModal(usuario: Usuario) {
+    const role = toUserRole(usuario.role, "MORADOR");
+    const councilAccess = getCouncilAccess(usuario);
+
     setSelectedUsuario(usuario);
 
     setEditForm({
@@ -586,10 +1022,18 @@ export default function UsuariosPage() {
       email: usuario.email || "",
       password: "",
       phone: usuario.phone || "",
-      role: usuario.role as UserRole,
+      role,
       administratorId: usuario.administratorId || "",
       condominiumId: usuario.condominiumId || "",
       residentId: usuario.residentId || "",
+      councilAccessEnabled: Boolean(councilAccess),
+      councilAccessTitle: councilAccess?.label?.split(" - ")[0] || "Conselheiro",
+      councilAccessCondominiumId:
+        councilAccess?.condominiumId ||
+        councilAccess?.condominium?.id ||
+        usuario.condominiumId ||
+        usuario.resident?.condominium?.id ||
+        "",
       isActive: usuario.isActive,
     });
 
@@ -602,7 +1046,7 @@ export default function UsuariosPage() {
      ATUALIZAR USUÁRIO
      ========================================================= */
 
-  async function updateUsuario(e: React.FormEvent) {
+  async function updateUsuario(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     if (!selectedUsuario) return;
@@ -632,18 +1076,18 @@ export default function UsuariosPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao atualizar usuário.");
+        alert(getApiErrorMessage(data, "Erro ao atualizar usuário."));
         return;
       }
 
       setSelectedUsuario(null);
       setEditForm(emptyEditForm);
 
-      await loadUsuarios();
-      await loadMeta();
+      await reloadUsuarios();
+      await reloadMeta();
 
       finishUserModalAfterSave();
 
@@ -686,15 +1130,15 @@ export default function UsuariosPage() {
         }),
       });
 
-      const data = await res.json();
+      const data: unknown = await res.json();
 
       if (!res.ok) {
-        alert(data?.error || "Erro ao atualizar status.");
+        alert(getApiErrorMessage(data, "Erro ao atualizar status."));
         return;
       }
 
-      await loadUsuarios();
-      await loadMeta();
+      await reloadUsuarios();
+      await reloadMeta();
 
       showSuccess(
         nextStatus
@@ -713,331 +1157,113 @@ export default function UsuariosPage() {
 
   /* =========================================================
      INIT
+
+     Corrigido:
+     - Não chama loadUsuarios/loadMeta diretamente no corpo do effect.
+     - Estados são atualizados apenas nas callbacks assíncronas.
      ========================================================= */
 
   useEffect(() => {
-    loadUsuarios();
-    loadMeta();
-  }, []);
+    let isMounted = true;
 
+    Promise.all([fetchUsuarios(), fetchUsuariosMeta()])
+      .then(([usuariosResult, metaResult]) => {
+        if (!isMounted) return;
 
+        if (!usuariosResult.ok) {
+          showError(usuariosResult.error);
+          setUsuarios([]);
+        } else {
+          setUsuarios(usuariosResult.items);
+        }
 
-  /* =========================================================
-     LER PARÂMETROS VINDOS DE /ADMIN/MORADORES
-     ========================================================= */
+        setAdministradoras(metaResult.administrators);
+        setCondominios(metaResult.condominiums);
+        setMoradores(metaResult.residents);
+        setMetaLoaded(true);
+      })
+      .catch((err: unknown) => {
+        if (!isMounted) return;
 
-  useEffect(() => {
-    if (queryProcessedRef.current) return;
-    if (loading || !metaLoaded) return;
-
-    const params = new URLSearchParams(window.location.search);
-
-    const action = params.get("action");
-    const role = params.get("role") as UserRole | null;
-    const residentId = params.get("residentId");
-    const userId = params.get("userId");
-
-    if (!action) return;
-
-    queryProcessedRef.current = true;
-
-
-
-    /* =========================================================
-       CRIAR ACESSO MORADOR
-       ========================================================= */
-
-    if (action === "create" && role === "MORADOR" && residentId) {
-      const selectedResident = moradores.find(
-        (morador) => morador.id === residentId
-      );
-
-      if (!selectedResident) {
-        showError("Morador não encontrado para criação de acesso.");
-        return;
-      }
-
-      const residentEmail = normalizeEmail(selectedResident.email || "");
-
-      const existingUserByEmail = residentEmail
-        ? usuarios.find(
-            (usuario) => normalizeEmail(usuario.email) === residentEmail
-          )
-        : null;
-
-      if (existingUserByEmail) {
-        setSelectedUsuario(existingUserByEmail);
-
-        const nextRole =
-          existingUserByEmail.role === "SINDICO" ||
-          existingUserByEmail.role === "MORADOR"
-            ? (existingUserByEmail.role as UserRole)
-            : ("MORADOR" as UserRole);
-
-        setEditForm({
-          name: existingUserByEmail.name || selectedResident.name || "",
-          email: existingUserByEmail.email || selectedResident.email || "",
-          password: "",
-          phone: existingUserByEmail.phone || selectedResident.phone || "",
-          role: nextRole,
-          administratorId: existingUserByEmail.administratorId || "",
-          condominiumId:
-            nextRole === "SINDICO" || nextRole === "MORADOR"
-              ? selectedResident.condominiumId ||
-                existingUserByEmail.condominiumId ||
-                ""
-              : existingUserByEmail.condominiumId || "",
-          residentId: selectedResident.id,
-          isActive: existingUserByEmail.isActive,
-        });
-
-        setRoleFilter(nextRole);
-        setSearchTerm(existingUserByEmail.name || selectedResident.name || "");
-        setEditModalOpen(true);
-
-        showError(
-          "Já existe um usuário com o e-mail deste morador. Abrimos o cadastro existente para você revisar ou vincular o morador a esse acesso."
-        );
-
-        return;
-      }
-
-      setForm({
-        name: selectedResident.name || "",
-        email: selectedResident.email || "",
-        password: "",
-        phone: selectedResident.phone || "",
-        role: "MORADOR",
-        administratorId: "",
-        condominiumId: selectedResident.condominiumId || "",
-        residentId,
-        isActive: true,
+        console.error(err);
+        showError("Erro ao carregar usuários.");
+        setUsuarios([]);
+        setAdministradoras([]);
+        setCondominios([]);
+        setMoradores([]);
+        setMetaLoaded(true);
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoading(false);
+        }
       });
 
-      setRoleFilter("MORADOR");
-      setSearchTerm(selectedResident.name || "");
-      setModalOpen(true);
-      return;
-    }
-
-
-
-    /* =========================================================
-       EDITAR ACESSO
-       ========================================================= */
-
-    if (action === "edit" && userId) {
-      const usuario = usuarios.find((item) => item.id === userId);
-      const residentIdFromUrl = params.get("residentId");
-
-      if (!usuario) {
-        showError("Usuário não encontrado para edição.");
-        return;
-      }
-
-      const selectedResident = residentIdFromUrl
-        ? moradores.find((morador) => morador.id === residentIdFromUrl)
-        : null;
-
-      setSelectedUsuario(usuario);
-
-      const nextRole =
-        usuario.role === "SINDICO" || usuario.role === "MORADOR"
-          ? (usuario.role as UserRole)
-          : ("MORADOR" as UserRole);
-
-      setEditForm({
-        name: usuario.name || selectedResident?.name || "",
-        email: usuario.email || selectedResident?.email || "",
-        password: "",
-        phone: usuario.phone || selectedResident?.phone || "",
-        role: nextRole,
-        administratorId: usuario.administratorId || "",
-        condominiumId:
-          selectedResident?.condominiumId || usuario.condominiumId || "",
-        residentId: selectedResident?.id || usuario.residentId || "",
-        isActive: usuario.isActive,
-      });
-
-      setRoleFilter(nextRole);
-      setSearchTerm(usuario.name || selectedResident?.name || usuario.email || "");
-      setEditModalOpen(true);
-      return;
-    }
-  }, [loading, metaLoaded, usuarios, moradores]);
-
-
-
-  /* =========================================================
-     HELPERS
-     ========================================================= */
-
-  const roleLabel = (role?: string | null) =>
-    ({
-      SUPER_ADMIN: "Admin global EloGest",
-      ADMINISTRADORA: "Administradora",
-      SINDICO: "Síndico",
-      MORADOR: "Morador",
-    }[role || ""] || role || "-");
-
-  const roleClass = (role?: string | null) =>
-    role === "SUPER_ADMIN"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : "border-[#DDE5DF] bg-white text-[#5E6B63]";
-
-  const statusLabel = (active: boolean) => (active ? "Ativo" : "Inativo");
-
-  const statusClass = (active: boolean) =>
-    active
-      ? "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]"
-      : "border-red-200 bg-red-50 text-red-700";
-
-  function getUnitLabel(unit?: Unidade | null) {
-    if (!unit) return "-";
-
-    return `${unit.block ? `Bloco ${unit.block} - ` : ""}Unidade ${
-      unit.unitNumber
-    }`;
-  }
-
-  function getAccessMainLabel(usuario: Usuario) {
-    if (usuario.role === "SUPER_ADMIN") {
-      return "Acesso global da plataforma";
-    }
-
-    if (usuario.role === "ADMINISTRADORA") {
-      return usuario.administrator?.name || "Administradora não vinculada";
-    }
-
-    if (usuario.role === "SINDICO") {
-      return usuario.condominium?.name || "Condomínio não vinculado";
-    }
-
-    if (usuario.role === "MORADOR") {
-      return usuario.resident?.name || "Morador não vinculado";
-    }
-
-    return "-";
-  }
-
-  function getAccessDetailLabel(usuario: Usuario) {
-    if (usuario.role === "SUPER_ADMIN") {
-      return "Pode administrar toda a plataforma.";
-    }
-
-    if (usuario.role === "ADMINISTRADORA") {
-      return "Acesso administrativo da carteira da administradora.";
-    }
-
-    if (usuario.role === "SINDICO") {
-      if (usuario.resident) {
-        return `Também vinculado como morador: ${
-          usuario.resident.name
-        } • ${getUnitLabel(usuario.resident.unit)}`;
-      }
-
-      return "Acesso de gestão do condomínio.";
-    }
-
-    if (usuario.role === "MORADOR") {
-      const condominiumName = usuario.resident?.condominium?.name || "-";
-      const unitLabel = getUnitLabel(usuario.resident?.unit);
-
-      return `${condominiumName} • ${unitLabel}`;
-    }
-
-    return "-";
-  }
-
-  function getUserLinkLabel(usuario: Usuario) {
-    const main = getAccessMainLabel(usuario);
-    const detail = getAccessDetailLabel(usuario);
-
-    if (!detail || detail === "-") return main;
-
-    return `${main} • ${detail}`;
-  }
-
-  function buildUserPayload(
-    source: UserFormState,
-    includePasswordRequired: boolean
-  ) {
-    const payload: any = {
-      name: source.name.trim(),
-      email: normalizeEmail(source.email),
-      phone: normalizePhoneForForm(source.phone) || null,
-      role: source.role,
-      isActive: source.isActive,
+    return () => {
+      isMounted = false;
     };
+  }, [showError]);
 
-    if (includePasswordRequired || source.password.trim()) {
-      payload.password = source.password;
-    }
 
-    if (source.role === "ADMINISTRADORA") {
-      payload.administratorId = source.administratorId;
-    }
 
-    if (source.role === "SINDICO") {
-      payload.condominiumId = source.condominiumId;
+  /* =========================================================
+     MORADORES DISPONÍVEIS
+     ========================================================= */
 
-      if (source.residentId) {
-        payload.residentId = source.residentId;
+  const moradoresComAtualSelecionado = (() => {
+    let list = moradores;
+
+    if (selectedUsuario?.residentId && selectedUsuario.resident) {
+      const exists = list.some((item) => item.id === selectedUsuario.residentId);
+
+      if (!exists) {
+        list = [
+          ...list,
+          {
+            id: selectedUsuario.resident.id,
+            name: selectedUsuario.resident.name,
+            email: selectedUsuario.resident.email || null,
+            phone: selectedUsuario.resident.phone || null,
+            cpf: null,
+            condominiumId: selectedUsuario.resident.condominium?.id || "",
+            unitId: selectedUsuario.resident.unit?.id || "",
+            condominium: selectedUsuario.resident.condominium || null,
+            unit: selectedUsuario.resident.unit || null,
+          },
+        ];
       }
     }
 
-    if (source.role === "MORADOR") {
-      payload.residentId = source.residentId;
-    }
+    return list;
+  })();
 
-    return payload;
-  }
 
-  function validateUserForm(
-    source: UserFormState,
-    availableResidents: Morador[],
-    editing = false
-  ) {
-    if (!source.name.trim()) {
-      return "Informe o nome do usuário.";
-    }
 
-    if (!source.email.trim()) {
-      return "Informe o e-mail do usuário.";
-    }
+  const moradoresDoMoradorFormulario = form.condominiumId
+    ? moradores.filter((morador) => morador.condominiumId === form.condominiumId)
+    : moradores;
 
-    if (!isValidEmail(source.email)) {
-      return "Informe um e-mail válido.";
-    }
 
-    if (!isValidPhoneForForm(source.phone)) {
-      return "Informe um telefone válido com DDD para notificações/WhatsApp ou deixe o campo em branco.";
-    }
 
-    const passwordError = validatePasswordForForm(source.password, editing);
+  const moradoresDoSindicoFormulario = form.condominiumId
+    ? moradores.filter((morador) => morador.condominiumId === form.condominiumId)
+    : [];
 
-    if (passwordError) {
-      return passwordError;
-    }
 
-    if (source.role === "ADMINISTRADORA" && !source.administratorId) {
-      return "Selecione a administradora.";
-    }
 
-    if (source.role === "SINDICO" && !source.condominiumId) {
-      return "Selecione o condomínio do síndico.";
-    }
+  const moradoresDoMoradorEditFormulario = editForm.condominiumId
+    ? moradoresComAtualSelecionado.filter(
+        (morador) => morador.condominiumId === editForm.condominiumId
+      )
+    : moradoresComAtualSelecionado;
 
-    if (source.role === "MORADOR" && !source.residentId) {
-      if (availableResidents.length === 0) {
-        return "Não há moradores sem usuário disponível para este filtro. Cadastre primeiro um novo morador ou verifique se o morador já possui usuário vinculado.";
-      }
 
-      return "Selecione o morador vinculado.";
-    }
 
-    return "";
-  }
+  const moradoresDoSindicoEditFormulario = editForm.condominiumId
+    ? moradoresComAtualSelecionado.filter(
+        (morador) => morador.condominiumId === editForm.condominiumId
+      )
+    : [];
 
 
 
@@ -1072,86 +1298,191 @@ export default function UsuariosPage() {
 
 
   /* =========================================================
-     MÉTRICAS
-     ========================================================= */
+     LER PARÂMETROS VINDOS DE /ADMIN/MORADORES
 
-  const metrics = useMemo(() => {
-    return {
-      total: usuarios.length,
-      active: usuarios.filter((item) => item.isActive).length,
-      inactive: usuarios.filter((item) => !item.isActive).length,
-      superAdmin: usuarios.filter((item) => item.role === "SUPER_ADMIN").length,
-      administradora: usuarios.filter((item) => item.role === "ADMINISTRADORA")
-        .length,
-      sindico: usuarios.filter((item) => item.role === "SINDICO").length,
-      morador: usuarios.filter((item) => item.role === "MORADOR").length,
+     Corrigido:
+     - O processamento é feito dentro de callback assíncrona curta
+       para evitar setState síncrono diretamente no corpo do effect.
+   ========================================================= */
+
+  useEffect(() => {
+    if (queryProcessedRef.current) return;
+    if (loading || !metaLoaded) return;
+
+    const timeoutId = window.setTimeout(() => {
+      if (queryProcessedRef.current) return;
+
+      const params = new URLSearchParams(window.location.search);
+
+      const action = params.get("action");
+      const role = params.get("role");
+      const residentId = params.get("residentId");
+      const userId = params.get("userId");
+
+      if (!action) return;
+
+      queryProcessedRef.current = true;
+
+
+
+      /* =======================================================
+         CRIAR ACESSO MORADOR
+         ======================================================= */
+
+      if (action === "create" && role === "MORADOR" && residentId) {
+        const selectedResident = moradores.find(
+          (morador) => morador.id === residentId
+        );
+
+        if (!selectedResident) {
+          showError("Morador não encontrado para criação de acesso.");
+          return;
+        }
+
+        const residentEmail = normalizeEmail(selectedResident.email || "");
+
+        const existingUserByEmail = residentEmail
+          ? usuarios.find(
+              (usuario) => normalizeEmail(usuario.email) === residentEmail
+            )
+          : null;
+
+        if (existingUserByEmail) {
+          const nextRole =
+            existingUserByEmail.role === "SINDICO" ||
+            existingUserByEmail.role === "MORADOR"
+              ? toUserRole(existingUserByEmail.role)
+              : "MORADOR";
+
+          setSelectedUsuario(existingUserByEmail);
+
+          setEditForm({
+            name: existingUserByEmail.name || selectedResident.name || "",
+            email: existingUserByEmail.email || selectedResident.email || "",
+            password: "",
+            phone: existingUserByEmail.phone || selectedResident.phone || "",
+            role: nextRole,
+            administratorId: existingUserByEmail.administratorId || "",
+            condominiumId:
+              nextRole === "SINDICO" || nextRole === "MORADOR"
+                ? selectedResident.condominiumId ||
+                  existingUserByEmail.condominiumId ||
+                  ""
+                : existingUserByEmail.condominiumId || "",
+            residentId: selectedResident.id,
+            councilAccessEnabled: false,
+            councilAccessTitle: "",
+            councilAccessCondominiumId: selectedResident.condominiumId || "",
+            isActive: existingUserByEmail.isActive,
+          });
+
+          setRoleFilter(nextRole);
+          setSearchTerm(existingUserByEmail.name || selectedResident.name || "");
+          setEditModalOpen(true);
+
+          showError(
+            "Já existe um usuário com o e-mail deste morador. Abrimos o cadastro existente para você revisar ou vincular o morador a esse acesso."
+          );
+
+          return;
+        }
+
+        setForm({
+          name: selectedResident.name || "",
+          email: selectedResident.email || "",
+          password: "",
+          phone: selectedResident.phone || "",
+          role: "MORADOR",
+          administratorId: "",
+          condominiumId: selectedResident.condominiumId || "",
+          residentId,
+          councilAccessEnabled: false,
+          councilAccessTitle: "",
+          councilAccessCondominiumId: selectedResident.condominiumId || "",
+          isActive: true,
+        });
+
+        setRoleFilter("MORADOR");
+        setSearchTerm(selectedResident.name || "");
+        setModalOpen(true);
+        return;
+      }
+
+
+
+      /* =======================================================
+         EDITAR ACESSO
+         ======================================================= */
+
+      if (action === "edit" && userId) {
+        const usuario = usuarios.find((item) => item.id === userId);
+        const residentIdFromUrl = params.get("residentId");
+
+        if (!usuario) {
+          showError("Usuário não encontrado para edição.");
+          return;
+        }
+
+        const selectedResident = residentIdFromUrl
+          ? moradores.find((morador) => morador.id === residentIdFromUrl)
+          : null;
+
+        const nextRole =
+          usuario.role === "SINDICO" || usuario.role === "MORADOR"
+            ? toUserRole(usuario.role)
+            : "MORADOR";
+
+        setSelectedUsuario(usuario);
+
+        setEditForm({
+          name: usuario.name || selectedResident?.name || "",
+          email: usuario.email || selectedResident?.email || "",
+          password: "",
+          phone: usuario.phone || selectedResident?.phone || "",
+          role: nextRole,
+          administratorId: usuario.administratorId || "",
+          condominiumId:
+            selectedResident?.condominiumId || usuario.condominiumId || "",
+          residentId: selectedResident?.id || usuario.residentId || "",
+          councilAccessEnabled: Boolean(getCouncilAccess(usuario)),
+          councilAccessTitle: getCouncilAccess(usuario)?.label?.split(" - ")[0] || "Conselheiro",
+          councilAccessCondominiumId:
+            getCouncilAccess(usuario)?.condominiumId ||
+            getCouncilAccess(usuario)?.condominium?.id ||
+            selectedResident?.condominiumId ||
+            usuario.condominiumId ||
+            "",
+          isActive: usuario.isActive,
+        });
+
+        setRoleFilter(nextRole);
+        setSearchTerm(usuario.name || selectedResident?.name || usuario.email || "");
+        setEditModalOpen(true);
+      }
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
     };
-  }, [usuarios]);
+  }, [loading, metaLoaded, usuarios, moradores, showError]);
 
 
 
   /* =========================================================
-     MORADORES DISPONÍVEIS
+     MÉTRICAS
      ========================================================= */
 
-  const moradoresComAtualSelecionado = useMemo(() => {
-    let list = moradores;
-
-    if (selectedUsuario?.residentId && selectedUsuario.resident) {
-      const exists = list.some((item) => item.id === selectedUsuario.residentId);
-
-      if (!exists) {
-        list = [
-          ...list,
-          {
-            id: selectedUsuario.resident.id,
-            name: selectedUsuario.resident.name,
-            email: selectedUsuario.resident.email || null,
-            phone: selectedUsuario.resident.phone || null,
-            cpf: null,
-            condominiumId: selectedUsuario.resident.condominium?.id || "",
-            unitId: selectedUsuario.resident.unit?.id || "",
-            condominium: selectedUsuario.resident.condominium || null,
-            unit: selectedUsuario.resident.unit || null,
-          },
-        ];
-      }
-    }
-
-    return list;
-  }, [moradores, selectedUsuario]);
-
-  const moradoresDoMoradorFormulario = useMemo(() => {
-    if (!form.condominiumId) return moradores;
-
-    return moradores.filter(
-      (morador) => morador.condominiumId === form.condominiumId
-    );
-  }, [moradores, form.condominiumId]);
-
-  const moradoresDoSindicoFormulario = useMemo(() => {
-    if (!form.condominiumId) return [];
-
-    return moradores.filter(
-      (morador) => morador.condominiumId === form.condominiumId
-    );
-  }, [moradores, form.condominiumId]);
-
-  const moradoresDoMoradorEditFormulario = useMemo(() => {
-    if (!editForm.condominiumId) return moradoresComAtualSelecionado;
-
-    return moradoresComAtualSelecionado.filter(
-      (morador) => morador.condominiumId === editForm.condominiumId
-    );
-  }, [moradoresComAtualSelecionado, editForm.condominiumId]);
-
-  const moradoresDoSindicoEditFormulario = useMemo(() => {
-    if (!editForm.condominiumId) return [];
-
-    return moradoresComAtualSelecionado.filter(
-      (morador) => morador.condominiumId === editForm.condominiumId
-    );
-  }, [moradoresComAtualSelecionado, editForm.condominiumId]);
+  const metrics = {
+    total: usuarios.length,
+    active: usuarios.filter((item) => item.isActive).length,
+    inactive: usuarios.filter((item) => !item.isActive).length,
+    superAdmin: usuarios.filter((item) => item.role === "SUPER_ADMIN").length,
+    administradora: usuarios.filter((item) => item.role === "ADMINISTRADORA")
+      .length,
+    sindico: usuarios.filter((item) => item.role === "SINDICO").length,
+    conselheiro: usuarios.filter((item) => Boolean(getCouncilAccess(item))).length,
+    morador: usuarios.filter((item) => item.role === "MORADOR").length,
+  };
 
 
 
@@ -1159,38 +1490,38 @@ export default function UsuariosPage() {
      FILTROS DA LISTAGEM
      ========================================================= */
 
-  const filteredUsuarios = useMemo(() => {
+  const filteredUsuarios = usuarios.filter((usuario) => {
     const term = searchTerm.trim().toLowerCase();
 
-    return usuarios.filter((usuario) => {
-      const matchesRole = roleFilter === "ALL" || usuario.role === roleFilter;
+    const matchesRole = roleFilter === "ALL" || usuario.role === roleFilter;
 
-      const matchesStatus =
-        statusFilter === "ALL" ||
-        (statusFilter === "ACTIVE" && usuario.isActive) ||
-        (statusFilter === "INACTIVE" && !usuario.isActive);
+    const matchesStatus =
+      statusFilter === "ALL" ||
+      (statusFilter === "ACTIVE" && usuario.isActive) ||
+      (statusFilter === "INACTIVE" && !usuario.isActive);
 
-      const searchable = [
-        usuario.name,
-        usuario.email,
-        usuario.phone,
-        usuario.role,
-        usuario.administrator?.name,
-        usuario.condominium?.name,
-        usuario.resident?.name,
-        usuario.resident?.condominium?.name,
-        usuario.resident?.unit?.block,
-        usuario.resident?.unit?.unitNumber,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+    const searchable = [
+      usuario.name,
+      usuario.email,
+      usuario.phone,
+      usuario.role,
+      usuario.administrator?.name,
+      usuario.condominium?.name,
+      usuario.resident?.name,
+      usuario.resident?.condominium?.name,
+      usuario.resident?.unit?.block,
+      usuario.resident?.unit?.unitNumber,
+      ...(usuario.userAccesses || []).map((access) => access.label),
+      ...(usuario.userAccesses || []).map((access) => access.condominium?.name),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
-      const matchesSearch = !term || searchable.includes(term);
+    const matchesSearch = !term || searchable.includes(term);
 
-      return matchesRole && matchesStatus && matchesSearch;
-    });
-  }, [usuarios, searchTerm, roleFilter, statusFilter]);
+    return matchesRole && matchesStatus && matchesSearch;
+  });
 
 
 
@@ -1217,7 +1548,7 @@ export default function UsuariosPage() {
     <AdminShell
       current="usuarios"
       title="Usuários"
-      description="Gerencie acessos administrativos, síndicos e moradores."
+      description="Gerencie acessos administrativos, síndicos, conselheiros e moradores."
     >
       <div className="space-y-6">
         {/* =====================================================
@@ -1235,7 +1566,7 @@ export default function UsuariosPage() {
             </h1>
 
             <p className="mt-2 max-w-4xl text-sm leading-6 text-[#5E6B63]">
-              Gerencie acessos administrativos, síndicos, moradores e usuários
+              Gerencie acessos administrativos, síndicos, conselheiros, moradores e usuários
               globais da plataforma EloGest.
             </p>
           </div>
@@ -1283,7 +1614,6 @@ export default function UsuariosPage() {
             condominios={condominios}
             moradoresMorador={moradoresDoMoradorFormulario}
             moradoresSindico={moradoresDoSindicoFormulario}
-            getUnitLabel={getUnitLabel}
             applyResident={(residentId, availableResidents) =>
               applyResidentToForm(residentId, availableResidents, "create")
             }
@@ -1296,8 +1626,6 @@ export default function UsuariosPage() {
           />
         )}
 
-
-
         {editModalOpen && selectedUsuario && (
           <UserModal
             title="Editar usuário"
@@ -1308,7 +1636,6 @@ export default function UsuariosPage() {
             condominios={condominios}
             moradoresMorador={moradoresDoMoradorEditFormulario}
             moradoresSindico={moradoresDoSindicoEditFormulario}
-            getUnitLabel={getUnitLabel}
             applyResident={(residentId, availableResidents) =>
               applyResidentToForm(residentId, availableResidents, "edit")
             }
@@ -1342,26 +1669,77 @@ export default function UsuariosPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-3 lg:min-w-[620px] xl:grid-cols-4">
-                <PortfolioMetricBox title="Total" value={metrics.total} description="Usuários cadastrados." highlighted />
-                <PortfolioMetricBox title="Ativos" value={metrics.active} description="Com acesso ativo." highlighted />
-                <PortfolioMetricBox title="Administradora" value={metrics.administradora} description="Perfis administrativos." />
-                <PortfolioMetricBox title="Portal" value={metrics.sindico + metrics.morador} description="Síndicos e moradores." />
+                <PortfolioMetricBox
+                  title="Total"
+                  value={metrics.total}
+                  description="Usuários cadastrados."
+                  highlighted
+                />
+
+                <PortfolioMetricBox
+                  title="Ativos"
+                  value={metrics.active}
+                  description="Com acesso ativo."
+                  highlighted
+                />
+
+                <PortfolioMetricBox
+                  title="Administradora"
+                  value={metrics.administradora}
+                  description="Perfis administrativos."
+                />
+
+                <PortfolioMetricBox
+                  title="Portal"
+                  value={metrics.sindico + metrics.conselheiro + metrics.morador}
+                  description="Síndicos, conselheiros e moradores."
+                />
               </div>
             </div>
           </div>
 
           <div className="grid gap-0 divide-y divide-[#DDE5DF] md:grid-cols-3 md:divide-x md:divide-y-0">
             <div className="p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">Status dos acessos</p>
-              <p className="mt-2 text-sm leading-6 text-[#5E6B63]"><strong className="text-[#17211B]">{metrics.active}</strong> ativo(s) e <strong className="text-[#17211B]">{metrics.inactive}</strong> inativo(s).</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">
+                Status dos acessos
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
+                <strong className="text-[#17211B]">{metrics.active}</strong>{" "}
+                ativo(s) e{" "}
+                <strong className="text-[#17211B]">{metrics.inactive}</strong>{" "}
+                inativo(s).
+              </p>
             </div>
+
             <div className="p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">Perfis administrativos</p>
-              <p className="mt-2 text-sm leading-6 text-[#5E6B63]"><strong className="text-[#17211B]">{metrics.superAdmin}</strong> admin global e <strong className="text-[#17211B]">{metrics.administradora}</strong> administradora(s).</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">
+                Perfis administrativos
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
+                <strong className="text-[#17211B]">{metrics.superAdmin}</strong>{" "}
+                admin global e{" "}
+                <strong className="text-[#17211B]">
+                  {metrics.administradora}
+                </strong>{" "}
+                administradora(s).
+              </p>
             </div>
+
             <div className="p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">Perfis do portal</p>
-              <p className="mt-2 text-sm leading-6 text-[#5E6B63]"><strong className="text-[#17211B]">{metrics.sindico}</strong> síndico(s) e <strong className="text-[#17211B]">{metrics.morador}</strong> morador(es).</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#7A877F]">
+                Perfis do portal
+              </p>
+
+              <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
+                <strong className="text-[#17211B]">{metrics.sindico}</strong>{" "}
+                síndico(s),{" "}
+                <strong className="text-[#17211B]">{metrics.conselheiro}</strong>{" "}
+                conselheiro(s) e{" "}
+                <strong className="text-[#17211B]">{metrics.morador}</strong>{" "}
+                morador(es).
+              </p>
             </div>
           </div>
         </section>
@@ -1399,7 +1777,7 @@ export default function UsuariosPage() {
 
                 <select
                   value={roleFilter}
-                  onChange={(e) => setRoleFilter(e.target.value as any)}
+                  onChange={(e) => setRoleFilter(toRoleFilter(e.target.value))}
                   className="form-input mt-1"
                 >
                   <option value="ALL">Todos</option>
@@ -1417,7 +1795,7 @@ export default function UsuariosPage() {
 
                 <select
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  onChange={(e) => setStatusFilter(toStatusFilter(e.target.value))}
                   className="form-input mt-1"
                 >
                   <option value="ALL">Todos</option>
@@ -1432,8 +1810,7 @@ export default function UsuariosPage() {
               <strong className="text-[#17211B]">
                 {filteredUsuarios.length}
               </strong>{" "}
-              de{" "}
-              <strong className="text-[#17211B]">{usuarios.length}</strong>{" "}
+              de <strong className="text-[#17211B]">{usuarios.length}</strong>{" "}
               usuário(s).
             </p>
           </section>
@@ -1447,51 +1824,162 @@ export default function UsuariosPage() {
 
         {filteredUsuarios.length === 0 ? (
           <section className="rounded-[28px] border border-[#DDE5DF] bg-white p-8 text-center shadow-sm">
-            <h2 className="mb-2 text-2xl font-semibold text-[#17211B]">Nenhum Usuário Encontrado</h2>
-            <p className="mx-auto max-w-2xl text-sm leading-6 text-[#5E6B63]">Não encontramos usuários com os filtros atuais. Tente limpar os filtros ou cadastrar um novo usuário.</p>
+            <h2 className="mb-2 text-2xl font-semibold text-[#17211B]">
+              Nenhum Usuário Encontrado
+            </h2>
+
+            <p className="mx-auto max-w-2xl text-sm leading-6 text-[#5E6B63]">
+              Não encontramos usuários com os filtros atuais. Tente limpar os
+              filtros ou cadastrar um novo usuário.
+            </p>
           </section>
         ) : (
           <div className="space-y-3">
             {filteredUsuarios.map((usuario) => (
-              <article key={usuario.id} className="rounded-[24px] border border-[#DDE5DF] bg-white p-5 shadow-sm transition hover:border-[#256D3C]/30 hover:shadow-[0_14px_38px_rgba(23,33,27,0.07)]">
+              <article
+                key={usuario.id}
+                className="rounded-[24px] border border-[#DDE5DF] bg-white p-5 shadow-sm transition hover:border-[#256D3C]/30 hover:shadow-[0_14px_38px_rgba(23,33,27,0.07)]"
+              >
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${roleClass(usuario.role)}`}>{roleLabel(usuario.role)}</span>
-                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(usuario.isActive)}`}>{statusLabel(usuario.isActive)}</span>
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${roleClass(
+                          usuario.role
+                        )}`}
+                      >
+                        {roleLabel(usuario.role)}
+                      </span>
+
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(
+                          usuario.isActive
+                        )}`}
+                      >
+                        {statusLabel(usuario.isActive)}
+                      </span>
+
+                      {getCouncilAccess(usuario) ? (
+                        <span className="rounded-full border border-[#CFE6D4] bg-[#EAF7EE] px-3 py-1 text-xs font-semibold text-[#256D3C]">
+                          {getCouncilAccessTitle(usuario)}
+                        </span>
+                      ) : null}
                     </div>
 
-                    <h2 className="break-words text-xl font-semibold tracking-tight text-[#17211B] md:text-2xl">{usuario.name}</h2>
-                    <p className="mt-2 text-sm leading-6 text-[#5E6B63]">{usuario.email}</p>
-                    <p className="mt-1 text-sm leading-6 text-[#5E6B63]">Telefone: {formatPhoneDisplay(usuario.phone)}</p>
-                    <p className="mt-2 text-xs text-[#7A877F]">Acesso vinculado a: {getUserLinkLabel(usuario)}</p>
+                    <h2 className="break-words text-xl font-semibold tracking-tight text-[#17211B] md:text-2xl">
+                      {usuario.name}
+                    </h2>
+
+                    <p className="mt-2 text-sm leading-6 text-[#5E6B63]">
+                      {usuario.email}
+                    </p>
+
+                    <p className="mt-1 text-sm leading-6 text-[#5E6B63]">
+                      Telefone: {formatPhoneDisplay(usuario.phone)}
+                    </p>
+
+                    <p className="mt-2 text-xs text-[#7A877F]">
+                      Acesso vinculado a: {getUserLinkLabel(usuario)}
+                    </p>
+
+                    {getCouncilAccess(usuario) ? (
+                      <p className="mt-1 text-xs font-semibold text-[#256D3C]">
+                        Conselho: {getCouncilAccessLabel(usuario)}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex shrink-0 flex-wrap items-start gap-2 xl:w-[170px] xl:flex-col">
-                    <button type="button" onClick={() => openEditModal(usuario)} className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]">Editar</button>
-                    <button type="button" onClick={() => toggleStatus(usuario)} disabled={updatingId === usuario.id} className={usuario.isActive ? "inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-60" : "inline-flex h-11 w-full items-center justify-center rounded-2xl bg-[#256D3C] px-4 text-sm font-semibold text-white transition hover:bg-[#1F5A32] disabled:bg-[#9AA7A0]"}>
-                      {updatingId === usuario.id ? "Atualizando..." : usuario.isActive ? "Inativar" : "Reativar"}
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(usuario)}
+                      className="inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"
+                    >
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleStatus(usuario)}
+                      disabled={updatingId === usuario.id}
+                      className={
+                        usuario.isActive
+                          ? "inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-60"
+                          : "inline-flex h-11 w-full items-center justify-center rounded-2xl bg-[#256D3C] px-4 text-sm font-semibold text-white transition hover:bg-[#1F5A32] disabled:bg-[#9AA7A0]"
+                      }
+                    >
+                      {updatingId === usuario.id
+                        ? "Atualizando..."
+                        : usuario.isActive
+                          ? "Inativar"
+                          : "Reativar"}
                     </button>
                   </div>
                 </div>
 
-                <details className="mt-4 group rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA]">
+                <details className="group mt-4 rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-[#17211B]">
                     <span>Mais Informações</span>
-                    <span className="text-[#7A877F] transition group-open:rotate-180">▾</span>
+                    <span className="text-[#7A877F] transition group-open:rotate-180">
+                      ▾
+                    </span>
                   </summary>
 
                   <div className="border-t border-[#DDE5DF] p-4">
                     <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-4">
                       <InfoLine label="Perfil" value={roleLabel(usuario.role)} />
-                      <InfoLine label="Status" value={statusLabel(usuario.isActive)} />
-                      <InfoLine label="Telefone" value={formatPhoneDisplay(usuario.phone)} />
-                      <InfoLine label="Principal" value={getAccessMainLabel(usuario)} />
-                      <InfoLine label="Detalhe" value={getAccessDetailLabel(usuario)} />
-                      <InfoLine label="Administradora" value={usuario.administrator?.name || "-"} />
-                      <InfoLine label="Condomínio" value={usuario.condominium?.name || usuario.resident?.condominium?.name || "-"} />
-                      <InfoLine label="Morador" value={usuario.resident?.name || "-"} />
-                      <InfoLine label="Criado em" value={usuario.createdAt ? new Date(usuario.createdAt).toLocaleString("pt-BR") : "-"} />
+                      <InfoLine
+                        label="Status"
+                        value={statusLabel(usuario.isActive)}
+                      />
+                      <InfoLine
+                        label="Telefone"
+                        value={formatPhoneDisplay(usuario.phone)}
+                      />
+                      <InfoLine
+                        label="Principal"
+                        value={getAccessMainLabel(usuario)}
+                      />
+                      <InfoLine
+                        label="Detalhe"
+                        value={getAccessDetailLabel(usuario)}
+                      />
+                      <InfoLine
+                        label="Administradora"
+                        value={usuario.administrator?.name || "-"}
+                      />
+                      <InfoLine
+                        label="Condomínio"
+                        value={
+                          usuario.condominium?.name ||
+                          usuario.resident?.condominium?.name ||
+                          "-"
+                        }
+                      />
+                      <InfoLine
+                        label="Morador"
+                        value={usuario.resident?.name || "-"}
+                      />
+                      <InfoLine
+                        label="Cargo No Conselho"
+                        value={getCouncilAccessTitle(usuario)}
+                      />
+                      <InfoLine
+                        label="Condomínio Do Conselho"
+                        value={getCouncilAccessCondominiumName(usuario)}
+                      />
+                      <InfoLine
+                        label="Acesso De Conselho"
+                        value={getCouncilAccessLabel(usuario)}
+                      />
+                      <InfoLine
+                        label="Criado em"
+                        value={
+                          usuario.createdAt
+                            ? new Date(usuario.createdAt).toLocaleString("pt-BR")
+                            : "-"
+                        }
+                      />
                     </div>
                   </div>
                 </details>
@@ -1511,7 +1999,9 @@ export default function UsuariosPage() {
           font-size: 0.875rem;
           color: #17211b;
           outline: none;
-          transition: border-color 0.15s ease, box-shadow 0.15s ease,
+          transition:
+            border-color 0.15s ease,
+            box-shadow 0.15s ease,
             background-color 0.15s ease;
         }
 
@@ -1523,6 +2013,10 @@ export default function UsuariosPage() {
 
         .form-input::placeholder {
           color: #9aa7a0;
+        }
+
+        details > summary::-webkit-details-marker {
+          display: none;
         }
       `}</style>
     </AdminShell>
@@ -1544,7 +2038,6 @@ function UserModal({
   condominios,
   moradoresMorador,
   moradoresSindico,
-  getUnitLabel,
   applyResident,
   onClose,
   onSubmit,
@@ -1556,15 +2049,14 @@ function UserModal({
   title: string;
   description: string;
   form: UserFormState;
-  setForm: React.Dispatch<React.SetStateAction<UserFormState>>;
+  setForm: Dispatch<SetStateAction<UserFormState>>;
   administradoras: Administradora[];
   condominios: Condominio[];
   moradoresMorador: Morador[];
   moradoresSindico: Morador[];
-  getUnitLabel: (unit?: Unidade | null) => string;
   applyResident: (residentId: string, availableResidents: Morador[]) => void;
   onClose: () => void;
-  onSubmit: (e: React.FormEvent) => void;
+  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
   saving: boolean;
   submitLabel: string;
   passwordHint: string;
@@ -1609,7 +2101,7 @@ function UserModal({
               onChange={(e) =>
                 setForm((prev) => ({
                   ...prev,
-                  role: e.target.value as UserRole,
+                  role: toUserRole(e.target.value),
                   administratorId: "",
                   condominiumId: "",
                   residentId: "",
@@ -1701,6 +2193,87 @@ function UserModal({
                 </p>
               </FormField>
             </>
+          )}
+
+
+          {(form.role === "SINDICO" || form.role === "MORADOR") && (
+            <section className="rounded-3xl border border-[#DDE5DF] bg-[#F9FBFA] p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-[#17211B]">
+                    Perfil Adicional De Conselho
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-[#7A877F]">
+                    Use esta opção quando o usuário também atuar como conselheiro do condomínio, sem perder o perfil principal de morador ou síndico.
+                  </p>
+                </div>
+
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-[#17211B]">
+                  <input
+                    type="checkbox"
+                    checked={form.councilAccessEnabled}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        councilAccessEnabled: e.target.checked,
+                        councilAccessTitle: e.target.checked
+                          ? prev.councilAccessTitle || "Conselheiro"
+                          : prev.councilAccessTitle,
+                        councilAccessCondominiumId:
+                          prev.councilAccessCondominiumId ||
+                          prev.condominiumId,
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-[#DDE5DF] text-[#256D3C]"
+                  />
+                  Ativar Perfil De Conselheiro
+                </label>
+              </div>
+
+              {form.councilAccessEnabled && (
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <FormField label="Condomínio Do Conselho" required>
+                    <select
+                      value={form.councilAccessCondominiumId || form.condominiumId}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          councilAccessCondominiumId: e.target.value,
+                        }))
+                      }
+                      className="form-input"
+                    >
+                      <option value="">Selecione o condomínio</option>
+
+                      {condominios.map((condominio) => (
+                        <option key={condominio.id} value={condominio.id}>
+                          {condominio.name}
+                        </option>
+                      ))}
+                    </select>
+                  </FormField>
+
+                  <FormField label="Cargo/Função No Conselho">
+                    <select
+                      value={form.councilAccessTitle}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          councilAccessTitle: e.target.value,
+                        }))
+                      }
+                      className="form-input"
+                    >
+                      <option value="Conselheiro">Conselheiro</option>
+                      <option value="Presidente Do Conselho">Presidente Do Conselho</option>
+                      <option value="Conselheiro Fiscal">Conselheiro Fiscal</option>
+                      <option value="Conselheiro Consultivo">Conselheiro Consultivo</option>
+                      <option value="Conselheiro Suplente">Conselheiro Suplente</option>
+                    </select>
+                  </FormField>
+                </div>
+              )}
+            </section>
           )}
 
           {form.role === "MORADOR" && (
@@ -1817,7 +2390,9 @@ function UserModal({
             />
 
             <p className="mt-1 text-xs text-[#7A877F]">
-              Telefone pessoal usado para notificações do usuário, incluindo WhatsApp quando o canal estiver ativo. Para moradores, o telefone cadastral do morador pode ser usado como sugestão.
+              Telefone pessoal usado para notificações do usuário, incluindo
+              WhatsApp quando o canal estiver ativo. Para moradores, o telefone
+              cadastral do morador pode ser usado como sugestão.
             </p>
 
             {!!form.phone && !isValidPhoneForForm(form.phone) && (
@@ -1887,7 +2462,8 @@ function UserModal({
 
                 {form.password && isBlockedPassword(form.password) && (
                   <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-                    Esta senha é muito previsível. Escolha uma combinação diferente.
+                    Esta senha é muito previsível. Escolha uma combinação
+                    diferente.
                   </p>
                 )}
 
@@ -1949,43 +2525,6 @@ function UserModal({
 
 
 /* =========================================================
-   CARD DE MÉTRICA
-   ========================================================= */
-
-function MetricCard({
-  title,
-  value,
-  tone = "default",
-}: {
-  title: string;
-  value: number;
-  tone?: "default" | "green" | "red" | "blue" | "purple";
-}) {
-  const toneClass =
-    tone === "green"
-      ? "border-[#CFE6D4] bg-[#EAF7EE] text-[#256D3C]"
-      : tone === "red"
-        ? "border-red-200 bg-red-50 text-red-700"
-        : tone === "blue"
-          ? "border-blue-200 bg-blue-50 text-blue-700"
-          : tone === "purple"
-            ? "border-purple-200 bg-purple-50 text-purple-700"
-            : "border-[#DDE5DF] bg-white text-[#17211B]";
-
-  return (
-    <div className={`rounded-[24px] border p-4 shadow-sm ${toneClass}`}>
-      <p className="text-sm opacity-80">{title}</p>
-
-      <strong className="mt-1 block text-3xl font-semibold">
-        {value}
-      </strong>
-    </div>
-  );
-}
-
-
-
-/* =========================================================
    CARD PRINCIPAL DA VISÃO DA CARTEIRA
    ========================================================= */
 
@@ -2025,7 +2564,11 @@ function PortfolioMetricBox({
         {value}
       </strong>
 
-      {description && <p className="mt-1 text-xs text-[#5E6B63]">{description}</p>}
+      {description && (
+        <p className="mt-1 text-xs text-[#5E6B63]">
+          {description}
+        </p>
+      )}
     </div>
   );
 }
@@ -2036,22 +2579,7 @@ function PortfolioMetricBox({
    LINHA DE INFORMAÇÃO DO MENU SUSPENSO
    ========================================================= */
 
-function InfoLine({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7A877F]">{label}</p>
-      <p className="mt-1 break-words text-sm font-semibold text-[#17211B]">{value}</p>
-    </div>
-  );
-}
-
-
-
-/* =========================================================
-   BOX DE INFORMAÇÃO
-   ========================================================= */
-
-function InfoBox({
+function InfoLine({
   label,
   value,
 }: {
@@ -2059,12 +2587,14 @@ function InfoBox({
   value: string | number;
 }) {
   return (
-    <div className="rounded-2xl border border-[#DDE5DF] bg-[#F6F8F7] p-4">
-      <p className="text-sm text-[#7A877F]">{label}</p>
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7A877F]">
+        {label}
+      </p>
 
-      <strong className="break-words text-[#17211B]">
+      <p className="mt-1 break-words text-sm font-semibold text-[#17211B]">
         {value}
-      </strong>
+      </p>
     </div>
   );
 }
@@ -2082,13 +2612,12 @@ function FormField({
 }: {
   label: string;
   required?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div>
       <label className="text-sm font-semibold text-[#17211B]">
-        {label}{" "}
-        {required && <span className="text-red-600">*</span>}
+        {label} {required && <span className="text-red-600">*</span>}
       </label>
 
       <div className="mt-1">

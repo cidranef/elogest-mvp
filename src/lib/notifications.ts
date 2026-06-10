@@ -1,3 +1,4 @@
+import { AccessRole, type Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   dispatchNotificationEmail,
@@ -35,8 +36,42 @@ import { isNotificationChannelEnabledForUser } from "@/lib/notification-preferen
    - Com isso, TICKET_CREATED pode disparar WhatsApp dev para
      administradora, atendimento, síndico e super admin quando
      esses usuários possuírem User.phone.
+
+   ETAPA 50 — ENQUETES
+
+   Ajustes desta revisão:
+   - SendNotificationInput passa a aceitar pollId e accessId.
+   - A notificação interna pode ficar vinculada à enquete e ao
+     perfil de acesso elegível do portal.
+   - Adicionado notifyPollAudience() para publicar avisos de nova
+     enquete, prorrogação de prazo e resultado oficial disponível.
+   - O público é calculado a partir de PollTarget e UserAccess ativo,
+     respeitando condomínio, bloco, unidade, perfil, vínculo e canVote.
+   - Não ativa WhatsApp real para enquetes nesta etapa.
+   - Adicionado notifyPollExpiryAdministradoraUsers() para lembrete
+     operacional interno quando o prazo da enquete se esgota.
    ========================================================= */
 
+
+
+
+
+type NotificationMetadata = Record<string, unknown>;
+
+type PhoneSource = {
+  toPhone?: unknown;
+  whatsappPhone?: unknown;
+  whatsapp?: unknown;
+  phone?: unknown;
+  phoneNumber?: unknown;
+  mobilePhone?: unknown;
+  cellphone?: unknown;
+  celular?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 
 type NotificationChannelInput = NotificationChannel;
@@ -55,9 +90,12 @@ type SendNotificationInput = {
   message: string;
 
   ticketId?: string | null;
+  pollId?: string | null;
+  assemblyId?: string | null;
+  accessId?: string | null;
   href?: string | null;
 
-  metadata?: any;
+  metadata?: NotificationMetadata;
 };
 
 
@@ -214,7 +252,7 @@ function buildEventMetadata({
 }: {
   type: NotificationEventType;
   requestedChannel: NotificationChannel;
-  metadata?: any;
+  metadata?: NotificationMetadata;
   userPreference?: {
     checked: boolean;
     channelAllowed: boolean;
@@ -264,18 +302,20 @@ function getValueAsString(value: unknown) {
 
 
 
-function extractPhoneFromAny(source: any) {
-  if (!source) return null;
+function extractPhoneFromAny(source: unknown) {
+  if (!isRecord(source)) return null;
+
+  const phoneSource = source as PhoneSource;
 
   return (
-    getValueAsString(source.toPhone) ||
-    getValueAsString(source.whatsappPhone) ||
-    getValueAsString(source.whatsapp) ||
-    getValueAsString(source.phone) ||
-    getValueAsString(source.phoneNumber) ||
-    getValueAsString(source.mobilePhone) ||
-    getValueAsString(source.cellphone) ||
-    getValueAsString(source.celular) ||
+    getValueAsString(phoneSource.toPhone) ||
+    getValueAsString(phoneSource.whatsappPhone) ||
+    getValueAsString(phoneSource.whatsapp) ||
+    getValueAsString(phoneSource.phone) ||
+    getValueAsString(phoneSource.phoneNumber) ||
+    getValueAsString(phoneSource.mobilePhone) ||
+    getValueAsString(phoneSource.cellphone) ||
+    getValueAsString(phoneSource.celular) ||
     null
   );
 }
@@ -291,7 +331,7 @@ function resolveWhatsAppPhone({
   inputPhone?: string | null;
   user?: BasicUser | null;
   resident?: TicketForNotification["resident"];
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   return (
     getValueAsString(inputPhone) ||
@@ -347,7 +387,10 @@ function shouldAutoDispatchWhatsApp(type: NotificationEventType) {
    LINK DO CHAMADO POR PERFIL
    ========================================================= */
 
-export function getTicketHrefForUser(targetUser: any, ticketId: string) {
+export function getTicketHrefForUser(
+  targetUser: Pick<BasicUser, "role"> | null | undefined,
+  ticketId: string,
+) {
   const role = normalizeRole(targetUser?.role);
 
   if (role === "MORADOR") {
@@ -446,6 +489,9 @@ async function createSystemNotification(input: SendNotificationInput) {
     data: {
       userId: user.id,
       ticketId: input.ticketId || null,
+      pollId: input.pollId || null,
+      assemblyId: input.assemblyId || null,
+      accessId: input.accessId || null,
       channel: "SYSTEM",
       status: "UNREAD",
       type,
@@ -460,7 +506,7 @@ async function createSystemNotification(input: SendNotificationInput) {
           checked: true,
           channelAllowed: systemAllowed,
         },
-      }),
+      }) as Prisma.InputJsonObject,
     },
   });
 
@@ -606,7 +652,7 @@ export async function sendNotification(input: SendNotificationInput) {
             : "CHANNEL_NOT_ENABLED_FOR_EVENT",
           to: input.to || null,
           toName: input.toName || null,
-          toPhone: input.toPhone || input.metadata?.toPhone || null,
+          toPhone: input.toPhone || extractPhoneFromAny(input.metadata) || null,
         },
       });
 
@@ -617,7 +663,7 @@ export async function sendNotification(input: SendNotificationInput) {
           eventLabel,
           channelEnabled,
           to: input.to || null,
-          toPhone: input.toPhone || input.metadata?.toPhone || null,
+          toPhone: input.toPhone || extractPhoneFromAny(input.metadata) || null,
           title: input.title,
         }
       );
@@ -648,6 +694,9 @@ export async function notifySingleUser({
   actorUser,
   notifiedUserIds,
   ticketId,
+  pollId,
+  assemblyId,
+  accessId,
   type,
   title,
   message,
@@ -659,11 +708,14 @@ export async function notifySingleUser({
   actorUser?: BasicActor | null;
   notifiedUserIds?: Set<string>;
   ticketId?: string | null;
+  pollId?: string | null;
+  assemblyId?: string | null;
+  accessId?: string | null;
   type: string;
   title: string;
   message: string;
   href?: string | null;
-  metadata?: any;
+  metadata?: NotificationMetadata;
   allowNotifyActor?: boolean;
 }) {
   if (!targetUser?.id) return null;
@@ -694,6 +746,9 @@ export async function notifySingleUser({
     toName: targetUser.name || null,
     toPhone: whatsAppPhone,
     ticketId,
+    pollId,
+    assemblyId,
+    accessId,
     type,
     title,
     message,
@@ -728,7 +783,7 @@ export async function notifyAdministradoraUsers({
   type: string;
   title: string;
   message: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   if (!administratorId) {
     console.warn("notifyAdministradoraUsers: administratorId não informado.", {
@@ -812,7 +867,7 @@ export async function notifyCondominiumSyndics({
   type: string;
   title: string;
   message: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   if (!condominiumId) {
     console.warn("notifyCondominiumSyndics: condominiumId não informado.", {
@@ -917,7 +972,7 @@ export async function notifyTicketPublicTargets({
   type: string;
   title: string;
   message: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   const notifiedUserIds = new Set<string>();
   const createdNotifications = [];
@@ -978,7 +1033,7 @@ export async function notifyTicketInternalTargets({
   type: string;
   title: string;
   message: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   const notifiedUserIds = new Set<string>();
   const createdNotifications = [];
@@ -1058,7 +1113,7 @@ export async function notifyAssignedResponsible({
   notifiedUserIds?: Set<string>;
   type?: string;
   title?: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   if (!assignedUser?.id) return null;
 
@@ -1109,7 +1164,7 @@ export async function notifyTicketAssignedPublicTargets({
   notifiedUserIds?: Set<string>;
   type?: string;
   title?: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   const createdNotifications = [];
 
@@ -1179,7 +1234,7 @@ export async function notifyTicketAssignedTargets({
   actorUser?: BasicActor | null;
   typeResponsible?: string;
   typePublic?: string;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   const responsibleNotifiedUserIds = new Set<string>();
   const publicNotifiedUserIds = new Set<string>();
@@ -1225,6 +1280,989 @@ export async function notifyTicketAssignedTargets({
 
 
 
+
+
+
+/* =========================================================
+   REUNIÕES DE CONSELHO — ETAPA 49
+
+   Estes helpers ficam genéricos o suficiente para preservar a
+   arquitetura da Sala De Reunião EloGest e facilitar o reaproveitamento
+   posterior em Assembleias.
+
+   Observações:
+   - Não usam ticketId.
+   - O href é decidido por perfil do destinatário.
+   - O disparo externo continua protegido pela matriz de eventos,
+     preferências do usuário e dispatcher.
+   ========================================================= */
+
+type CouncilMeetingForNotification = {
+  id: string;
+  title: string;
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  scheduledStartAt?: Date | string | null;
+  scheduledEndAt?: Date | string | null;
+  meetingMode?: string | null;
+
+  condominium?: {
+    id?: string | null;
+    name?: string | null;
+    administratorId?: string | null;
+  } | null;
+
+  meetingRoom?: {
+    id?: string | null;
+    roomStatus?: string | null;
+    status?: string | null;
+  } | null;
+};
+
+type CouncilMeetingTargetUser = BasicUser & {
+  accessId?: string | null;
+  accessRole?: string | null;
+};
+
+function getCouncilMeetingHrefForUser({
+  targetUser,
+  meetingId,
+  room = false,
+}: {
+  targetUser?: BasicUser | null;
+  meetingId: string;
+  room?: boolean;
+}) {
+  const role = normalizeRole(targetUser?.role);
+
+  const suffix = room ? "/sala" : "";
+
+  if (role === "ADMINISTRADORA" || role === "SUPER_ADMIN") {
+    return `/admin/reunioes-conselho/${meetingId}${suffix}`;
+  }
+
+  return `/portal/reunioes-conselho/${meetingId}${suffix}`;
+}
+
+function buildCouncilMeetingNotificationMetadata({
+  meeting,
+  metadata,
+}: {
+  meeting: CouncilMeetingForNotification;
+  metadata?: NotificationMetadata;
+}) {
+  return {
+    ...(metadata || {}),
+    meetingId: meeting.id,
+    meetingTitle: meeting.title,
+    councilMeetingId: meeting.id,
+    councilMeetingTitle: meeting.title,
+    condominiumId: meeting.condominiumId || meeting.condominium?.id || null,
+    condominiumName: meeting.condominium?.name || null,
+    administratorId:
+      meeting.administratorId ||
+      meeting.condominium?.administratorId ||
+      null,
+    scheduledStartAt: meeting.scheduledStartAt || null,
+    scheduledEndAt: meeting.scheduledEndAt || null,
+    meetingMode: meeting.meetingMode || null,
+    roomStatus:
+      meeting.meetingRoom?.roomStatus ||
+      meeting.meetingRoom?.status ||
+      null,
+    notificationScope: "COUNCIL_MEETING",
+    notificationGroup: "GOVERNANCE_MEETING",
+  };
+}
+
+export async function notifyCouncilMeetingUsers({
+  meeting,
+  targetUsers,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  href,
+  metadata,
+  room = false,
+  allowNotifyActor = false,
+}: {
+  meeting: CouncilMeetingForNotification;
+  targetUsers: CouncilMeetingTargetUser[];
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  href?: string | null;
+  metadata?: NotificationMetadata;
+  room?: boolean;
+  allowNotifyActor?: boolean;
+}) {
+  const createdNotifications = [];
+  const uniqueIds = notifiedUserIds || new Set<string>();
+  const baseMetadata = buildCouncilMeetingNotificationMetadata({
+    meeting,
+    metadata,
+  });
+
+  for (const targetUser of targetUsers) {
+    if (!targetUser?.id || targetUser.isActive === false) {
+      continue;
+    }
+
+    const notificationHref =
+      href ||
+      getCouncilMeetingHrefForUser({
+        targetUser,
+        meetingId: meeting.id,
+        room,
+      });
+
+    const notification = await notifySingleUser({
+      targetUser,
+      actorUser,
+      notifiedUserIds: uniqueIds,
+      ticketId: null,
+      type,
+      title,
+      message,
+      href: notificationHref,
+      allowNotifyActor,
+      metadata: {
+        ...baseMetadata,
+        accessId: targetUser.accessId || null,
+        accessRole: targetUser.accessRole || targetUser.role || null,
+        actionLabel: room ? "Entrar na sala" : "Acessar reunião",
+      },
+    });
+
+    if (notification) {
+      createdNotifications.push(notification);
+    }
+  }
+
+  return createdNotifications;
+}
+
+export async function notifyCouncilMeetingAdministradoraUsers({
+  meeting,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  metadata,
+  room = false,
+}: {
+  meeting: CouncilMeetingForNotification;
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  metadata?: NotificationMetadata;
+  room?: boolean;
+}) {
+  const administratorId =
+    meeting.administratorId || meeting.condominium?.administratorId || null;
+
+  if (!administratorId) {
+    console.warn(
+      "notifyCouncilMeetingAdministradoraUsers: administratorId não informado.",
+      {
+        meetingId: meeting.id,
+        type,
+        actorUserId: actorUser?.id || null,
+      },
+    );
+
+    return [];
+  }
+
+  const users = await db.user.findMany({
+    where: {
+      isActive: true,
+      OR: [
+        {
+          role: "ADMINISTRADORA",
+          administratorId,
+        },
+        {
+          role: "SUPER_ADMIN",
+        },
+      ],
+    },
+    select: {
+      ...userNotificationSelect,
+      administratorId: true,
+    },
+    orderBy: {
+      name: "asc",
+    },
+  });
+
+  return notifyCouncilMeetingUsers({
+    meeting,
+    targetUsers: users,
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    metadata: {
+      ...(metadata || {}),
+      notificationScope: "COUNCIL_MEETING_ADMINISTRADORA_USERS",
+    },
+    room,
+  });
+}
+
+export async function notifyCouncilMeetingGovernanceUsers({
+  meeting,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  metadata,
+  room = false,
+}: {
+  meeting: CouncilMeetingForNotification;
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  metadata?: NotificationMetadata;
+  room?: boolean;
+}) {
+  const condominiumId = meeting.condominiumId || meeting.condominium?.id || null;
+
+  if (!condominiumId) {
+    console.warn(
+      "notifyCouncilMeetingGovernanceUsers: condominiumId não informado.",
+      {
+        meetingId: meeting.id,
+        type,
+        actorUserId: actorUser?.id || null,
+      },
+    );
+
+    return [];
+  }
+
+  const governanceRoles: AccessRole[] = [
+    AccessRole.SINDICO,
+    AccessRole.CONSELHEIRO,
+  ];
+
+  const accessUsers = await db.userAccess.findMany({
+    where: {
+      isActive: true,
+      role: {
+        in: governanceRoles,
+      },
+      condominiumId,
+      user: {
+        isActive: true,
+      },
+    },
+    include: {
+      user: {
+        select: userNotificationSelect,
+      },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  const usersMap = new Map<string, CouncilMeetingTargetUser>();
+
+  for (const access of accessUsers) {
+    if (access.user?.id) {
+      usersMap.set(access.user.id, {
+        ...access.user,
+        accessId: access.id,
+        accessRole: access.role,
+      });
+    }
+  }
+
+  return notifyCouncilMeetingUsers({
+    meeting,
+    targetUsers: Array.from(usersMap.values()),
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    metadata: {
+      ...(metadata || {}),
+      notificationScope: "COUNCIL_MEETING_GOVERNANCE_USERS",
+    },
+    room,
+  });
+}
+
+export async function notifyCouncilMeetingParticipants({
+  meeting,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  metadata,
+  room = false,
+}: {
+  meeting: CouncilMeetingForNotification;
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  metadata?: NotificationMetadata;
+  room?: boolean;
+}) {
+  const participants = await db.councilMeetingParticipant.findMany({
+    where: {
+      councilMeetingId: meeting.id,
+      user: {
+        isActive: true,
+      },
+    },
+    include: {
+      user: {
+        select: userNotificationSelect,
+      },
+    },
+    orderBy: {
+      invitedAt: "asc",
+    },
+  });
+
+  const usersMap = new Map<string, CouncilMeetingTargetUser>();
+
+  for (const participant of participants) {
+    if (participant.user?.id) {
+      usersMap.set(participant.user.id, {
+        ...participant.user,
+        accessId: participant.userAccessId || null,
+        accessRole: participant.role || null,
+      });
+    }
+  }
+
+  return notifyCouncilMeetingUsers({
+    meeting,
+    targetUsers: Array.from(usersMap.values()),
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    metadata: {
+      ...(metadata || {}),
+      notificationScope: "COUNCIL_MEETING_PARTICIPANTS",
+    },
+    room,
+  });
+}
+
+
+export async function notifyCouncilMeetingRecordKeeperAssigned({
+  meeting,
+  recordKeeperUserId,
+  actorUser,
+  title = "Você foi definido como responsável pelo registro",
+  message,
+  metadata,
+}: {
+  meeting: CouncilMeetingForNotification;
+  recordKeeperUserId?: string | null;
+  actorUser?: BasicActor | null;
+  title?: string;
+  message?: string;
+  metadata?: NotificationMetadata;
+}) {
+  if (!recordKeeperUserId) {
+    console.warn("notifyCouncilMeetingRecordKeeperAssigned: usuário não informado.", {
+      meetingId: meeting.id,
+      actorUserId: actorUser?.id || null,
+    });
+
+    return [];
+  }
+
+  const targetUser = await db.user.findFirst({
+    where: {
+      id: recordKeeperUserId,
+      isActive: true,
+    },
+    select: userNotificationSelect,
+  });
+
+  if (!targetUser) {
+    console.warn("notifyCouncilMeetingRecordKeeperAssigned: usuário destinatário não encontrado.", {
+      meetingId: meeting.id,
+      recordKeeperUserId,
+    });
+
+    return [];
+  }
+
+  return notifyCouncilMeetingUsers({
+    meeting,
+    targetUsers: [targetUser],
+    actorUser,
+    type: "COUNCIL_MEETING_RECORD_KEEPER_ASSIGNED",
+    title,
+    message:
+      message ||
+      `Você foi escolhido como responsável pelo registro da reunião "${meeting.title}".`,
+    room: true,
+    allowNotifyActor: true,
+    metadata: {
+      ...(metadata || {}),
+      recordKeeperUserId,
+      notificationScope: "COUNCIL_MEETING_RECORD_KEEPER",
+      notificationGroup: "GOVERNANCE_MEETING_RECORD_KEEPER",
+      actionLabel: "Acessar sala da reunião",
+    },
+  });
+}
+
+
+export async function notifyCouncilMeetingAudience({
+  meeting,
+  actorUser,
+  type,
+  title,
+  message,
+  metadata,
+  room = false,
+  includeAdministradora = false,
+}: {
+  meeting: CouncilMeetingForNotification;
+  actorUser?: BasicActor | null;
+  type: string;
+  title: string;
+  message: string;
+  metadata?: NotificationMetadata;
+  room?: boolean;
+  includeAdministradora?: boolean;
+}) {
+  const notifiedUserIds = new Set<string>();
+  const createdNotifications = [];
+
+  const participantNotifications = await notifyCouncilMeetingParticipants({
+    meeting,
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    metadata,
+    room,
+  });
+
+  createdNotifications.push(...participantNotifications);
+
+  const governanceNotifications = await notifyCouncilMeetingGovernanceUsers({
+    meeting,
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    metadata,
+    room,
+  });
+
+  createdNotifications.push(...governanceNotifications);
+
+  if (includeAdministradora) {
+    const adminNotifications = await notifyCouncilMeetingAdministradoraUsers({
+      meeting,
+      actorUser,
+      notifiedUserIds,
+      type,
+      title,
+      message,
+      metadata,
+      room,
+    });
+
+    createdNotifications.push(...adminNotifications);
+  }
+
+  return createdNotifications;
+}
+
+
+/* =========================================================
+   ENQUETES — ETAPA 50
+
+   A notificação interna de enquete respeita o mesmo público que
+   poderá acessar a enquete no portal:
+   - condomínio;
+   - bloco;
+   - unidade;
+   - perfil;
+   - tipo de vínculo;
+   - governança;
+   - público personalizado;
+   - canVote quando a enquete exigir participante elegível.
+
+   Segurança:
+   - somente UserAccess ativo é considerado;
+   - condomínio e administradora precisam estar ativos;
+   - unidade e vínculo inativos são descartados;
+   - receivesNotifications=false impede o aviso daquele vínculo;
+   - cada notificação fica vinculada ao pollId e ao accessId.
+   ========================================================= */
+
+type PollForNotification = {
+  id: string;
+  title: string;
+  administratorId: string;
+  condominiumId?: string | null;
+  targetScope?: string | null;
+  requireEligibleVoter?: boolean | null;
+  startsAt?: Date | string | null;
+  endsAt?: Date | string | null;
+  resultsPublishedAt?: Date | string | null;
+  condominium?: {
+    id?: string | null;
+    name?: string | null;
+    administratorId?: string | null;
+    status?: string | null;
+    administrator?: {
+      id?: string | null;
+      status?: string | null;
+    } | null;
+  } | null;
+  targets?: Array<{
+    condominiumId?: string | null;
+    unitId?: string | null;
+    block?: string | null;
+    role?: AccessRole | null;
+    linkType?: string | null;
+  }>;
+};
+
+type PollTargetAccess = {
+  accessId: string;
+  user: BasicUser;
+  role: AccessRole;
+  condominiumId: string;
+  unitId: string | null;
+  block: string | null;
+  linkType: string | null;
+  canVote: boolean;
+  receivesNotifications: boolean;
+  isGovernanceProfile: boolean;
+};
+
+function isPollGovernanceRole(role: AccessRole) {
+  const governanceRoles: AccessRole[] = [
+    AccessRole.SINDICO,
+    AccessRole.CONSELHEIRO,
+  ];
+
+  return governanceRoles.includes(role);
+}
+
+function canPollTargetMatchAccess(
+  target: NonNullable<PollForNotification["targets"]>[number],
+  access: PollTargetAccess,
+) {
+  if (target.condominiumId && target.condominiumId !== access.condominiumId) {
+    return false;
+  }
+
+  if (target.unitId && target.unitId !== access.unitId) {
+    return false;
+  }
+
+  if (target.block && target.block !== access.block) {
+    return false;
+  }
+
+  if (target.role && target.role !== access.role) {
+    return false;
+  }
+
+  if (target.linkType && target.linkType !== access.linkType) {
+    return false;
+  }
+
+  return true;
+}
+
+function isPollNotificationAccessEligible({
+  poll,
+  access,
+}: {
+  poll: PollForNotification;
+  access: PollTargetAccess;
+}) {
+  if (!poll.condominiumId || poll.condominiumId !== access.condominiumId) {
+    return false;
+  }
+
+  if (poll.requireEligibleVoter && !access.canVote) {
+    return false;
+  }
+
+  if (poll.targetScope === "CONDOMINIUM") {
+    return true;
+  }
+
+  if (poll.targetScope === "GOVERNANCE") {
+    return access.isGovernanceProfile;
+  }
+
+  const targets = poll.targets || [];
+
+  if (poll.targetScope === "BLOCK") {
+    return targets.some((target) => {
+      return Boolean(access.block) && canPollTargetMatchAccess(target, access);
+    });
+  }
+
+  if (poll.targetScope === "UNIT") {
+    return targets.some((target) => {
+      return Boolean(access.unitId) && canPollTargetMatchAccess(target, access);
+    });
+  }
+
+  if (poll.targetScope === "ROLE") {
+    return targets.some((target) => {
+      return target.role === access.role && canPollTargetMatchAccess(target, access);
+    });
+  }
+
+  if (poll.targetScope === "LINK_TYPE") {
+    return targets.some((target) => {
+      return Boolean(access.linkType) && canPollTargetMatchAccess(target, access);
+    });
+  }
+
+  if (poll.targetScope === "CUSTOM") {
+    return targets.some((target) => canPollTargetMatchAccess(target, access));
+  }
+
+  return false;
+}
+
+async function loadPollForNotification(pollId: string) {
+  return db.poll.findFirst({
+    where: {
+      id: pollId,
+    },
+    include: {
+      condominium: {
+        select: {
+          id: true,
+          name: true,
+          administratorId: true,
+          status: true,
+          administrator: {
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+        },
+      },
+      targets: true,
+    },
+  });
+}
+
+async function loadEligiblePollTargetAccesses(poll: PollForNotification) {
+  if (!poll.condominiumId) {
+    return [] as PollTargetAccess[];
+  }
+
+  if (
+    poll.condominium?.status !== "ACTIVE" ||
+    poll.condominium?.administrator?.status !== "ACTIVE"
+  ) {
+    return [] as PollTargetAccess[];
+  }
+
+  const allowedRoles: AccessRole[] = [
+    AccessRole.SINDICO,
+    AccessRole.CONSELHEIRO,
+    AccessRole.PROPRIETARIO,
+    AccessRole.MORADOR,
+  ];
+
+  const accesses = await db.userAccess.findMany({
+    where: {
+      isActive: true,
+      condominiumId: poll.condominiumId,
+      role: {
+        in: allowedRoles,
+      },
+      user: {
+        isActive: true,
+      },
+    },
+    include: {
+      user: {
+        select: userNotificationSelect,
+      },
+      unit: {
+        select: {
+          id: true,
+          block: true,
+          status: true,
+        },
+      },
+      unitPersonLink: {
+        select: {
+          linkType: true,
+          canVote: true,
+          receivesNotifications: true,
+          status: true,
+        },
+      },
+      condominium: {
+        select: {
+          id: true,
+          administratorId: true,
+          status: true,
+          administrator: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  const normalized: PollTargetAccess[] = [];
+
+  for (const access of accesses) {
+    if (!access.condominium || access.condominium.status !== "ACTIVE") {
+      continue;
+    }
+
+    if (access.condominium.administrator.status !== "ACTIVE") {
+      continue;
+    }
+
+    if (access.condominium.administratorId !== poll.administratorId) {
+      continue;
+    }
+
+    if (access.unit && access.unit.status !== "ACTIVE") {
+      continue;
+    }
+
+    if (access.unitPersonLink && access.unitPersonLink.status !== "ACTIVE") {
+      continue;
+    }
+
+    if (access.unitPersonLink?.receivesNotifications === false) {
+      continue;
+    }
+
+    const normalizedAccess: PollTargetAccess = {
+      accessId: access.id,
+      user: access.user,
+      role: access.role,
+      condominiumId: access.condominiumId || poll.condominiumId,
+      unitId: access.unitId || null,
+      block: access.unit?.block || null,
+      linkType: access.unitPersonLink?.linkType || null,
+      canVote: Boolean(access.unitPersonLink?.canVote),
+      receivesNotifications:
+        access.unitPersonLink?.receivesNotifications ?? true,
+      isGovernanceProfile: isPollGovernanceRole(access.role),
+    };
+
+    if (
+      isPollNotificationAccessEligible({
+        poll,
+        access: normalizedAccess,
+      })
+    ) {
+      normalized.push(normalizedAccess);
+    }
+  }
+
+  return normalized;
+}
+
+export async function notifyPollAudience({
+  pollId,
+  actorUser,
+  type,
+  title,
+  message,
+  metadata,
+}: {
+  pollId: string;
+  actorUser?: BasicActor | null;
+  type: "POLL_PUBLISHED" | "POLL_EXTENDED" | "POLL_RESULTS_PUBLISHED";
+  title: string;
+  message: string;
+  metadata?: NotificationMetadata;
+}) {
+  const poll = await loadPollForNotification(pollId);
+
+  if (!poll) {
+    console.warn("notifyPollAudience: enquete não encontrada.", {
+      pollId,
+      type,
+      actorUserId: actorUser?.id || null,
+    });
+
+    return [];
+  }
+
+  const accesses = await loadEligiblePollTargetAccesses(poll);
+  const notifiedAccessKeys = new Set<string>();
+  const createdNotifications = [];
+
+  for (const access of accesses) {
+    const accessKey = `${access.user.id}:${access.accessId}`;
+
+    if (notifiedAccessKeys.has(accessKey)) {
+      continue;
+    }
+
+    notifiedAccessKeys.add(accessKey);
+
+    const notification = await sendNotification({
+      channel: "SYSTEM",
+      userId: access.user.id,
+      to: access.user.email || null,
+      toName: access.user.name || null,
+      pollId: poll.id,
+      accessId: access.accessId,
+      type,
+      title,
+      message,
+      href: `/portal/enquetes?pollId=${encodeURIComponent(poll.id)}`,
+      metadata: {
+        ...(metadata || {}),
+        pollId: poll.id,
+        pollTitle: poll.title,
+        condominiumId: poll.condominiumId || null,
+        condominiumName: poll.condominium?.name || null,
+        administratorId: poll.administratorId,
+        targetScope: poll.targetScope || null,
+        requireEligibleVoter: Boolean(poll.requireEligibleVoter),
+        startsAt: poll.startsAt || null,
+        endsAt: poll.endsAt || null,
+        resultsPublishedAt: poll.resultsPublishedAt || null,
+        accessId: access.accessId,
+        accessRole: access.role,
+        notificationScope: "POLL_AUDIENCE",
+        notificationGroup: "CONDOMINIUM_POLL",
+        actionLabel: "Acessar enquete",
+      },
+    });
+
+    if (notification) {
+      createdNotifications.push(notification);
+    }
+  }
+
+  return createdNotifications;
+}
+
+
+/* =========================================================
+   ENQUETES — LEMBRETE OPERACIONAL PARA ADMINISTRADORA
+
+   Dispara aviso interno quando a enquete publicada atinge o
+   prazo final e precisa de decisão administrativa:
+   - encerrar;
+   - prorrogar;
+   - publicar resultados depois do encerramento.
+
+   Observações:
+   - não notifica moradores;
+   - não inclui SUPER_ADMIN;
+   - o cron controla a idempotência pelo campo
+     Poll.adminExpiryReminderSentAt.
+   ========================================================= */
+
+export async function notifyPollExpiryAdministradoraUsers({
+  pollId,
+  administratorId,
+  pollTitle,
+  condominiumName,
+  endsAt,
+  metadata,
+}: {
+  pollId: string;
+  administratorId: string;
+  pollTitle: string;
+  condominiumName?: string | null;
+  endsAt?: Date | string | null;
+  metadata?: NotificationMetadata;
+}) {
+  const users = await db.user.findMany({
+    where: {
+      isActive: true,
+      role: "ADMINISTRADORA",
+      administratorId,
+    },
+    select: userNotificationSelect,
+    orderBy: {
+      name: "asc",
+    },
+  });
+
+  const createdNotifications = [];
+  const notifiedUserIds = new Set<string>();
+
+  for (const targetUser of users) {
+    const notification = await notifySingleUser({
+      targetUser,
+      notifiedUserIds,
+      pollId,
+      type: "POLL_EXPIRED_ADMIN_REMINDER",
+      title: "Prazo da enquete encerrado",
+      message: `A enquete "${pollTitle}" atingiu o prazo final. Revise as respostas para encerrar, prorrogar ou publicar o resultado.`,
+      href: `/admin/enquetes`,
+      allowNotifyActor: true,
+      metadata: {
+        ...(metadata || {}),
+        pollId,
+        pollTitle,
+        administratorId,
+        condominiumName: condominiumName || null,
+        endsAt: endsAt || null,
+        notificationScope: "POLL_ADMIN_EXPIRY_REMINDER",
+        notificationGroup: "POLL_ADMIN_OPERATIONAL",
+        actionLabel: "Revisar enquete",
+      },
+    });
+
+    if (notification) {
+      createdNotifications.push(notification);
+    }
+  }
+
+  return createdNotifications;
+}
+
+
+
 /* =========================================================
    COMPATIBILIDADE COM CHAMADAS ANTIGAS
    ========================================================= */
@@ -1248,7 +2286,7 @@ export async function sendTicketNotification({
   title: string;
   message: string;
   href?: string | null;
-  metadata?: any;
+  metadata?: NotificationMetadata;
 }) {
   return sendNotification({
     channel: "SYSTEM",
@@ -1265,4 +2303,252 @@ export async function sendTicketNotification({
     href: href || `/admin/chamados/${ticketId}`,
     metadata,
   });
+}
+
+/* =========================================================
+   ASSEMBLEIAS — ETAPA 51.7
+   ========================================================= */
+
+type AssemblyNotificationMode = "CONVOCATION" | "REMINDER" | "EXTENSION" | "RESULTS";
+
+type AssemblyNotificationContext = {
+  previousVotingEndsAt?: Date | string | null;
+  extensionReason?: string | null;
+  reopened?: boolean;
+};
+
+type AssemblyAudienceUser = BasicUser & {
+  accessId?: string | null;
+  representedUnits: string[];
+  representedUnitIds: string[];
+  sources: string[];
+};
+
+function formatAssemblyUnitLabel(unit?: { block?: string | null; unitNumber?: string | null } | null) {
+  if (!unit) return "Unidade";
+  return `${unit.block ? `${unit.block} - ` : ""}${unit.unitNumber || "Unidade"}`;
+}
+
+function addAssemblyAudienceUser(
+  map: Map<string, AssemblyAudienceUser>,
+  params: {
+    user: BasicUser;
+    accessId?: string | null;
+    unitId: string;
+    unitLabel: string;
+    source: string;
+  },
+) {
+  const current = map.get(params.user.id) || {
+    ...params.user,
+    accessId: params.accessId || null,
+    representedUnits: [],
+    representedUnitIds: [],
+    sources: [],
+  };
+
+  if (!current.accessId && params.accessId) current.accessId = params.accessId;
+  if (!current.representedUnitIds.includes(params.unitId)) current.representedUnitIds.push(params.unitId);
+  if (!current.representedUnits.includes(params.unitLabel)) current.representedUnits.push(params.unitLabel);
+  if (!current.sources.includes(params.source)) current.sources.push(params.source);
+  map.set(params.user.id, current);
+}
+
+async function loadAssemblyAudience(assemblyId: string, onlyPending: boolean) {
+  const assembly = await db.assembly.findFirst({
+    where: { id: assemblyId },
+    include: {
+      condominium: { select: { id: true, name: true, administratorId: true } },
+      eligibleUnits: {
+        where: { status: "ELIGIBLE" },
+        include: { unit: { select: { id: true, block: true, unitNumber: true } } },
+      },
+      agendaItems: {
+        where: { type: { not: "INFORMATIVE" } },
+        select: { id: true },
+      },
+      representations: {
+        where: { status: "ACTIVE" },
+        include: {
+          unit: { select: { id: true, block: true, unitNumber: true } },
+          representativeUser: { select: userNotificationSelect },
+        },
+      },
+    },
+  });
+
+  if (!assembly || !assembly.condominium) return null;
+
+  const eligibleUnitIds = assembly.eligibleUnits.map((item) => item.unitId);
+  const pendingUnitIds = new Set<string>(eligibleUnitIds);
+
+  if (onlyPending && assembly.agendaItems.length > 0) {
+    const votes = await db.assemblyVote.findMany({
+      where: {
+        assemblyId: assembly.id,
+        agendaItemId: { in: assembly.agendaItems.map((item) => item.id) },
+      },
+      select: { eligibleUnitId: true, agendaItemId: true },
+    });
+    const votedKeys = new Set(votes.map((vote) => `${vote.eligibleUnitId}:${vote.agendaItemId}`));
+    pendingUnitIds.clear();
+    for (const eligibleUnit of assembly.eligibleUnits) {
+      const hasPending = assembly.agendaItems.some((item) => !votedKeys.has(`${eligibleUnit.id}:${item.id}`));
+      if (hasPending) pendingUnitIds.add(eligibleUnit.unitId);
+    }
+  }
+
+  const accesses = await db.userAccess.findMany({
+    where: {
+      isActive: true,
+      condominiumId: assembly.condominiumId,
+      unitId: { in: Array.from(pendingUnitIds) },
+      user: { isActive: true },
+    },
+    include: {
+      user: { select: userNotificationSelect },
+      unit: { select: { id: true, block: true, unitNumber: true, status: true } },
+      unitPersonLink: { select: { status: true, canVote: true, receivesNotifications: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const recipients = new Map<string, AssemblyAudienceUser>();
+
+  for (const access of accesses) {
+    if (!access.unitId || !pendingUnitIds.has(access.unitId)) continue;
+    if (access.unit && access.unit.status !== "ACTIVE") continue;
+    if (access.unitPersonLink && access.unitPersonLink.status !== "ACTIVE") continue;
+    if (access.unitPersonLink?.receivesNotifications === false) continue;
+
+    const canVote = Boolean(access.unitPersonLink?.canVote) || access.role === AccessRole.PROPRIETARIO;
+    if (!canVote) continue;
+
+    addAssemblyAudienceUser(recipients, {
+      user: access.user,
+      accessId: access.id,
+      unitId: access.unitId,
+      unitLabel: formatAssemblyUnitLabel(access.unit),
+      source: "UNIT_ACCESS",
+    });
+  }
+
+  const now = new Date();
+  const externalRepresentatives: Array<{ name: string; email: string; unitLabel: string }> = [];
+
+  for (const representation of assembly.representations) {
+    if (!pendingUnitIds.has(representation.unitId)) continue;
+    if (representation.validFrom && representation.validFrom > now) continue;
+    if (representation.validUntil && representation.validUntil < now) continue;
+
+    const unitLabel = formatAssemblyUnitLabel(representation.unit);
+
+    if (representation.representativeUser) {
+      addAssemblyAudienceUser(recipients, {
+        user: representation.representativeUser,
+        unitId: representation.unitId,
+        unitLabel,
+        source: "ACTIVE_REPRESENTATION",
+      });
+    } else if (representation.externalRepresentativeEmail) {
+      externalRepresentatives.push({
+        name: representation.externalRepresentativeName || "Representante externo",
+        email: representation.externalRepresentativeEmail,
+        unitLabel,
+      });
+    }
+  }
+
+  return { assembly, recipients: Array.from(recipients.values()), externalRepresentatives };
+}
+
+export async function notifyAssemblyAudience({
+  assemblyId,
+  mode,
+  actorUser,
+  context,
+}: {
+  assemblyId: string;
+  mode: AssemblyNotificationMode;
+  actorUser?: BasicActor | null;
+  context?: AssemblyNotificationContext;
+}) {
+  const audience = await loadAssemblyAudience(assemblyId, mode === "REMINDER");
+
+  if (!audience) {
+    console.warn("notifyAssemblyAudience: assembleia não encontrada.", { assemblyId, mode });
+    return { createdNotifications: [], externalRepresentatives: [] };
+  }
+
+  const { assembly, recipients, externalRepresentatives } = audience;
+
+  const type =
+    mode === "REMINDER"
+      ? "ASSEMBLY_VOTING_REMINDER"
+      : mode === "EXTENSION"
+        ? "ASSEMBLY_VOTING_DEADLINE_EXTENDED"
+        : mode === "RESULTS"
+          ? "ASSEMBLY_RESULTS_PUBLISHED"
+          : "ASSEMBLY_CONVOCATION_PUBLISHED";
+
+  const title =
+    mode === "REMINDER"
+      ? "Lembrete de votação da assembleia"
+      : mode === "EXTENSION"
+        ? context?.reopened
+          ? "Votação da assembleia reaberta"
+          : "Prazo da votação da assembleia prorrogado"
+        : mode === "RESULTS"
+          ? "Resultados da assembleia publicados"
+          : "Convocação de assembleia publicada";
+
+  const message =
+    mode === "REMINDER"
+      ? `A assembleia "${assembly.title}" ainda possui votação pendente para ao menos uma unidade representada por você.`
+      : mode === "EXTENSION"
+        ? context?.reopened
+          ? `A votação da assembleia "${assembly.title}" foi reaberta com novo prazo final. Consulte a assembleia para acompanhar as pendências.`
+          : `O prazo para votar na assembleia "${assembly.title}" foi prorrogado. Consulte a assembleia para acompanhar o novo prazo final.`
+        : mode === "RESULTS"
+          ? `Os resultados oficiais da assembleia "${assembly.title}" foram publicados. Consulte a apuração por pauta no portal.`
+          : `A convocação oficial da assembleia "${assembly.title}" foi publicada. Consulte as pautas, os documentos e o prazo da votação.`;
+
+  const createdNotifications = [];
+
+  for (const recipient of recipients) {
+    const notification = await notifySingleUser({
+      targetUser: recipient,
+      actorUser,
+      assemblyId: assembly.id,
+      accessId: recipient.accessId || null,
+      type,
+      title,
+      message,
+      href: `/portal/assembleias?assemblyId=${encodeURIComponent(assembly.id)}`,
+      allowNotifyActor: true,
+      metadata: {
+        assemblyId: assembly.id,
+        assemblyTitle: assembly.title,
+        condominiumId: assembly.condominiumId,
+        condominiumName: assembly.condominium.name,
+        administratorId: assembly.administratorId,
+        scheduledStartAt: assembly.scheduledStartAt || null,
+        votingStartsAt: assembly.votingStartsAt || null,
+        votingEndsAt: assembly.votingEndsAt || null,
+        previousVotingEndsAt: context?.previousVotingEndsAt || null,
+        extensionReason: context?.extensionReason || null,
+        votingReopened: context?.reopened || false,
+        meetingMode: assembly.mode,
+        representedUnits: recipient.representedUnits,
+        representedUnitIds: recipient.representedUnitIds,
+        audienceSources: recipient.sources,
+        notificationScope: "ASSEMBLY_AUDIENCE",
+        notificationGroup: "ASSEMBLY_GOVERNANCE",
+        actionLabel: "Acessar assembleia",
+      },
+    });
+    if (notification) createdNotifications.push(notification);
+  }
+
+  return { createdNotifications, externalRepresentatives };
 }

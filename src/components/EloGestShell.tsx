@@ -356,11 +356,9 @@ const eloGestNavGroups: {
       },
       {
         key: "planos",
-        label: "Planos e módulos",
+        label: "Planos E Módulos",
         href: "/elogest/planos",
         icon: "plans",
-        badge: "Em breve",
-        disabled: true,
         description: "Limites comerciais e recursos contratados.",
       },
       {
@@ -411,10 +409,6 @@ const eloGestNavGroups: {
 
 
 
-const eloGestNavItems = eloGestNavGroups.flatMap((group) => group.items);
-
-
-
 function isNavActive({
   pathname,
   current,
@@ -422,7 +416,7 @@ function isNavActive({
 }: {
   pathname: string;
   current?: EloGestNavKey;
-  item: (typeof eloGestNavItems)[number];
+  item: (typeof eloGestNavGroups)[number]["items"][number];
 }) {
   if (item.disabled) {
     return false;

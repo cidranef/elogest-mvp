@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import LogoutButton from "@/components/LogoutButton";
 import ActiveAccessBadge from "@/components/ActiveAccessBadge";
 import NotificationBell from "@/components/NotificationBell";
@@ -86,6 +86,47 @@ import NotificationBell from "@/components/NotificationBell";
    - Em telas menores, o badge aparece em uma faixa secundária,
      evitando que a administradora opere sem perceber qual
      carteira/perfil está em uso.
+
+   ETAPA 46 — REDE DE FORNECEDORES ELOGEST
+
+   Ajustes desta revisão:
+   - Adicionada chave "fornecedores" ao AdminNavKey.
+   - Adicionado item "Fornecedores" no grupo Cadastros.
+   - Adicionado ícone "provider" para a Rede de Fornecedores EloGest.
+   - Página /admin/fornecedores passa a ter item próprio no menu.
+
+   ETAPA 48.7 — MENU DE COMUNICADOS
+
+   Ajustes desta revisão:
+   - Adicionada chave "comunicados" ao AdminNavKey.
+   - Adicionado item "Comunicados" na navegação administrativa.
+   - Adicionado ícone "announcement" para comunicação oficial.
+   - Página /admin/comunicados passa a ter item próprio no menu.
+
+   ETAPA 49 — REUNIÕES DE CONSELHO
+
+   Ajustes desta revisão:
+   - Adicionada chave "reunioes-conselho" ao AdminNavKey.
+   - Adicionado item "Reuniões De Conselho" na navegação administrativa.
+   - Adicionado ícone "meeting" para a Sala De Reunião EloGest.
+   - Página /admin/reunioes-conselho passa a ter item próprio no menu.
+
+   ETAPA 50 — ENQUETES
+
+   Ajustes desta revisão:
+   - Adicionada chave "enquetes" ao AdminNavKey.
+   - Adicionado item "Enquetes" na navegação administrativa.
+   - Adicionado ícone "poll" para consultas rápidas e participação.
+   - Página /admin/enquetes passa a ter item próprio no menu.
+   - Adicionado bloqueio visual por plano/módulo usando a API de Enquetes.
+
+   ETAPA 51 — ASSEMBLEIAS E VOTAÇÃO PELO CELULAR
+
+   Ajustes desta revisão:
+   - Adicionada chave "assembleias" ao AdminNavKey.
+   - Adicionado item "Assembleias" na navegação administrativa.
+   - Adicionado ícone próprio para deliberações formais.
+   - Adicionado bloqueio visual por plano/módulo usando a API de Assembleias.
    ========================================================= */
 
 
@@ -94,9 +135,14 @@ type AdminNavKey =
   | "dashboard"
   | "chamados"
   | "chamados-dashboard"
+  | "comunicados"
+  | "enquetes"
+  | "assembleias"
+  | "reunioes-conselho"
   | "condominios"
   | "unidades"
   | "moradores"
+  | "fornecedores"
   | "usuarios"
   | "relatorios"
   | "documentos"
@@ -226,9 +272,14 @@ function ShellIcon({
     | "search"
     | "dashboard"
     | "ticket"
+    | "announcement"
+    | "poll"
+    | "assembly"
+    | "meeting"
     | "building"
     | "unit"
     | "people"
+    | "provider"
     | "user"
     | "report"
     | "document"
@@ -292,6 +343,51 @@ function ShellIcon({
         </>
       )}
 
+      {type === "announcement" && (
+        <>
+          <path
+            {...common}
+            d="M5 10v4a2 2 0 0 0 2 2h2l4 4v-4h2l4 3V5l-4 3H7a2 2 0 0 0-2 2z"
+          />
+          <path {...common} d="M15 8v8" />
+        </>
+      )}
+
+      {type === "poll" && (
+        <>
+          <path
+            {...common}
+            d="M5 5h14a1 1 0 0 1 1 1v13H4V6a1 1 0 0 1 1-1z"
+          />
+          <path {...common} d="M8 9h2v6H8z" />
+          <path {...common} d="M12 12h2v3h-2z" />
+          <path {...common} d="M16 8h2v7h-2z" />
+          <path {...common} d="M4 19h16" />
+        </>
+      )}
+
+      {type === "assembly" && (
+        <>
+          <path {...common} d="M5 20h14" />
+          <path {...common} d="M7 20v-8h10v8" />
+          <path {...common} d="M5 12h14" />
+          <path {...common} d="M12 4l7 4H5z" />
+          <path {...common} d="M10 15h4" />
+        </>
+      )}
+
+      {type === "meeting" && (
+        <>
+          <path
+            {...common}
+            d="M5 8a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H9l-4 3v-3a3 3 0 0 1-3-3V8z"
+          />
+          <path {...common} d="M8 10h5" />
+          <path {...common} d="M8 13h8" />
+          <path {...common} d="M15 9l3-2v8l-3-2" />
+        </>
+      )}
+
       {type === "building" && (
         <>
           <path {...common} d="M4 20h16" />
@@ -316,6 +412,20 @@ function ShellIcon({
           <path {...common} d="M3 20a6 6 0 0 1 12 0" />
           <path {...common} d="M16 11a3 3 0 0 0 0-6" />
           <path {...common} d="M18 20a5 5 0 0 0-3-4.5" />
+        </>
+      )}
+
+      {type === "provider" && (
+        <>
+          <path
+            {...common}
+            d="M6 20V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v13"
+          />
+          <path {...common} d="M9 5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" />
+          <path {...common} d="M4 20h16" />
+          <path {...common} d="M9 10h6" />
+          <path {...common} d="M9 14h6" />
+          <path {...common} d="M8 20v-3h8v3" />
         </>
       )}
 
@@ -371,16 +481,23 @@ function ShellIcon({
    NAVEGAÇÃO ADMIN
    ========================================================= */
 
-const adminNavGroups: {
+type AdminNavItem = {
+  key: AdminNavKey;
+  label: string;
+  href: string;
+  icon: Parameters<typeof ShellIcon>[0]["type"];
+  badge?: string;
+  requiresCouncilMeetingAccess?: boolean;
+  requiresPollsAccess?: boolean;
+  requiresAssembliesAccess?: boolean;
+};
+
+type AdminNavGroup = {
   title: string;
-  items: {
-    key: AdminNavKey;
-    label: string;
-    href: string;
-    icon: Parameters<typeof ShellIcon>[0]["type"];
-    badge?: string;
-  }[];
-}[] = [
+  items: AdminNavItem[];
+};
+
+const adminNavGroups: AdminNavGroup[] = [
   {
     title: "Visão geral",
     items: [
@@ -420,6 +537,12 @@ const adminNavGroups: {
         icon: "people",
       },
       {
+        key: "fornecedores",
+        label: "Fornecedores",
+        href: "/admin/fornecedores",
+        icon: "provider",
+      },
+      {
         key: "usuarios",
         label: "Usuários",
         href: "/admin/usuarios",
@@ -430,6 +553,33 @@ const adminNavGroups: {
   {
     title: "Gestão e análise",
     items: [
+      {
+        key: "comunicados",
+        label: "Comunicados",
+        href: "/admin/comunicados",
+        icon: "announcement",
+      },
+      {
+        key: "enquetes",
+        label: "Enquetes",
+        href: "/admin/enquetes",
+        icon: "poll",
+        requiresPollsAccess: true,
+      },
+      {
+        key: "assembleias",
+        label: "Assembleias",
+        href: "/admin/assembleias",
+        icon: "assembly",
+        requiresAssembliesAccess: true,
+      },
+      {
+        key: "reunioes-conselho",
+        label: "Reuniões De Conselho",
+        href: "/admin/reunioes-conselho",
+        icon: "meeting",
+        requiresCouncilMeetingAccess: true,
+      },
       {
         key: "chamados-dashboard",
         label: "Indicadores",
@@ -465,10 +615,6 @@ const adminNavGroups: {
 
 
 
-const adminNavItems = adminNavGroups.flatMap((group) => group.items);
-
-
-
 function isNavActive({
   pathname,
   current,
@@ -476,7 +622,7 @@ function isNavActive({
 }: {
   pathname: string;
   current?: AdminNavKey;
-  item: (typeof adminNavItems)[number];
+  item: AdminNavItem;
 }) {
   if (current) {
     return current === item.key;
@@ -497,9 +643,15 @@ function isNavActive({
 
 function AdminSidebar({
   current,
+  councilMeetingAccessAllowed,
+  pollsAccessAllowed,
+  assembliesAccessAllowed,
   onNavigate,
 }: {
   current?: AdminNavKey;
+  councilMeetingAccessAllowed?: boolean | null;
+  pollsAccessAllowed?: boolean | null;
+  assembliesAccessAllowed?: boolean | null;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -530,28 +682,44 @@ function AdminSidebar({
                     item,
                   });
 
-                  return (
-                    <Link
-                      key={item.key}
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={[
-                        "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
-                        active
-                          ? "bg-[#256D3C] text-white shadow-[0_16px_38px_rgba(37,109,60,0.28)]"
-                          : "text-white/70 hover:bg-white/10 hover:text-white",
-                      ].join(" ")}
-                    >
-                      {active && (
+                  const disabledByCouncilPlan =
+                    item.requiresCouncilMeetingAccess &&
+                    councilMeetingAccessAllowed === false;
+
+                  const disabledByPollsPlan =
+                    item.requiresPollsAccess && pollsAccessAllowed === false;
+
+                  const disabledByAssembliesPlan =
+                    item.requiresAssembliesAccess && assembliesAccessAllowed === false;
+
+                  const disabledByPlan =
+                    disabledByCouncilPlan ||
+                    disabledByPollsPlan ||
+                    disabledByAssembliesPlan;
+
+                  const itemClassName = [
+                    "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
+                    disabledByPlan
+                      ? "cursor-not-allowed text-white/35"
+                      : active
+                        ? "bg-[#256D3C] text-white shadow-[0_16px_38px_rgba(37,109,60,0.28)]"
+                        : "text-white/70 hover:bg-white/10 hover:text-white",
+                  ].join(" ");
+
+                  const itemContent = (
+                    <>
+                      {active && !disabledByPlan && (
                         <span className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-[#8ED08E]" />
                       )}
 
                       <span
                         className={[
                           "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
-                          active
-                            ? "border-white/15 bg-white/12 text-white"
-                            : "border-white/8 bg-white/[0.04] text-[#8ED08E] group-hover:border-white/15 group-hover:bg-white/10",
+                          disabledByPlan
+                            ? "border-white/5 bg-white/[0.03] text-white/30"
+                            : active
+                              ? "border-white/15 bg-white/12 text-white"
+                              : "border-white/8 bg-white/[0.04] text-[#8ED08E] group-hover:border-white/15 group-hover:bg-white/10",
                         ].join(" ")}
                       >
                         <ShellIcon
@@ -564,11 +732,45 @@ function AdminSidebar({
                         {item.label}
                       </span>
 
-                      {item.badge && (
+                      {disabledByPlan ? (
+                        <span className="rounded-full bg-white/8 px-2 py-0.5 text-[11px] font-bold text-white/45">
+                          Plano
+                        </span>
+                      ) : item.badge ? (
                         <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-bold text-white">
                           {item.badge}
                         </span>
-                      )}
+                      ) : null}
+                    </>
+                  );
+
+                  if (disabledByPlan) {
+                    return (
+                      <span
+                        key={item.key}
+                        className={itemClassName}
+                        title={
+                          disabledByPollsPlan
+                            ? "O módulo Enquetes não está liberado no plano atual."
+                            : disabledByAssembliesPlan
+                              ? "O módulo Assembleias não está liberado no plano atual."
+                              : "O módulo Reuniões De Conselho não está liberado no plano atual."
+                        }
+                        aria-disabled="true"
+                      >
+                        {itemContent}
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      onClick={onNavigate}
+                      className={itemClassName}
+                    >
+                      {itemContent}
                     </Link>
                   );
                 })}
@@ -731,7 +933,15 @@ function AdminTopbar({
    FOOTER
    ========================================================= */
 
-function AdminFooter() {
+function AdminFooter({
+  councilMeetingAccessAllowed,
+  pollsAccessAllowed,
+  assembliesAccessAllowed,
+}: {
+  councilMeetingAccessAllowed?: boolean | null;
+  pollsAccessAllowed?: boolean | null;
+  assembliesAccessAllowed?: boolean | null;
+}) {
   return (
     <footer className="mt-10 border-t border-[#DDE5DF] py-6">
       <div className="flex flex-col gap-4 text-xs text-[#7A877F] md:flex-row md:items-center md:justify-between">
@@ -754,8 +964,55 @@ function AdminFooter() {
             Chamados
           </Link>
 
+          <Link href="/admin/comunicados" className="font-semibold hover:text-[#256D3C]">
+            Comunicados
+          </Link>
+
+          {pollsAccessAllowed === false ? (
+            <span
+              className="cursor-not-allowed font-semibold text-[#9AA7A0]"
+              title="O módulo Enquetes não está liberado no plano atual."
+            >
+              Enquetes
+            </span>
+          ) : (
+            <Link href="/admin/enquetes" className="font-semibold hover:text-[#256D3C]">
+              Enquetes
+            </Link>
+          )}
+
+          {assembliesAccessAllowed === false ? (
+            <span
+              className="cursor-not-allowed font-semibold text-[#9AA7A0]"
+              title="O módulo Assembleias não está liberado no plano atual."
+            >
+              Assembleias
+            </span>
+          ) : (
+            <Link href="/admin/assembleias" className="font-semibold hover:text-[#256D3C]">
+              Assembleias
+            </Link>
+          )}
+
+          {councilMeetingAccessAllowed === false ? (
+            <span
+              className="cursor-not-allowed font-semibold text-[#9AA7A0]"
+              title="O módulo Reuniões De Conselho não está liberado no plano atual."
+            >
+              Reuniões De Conselho
+            </span>
+          ) : (
+            <Link href="/admin/reunioes-conselho" className="font-semibold hover:text-[#256D3C]">
+              Reuniões De Conselho
+            </Link>
+          )}
+
           <Link href="/admin/usuarios" className="font-semibold hover:text-[#256D3C]">
             Usuários
+          </Link>
+
+          <Link href="/admin/fornecedores" className="font-semibold hover:text-[#256D3C]">
+            Fornecedores
           </Link>
 
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
@@ -779,12 +1036,113 @@ export default function AdminShell({
   actions,
 }: AdminShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [councilMeetingAccessAllowed, setCouncilMeetingAccessAllowed] =
+    useState<boolean | null>(null);
+  const [pollsAccessAllowed, setPollsAccessAllowed] =
+    useState<boolean | null>(null);
+  const [assembliesAccessAllowed, setAssembliesAccessAllowed] =
+    useState<boolean | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkCouncilMeetingAccess() {
+      try {
+        const response = await fetch(
+          "/api/admin/reunioes-conselho?page=1&pageSize=1",
+          {
+            cache: "no-store",
+          },
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setCouncilMeetingAccessAllowed(false);
+          return;
+        }
+
+        if (response.ok) {
+          setCouncilMeetingAccessAllowed(true);
+        }
+      } catch {
+        if (isMounted) {
+          setCouncilMeetingAccessAllowed(null);
+        }
+      }
+    }
+
+    async function checkPollsAccess() {
+      try {
+        const response = await fetch("/api/admin/enquetes?page=1&pageSize=1", {
+          cache: "no-store",
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setPollsAccessAllowed(false);
+          return;
+        }
+
+        if (response.ok) {
+          setPollsAccessAllowed(true);
+        }
+      } catch {
+        if (isMounted) {
+          setPollsAccessAllowed(null);
+        }
+      }
+    }
+
+    async function checkAssembliesAccess() {
+      try {
+        const response = await fetch("/api/admin/assembleias?page=1&pageSize=1", {
+          cache: "no-store",
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setAssembliesAccessAllowed(false);
+          return;
+        }
+
+        if (response.ok) {
+          setAssembliesAccessAllowed(true);
+        }
+      } catch {
+        if (isMounted) {
+          setAssembliesAccessAllowed(null);
+        }
+      }
+    }
+
+    void checkCouncilMeetingAccess();
+    void checkPollsAccess();
+    void checkAssembliesAccess();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-[linear-gradient(135deg,#F6F8F7_0%,#FFFFFF_45%,#EAF7EE_120%)] text-[#17211B]">
       {/* Sidebar desktop */}
       <div className="fixed inset-y-0 left-0 z-40 hidden w-72 lg:block">
-        <AdminSidebar current={current} />
+        <AdminSidebar
+          current={current}
+          councilMeetingAccessAllowed={councilMeetingAccessAllowed}
+          pollsAccessAllowed={pollsAccessAllowed}
+          assembliesAccessAllowed={assembliesAccessAllowed}
+        />
       </div>
 
 
@@ -802,6 +1160,9 @@ export default function AdminShell({
           <div className="absolute inset-y-0 left-0 w-[88%] max-w-80 overflow-hidden rounded-r-[32px] shadow-2xl">
             <AdminSidebar
               current={current}
+              councilMeetingAccessAllowed={councilMeetingAccessAllowed}
+              pollsAccessAllowed={pollsAccessAllowed}
+              assembliesAccessAllowed={assembliesAccessAllowed}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -836,7 +1197,11 @@ export default function AdminShell({
 
             {children}
 
-            <AdminFooter />
+            <AdminFooter
+              councilMeetingAccessAllowed={councilMeetingAccessAllowed}
+              pollsAccessAllowed={pollsAccessAllowed}
+              assembliesAccessAllowed={assembliesAccessAllowed}
+            />
           </div>
         </main>
       </div>
