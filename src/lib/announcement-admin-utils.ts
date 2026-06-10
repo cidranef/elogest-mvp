@@ -1161,4 +1161,3 @@ export async function createAnnouncementUnreadReminderNotifications({
     totalTargets: targets.length,
   };
 }
-

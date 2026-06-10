@@ -995,7 +995,7 @@ export default function ChamadosDashboardPage() {
     return () => {
       isMounted = false;
     };
-     
+
   }, []);
 
 

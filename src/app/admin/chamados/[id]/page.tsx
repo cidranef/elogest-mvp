@@ -2334,4 +2334,3 @@ function CompactInfoLine({
     </div>
   );
 }
-
