@@ -28,6 +28,14 @@ import { db } from "@/lib/db";
    - Evitar duplicação de regra entre criação, edição, publicação
      e leitura de comunicados.
    - Manter isolamento por administradora e escopo condominial.
+
+   ETAPA 52.9.1 — DEDUPLICAÇÃO PÓS-HOMOLOGAÇÃO
+
+   Ajustes:
+   - Destinatários de notificações internas são consolidados por userId.
+   - Em usuários com múltiplos perfis, o vínculo representativo prioriza:
+       Síndico > Conselheiro > Proprietário > Morador.
+   - Lembretes consideram leitura confirmada por qualquer perfil do usuário.
    ========================================================= */
 
 
@@ -794,11 +802,28 @@ export type AnnouncementNotificationTarget = {
   unitId: string | null;
 };
 
+const ANNOUNCEMENT_NOTIFICATION_ROLE_PRIORITY: Record<AccessRole, number> = {
+  [AccessRole.SUPER_ADMIN]: 0,
+  [AccessRole.ADMINISTRADORA]: 0,
+  [AccessRole.SINDICO]: 4,
+  [AccessRole.CONSELHEIRO]: 3,
+  [AccessRole.PROPRIETARIO]: 2,
+  [AccessRole.MORADOR]: 1,
+};
+
 function uniqueNotificationTargets(targets: AnnouncementNotificationTarget[]) {
   const map = new Map<string, AnnouncementNotificationTarget>();
 
   for (const target of targets) {
-    map.set(`${target.userId}:${target.id}`, target);
+    const current = map.get(target.userId);
+
+    if (
+      !current ||
+      ANNOUNCEMENT_NOTIFICATION_ROLE_PRIORITY[target.role] >
+        ANNOUNCEMENT_NOTIFICATION_ROLE_PRIORITY[current.role]
+    ) {
+      map.set(target.userId, target);
+    }
   }
 
   return Array.from(map.values());
@@ -1109,22 +1134,22 @@ export async function createAnnouncementUnreadReminderNotifications({
     };
   }
 
-  const targetAccessIds = targets.map((target) => target.id);
+  const targetUserIds = targets.map((target) => target.userId);
 
   const readings = await db.announcementReading.findMany({
     where: {
       announcementId,
-      accessId: {
-        in: targetAccessIds,
+      userId: {
+        in: targetUserIds,
       },
     },
     select: {
-      accessId: true,
+      userId: true,
     },
   });
 
-  const readAccessIds = new Set(readings.map((reading) => reading.accessId));
-  const unreadTargets = targets.filter((target) => !readAccessIds.has(target.id));
+  const readUserIds = new Set(readings.map((reading) => reading.userId));
+  const unreadTargets = targets.filter((target) => !readUserIds.has(target.userId));
 
   if (unreadTargets.length === 0) {
     return {

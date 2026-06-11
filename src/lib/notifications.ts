@@ -50,6 +50,14 @@ import { isNotificationChannelEnabledForUser } from "@/lib/notification-preferen
    - Não ativa WhatsApp real para enquetes nesta etapa.
    - Adicionado notifyPollExpiryAdministradoraUsers() para lembrete
      operacional interno quando o prazo da enquete se esgota.
+
+   ETAPA 52.9.1 — DEDUPLICAÇÃO PÓS-HOMOLOGAÇÃO
+
+   Ajuste:
+   - notifyPollAudience() consolida destinatários por userId.
+   - Usuários com múltiplos perfis formais, como Síndico + Proprietário
+     ou Conselheiro + Proprietário, recebem somente uma notificação
+     interna por evento da enquete.
    ========================================================= */
 
 
@@ -2132,17 +2140,15 @@ export async function notifyPollAudience({
   }
 
   const accesses = await loadEligiblePollTargetAccesses(poll);
-  const notifiedAccessKeys = new Set<string>();
+  const notifiedUserIds = new Set<string>();
   const createdNotifications = [];
 
   for (const access of accesses) {
-    const accessKey = `${access.user.id}:${access.accessId}`;
-
-    if (notifiedAccessKeys.has(accessKey)) {
+    if (notifiedUserIds.has(access.user.id)) {
       continue;
     }
 
-    notifiedAccessKeys.add(accessKey);
+    notifiedUserIds.add(access.user.id);
 
     const notification = await sendNotification({
       channel: "SYSTEM",

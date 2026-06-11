@@ -139,6 +139,8 @@ function notificationTypeLabel(type?: string | null) {
     POLL_EXTENDED: "Prazo da enquete prorrogado",
     POLL_RESULTS_PUBLISHED: "Resultado da enquete disponível",
     POLL_EXPIRED_ADMIN_REMINDER: "Prazo da enquete encerrado",
+    ANNOUNCEMENT_PUBLISHED: "Novo comunicado",
+    ANNOUNCEMENT_READING_REMINDER: "Lembrete de leitura",
     ASSEMBLY_CONVOCATION_PUBLISHED: "Convocação de assembleia",
     ASSEMBLY_VOTING_REMINDER: "Lembrete de votação",
     ASSEMBLY_VOTING_DEADLINE_EXTENDED: "Prazo da votação prorrogado",
@@ -198,6 +200,14 @@ function notificationToneClass(type?: string | null) {
   }
 
   if (type === "POLL_EXPIRED_ADMIN_REMINDER") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (type === "ANNOUNCEMENT_PUBLISHED") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  if (type === "ANNOUNCEMENT_READING_REMINDER") {
     return "border-amber-200 bg-amber-50 text-amber-800";
   }
 
@@ -340,6 +350,7 @@ export default function NotificationBell({
   const [errorMessage, setErrorMessage] = useState("");
 
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const loadingNotificationsRef = useRef(false);
 
 
 
@@ -405,9 +416,22 @@ export default function NotificationBell({
      CARREGAR NOTIFICAÇÕES DO SINO
      ========================================================= */
 
-  const loadNotifications = useCallback(async () => {
+  const loadNotifications = useCallback(async ({
+    silent = false,
+  }: {
+    silent?: boolean;
+  } = {}) => {
+    if (loadingNotificationsRef.current) {
+      return;
+    }
+
+    loadingNotificationsRef.current = true;
+
     try {
-      setLoadingNotifications(true);
+      if (!silent) {
+        setLoadingNotifications(true);
+      }
+
       setErrorMessage("");
 
       const res = await fetch("/api/notifications?take=10", {
@@ -417,11 +441,14 @@ export default function NotificationBell({
       const data = await res.json();
 
       if (!res.ok) {
-        setNotifications([]);
-        setUnreadCount(0);
-        setErrorMessage(
-          data?.error || "Não foi possível carregar suas notificações."
-        );
+        if (!silent) {
+          setNotifications([]);
+          setUnreadCount(0);
+          setErrorMessage(
+            data?.error || "Não foi possível carregar suas notificações."
+          );
+        }
+
         return;
       }
 
@@ -436,11 +463,18 @@ export default function NotificationBell({
       setUnreadCount(Number(data.unreadCount || 0));
     } catch (err) {
       console.error("Erro ao carregar notificações:", err);
-      setNotifications([]);
-      setUnreadCount(0);
-      setErrorMessage("Erro ao carregar notificações.");
+
+      if (!silent) {
+        setNotifications([]);
+        setUnreadCount(0);
+        setErrorMessage("Erro ao carregar notificações.");
+      }
     } finally {
-      setLoadingNotifications(false);
+      loadingNotificationsRef.current = false;
+
+      if (!silent) {
+        setLoadingNotifications(false);
+      }
     }
   }, []);
 
@@ -450,10 +484,14 @@ export default function NotificationBell({
      ATUALIZAR TUDO
      ========================================================= */
 
-  const refreshNotifications = useCallback(async () => {
+  const refreshNotifications = useCallback(async ({
+    silent = false,
+  }: {
+    silent?: boolean;
+  } = {}) => {
     await Promise.all([
       loadActiveAccess(),
-      loadNotifications(),
+      loadNotifications({ silent }),
     ]);
   }, [loadActiveAccess, loadNotifications]);
 
@@ -468,7 +506,7 @@ export default function NotificationBell({
       const nextValue = !currentValue;
 
       if (nextValue) {
-        refreshNotifications();
+        void refreshNotifications();
       }
 
       return nextValue;
@@ -597,7 +635,7 @@ export default function NotificationBell({
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
-        refreshNotifications();
+        void refreshNotifications({ silent: true });
       }
     }
 
@@ -620,24 +658,26 @@ export default function NotificationBell({
      ========================================================= */
 
   useEffect(() => {
-    function handlePollsUpdated() {
-      refreshNotifications();
+    function handleNotificationsUpdated() {
+      void refreshNotifications({ silent: true });
     }
 
     function handleWindowFocus() {
-      refreshNotifications();
+      void refreshNotifications({ silent: true });
     }
 
     const intervalId = window.setInterval(() => {
-      refreshNotifications();
+      void refreshNotifications({ silent: true });
     }, 30000);
 
-    window.addEventListener("elogest:polls-updated", handlePollsUpdated);
+    window.addEventListener("elogest:polls-updated", handleNotificationsUpdated);
+    window.addEventListener("elogest:notifications-updated", handleNotificationsUpdated);
     window.addEventListener("focus", handleWindowFocus);
 
     return () => {
       window.clearInterval(intervalId);
-      window.removeEventListener("elogest:polls-updated", handlePollsUpdated);
+      window.removeEventListener("elogest:polls-updated", handleNotificationsUpdated);
+      window.removeEventListener("elogest:notifications-updated", handleNotificationsUpdated);
       window.removeEventListener("focus", handleWindowFocus);
     };
   }, [refreshNotifications]);
@@ -748,7 +788,9 @@ export default function NotificationBell({
 
                   <button
                     type="button"
-                    onClick={refreshNotifications}
+                    onClick={() => {
+                  void refreshNotifications();
+                }}
                     className="mt-3 inline-flex rounded-2xl border border-yellow-300 bg-white px-3 py-2 text-xs font-semibold text-yellow-800 transition hover:bg-yellow-100"
                   >
                     Tentar novamente
@@ -829,7 +871,9 @@ export default function NotificationBell({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={refreshNotifications}
+                onClick={() => {
+                  void refreshNotifications();
+                }}
                 className="inline-flex w-full items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 py-2 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"
               >
                 Atualizar
