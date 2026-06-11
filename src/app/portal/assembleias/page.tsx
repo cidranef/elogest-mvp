@@ -356,6 +356,14 @@ function unitLabel(unit?: VotingUnit | null) {
   return `${unit.block ? `${unit.block} - ` : ""}${unit.unitNumber}`;
 }
 
+
+function getPortalAttachmentHref(params: {
+  assemblyId: string;
+  attachmentId: string;
+}) {
+  return `/api/portal/assembleias/${encodeURIComponent(params.assemblyId)}/anexos/${encodeURIComponent(params.attachmentId)}`;
+}
+
 function formatFileSize(sizeBytes?: number | null) {
   const value = Number(sizeBytes || 0);
   if (!Number.isFinite(value) || value <= 0) return "-";
@@ -957,7 +965,10 @@ function PortalAssembleiasPageContent() {
                           {selectedAssembly.attachments.map((attachment) => (
                             <a
                               key={attachment.id}
-                              href={attachment.url}
+                              href={getPortalAttachmentHref({
+                                assemblyId: selectedAssembly.id,
+                                attachmentId: attachment.id,
+                              })}
                               target="_blank"
                               rel="noreferrer"
                               className="flex items-center justify-between gap-4 rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] px-4 py-3 text-sm font-semibold text-[#256D3C] transition hover:border-[#8ED08E] hover:bg-[#EAF7EE]"
@@ -1086,7 +1097,10 @@ function PortalAssembleiasPageContent() {
                                 {item.attachments.map((attachment) => (
                                   <a
                                     key={attachment.id}
-                                    href={attachment.url}
+                                    href={getPortalAttachmentHref({
+                                      assemblyId: selectedAssembly.id,
+                                      attachmentId: attachment.id,
+                                    })}
                                     target="_blank"
                                     rel="noreferrer"
                                     className="block text-xs font-semibold text-[#256D3C] hover:underline"

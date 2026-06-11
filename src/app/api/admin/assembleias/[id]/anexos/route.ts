@@ -1,6 +1,4 @@
 import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import path from "path";
 import {
   AssemblyAttachmentScope,
   AssemblyLogAction,
@@ -9,6 +7,10 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdminModuleApiAccess } from "@/lib/admin-api-guard";
+import {
+  buildDocumentStorageKey,
+  writePrivateDocument,
+} from "@/lib/storage/document-storage";
 
 /* =========================================================
    API ADMIN - ANEXOS DA ASSEMBLEIA
@@ -16,16 +18,17 @@ import { requireAdminModuleApiAccess } from "@/lib/admin-api-guard";
    Arquivo:
    src/app/api/admin/assembleias/[id]/anexos/route.ts
 
-   ELOGEST — ETAPA 51.6
+   ELOGEST — ETAPA 52.9.2
 
    GET:
    - Lista documentos oficiais da assembleia.
+   - Entrega URLs administrativas protegidas.
 
    POST:
    - Recebe arquivo multipart/form-data.
-   - Cria registro AssemblyAttachment.
-   - Permite classificar edital, documento de apoio ou outro arquivo.
-   - Permite vínculo opcional com uma pauta.
+   - Grava o documento em armazenamento privado LOCAL ou R2.
+   - Cria registro AssemblyAttachment com storageKey auditável.
+   - Não expõe URL pública do bucket.
    ========================================================= */
 
 export const runtime = "nodejs";
@@ -100,19 +103,11 @@ function sanitizeOriginalName(value: string) {
   return normalized || "documento";
 }
 
-function getUploadFolder(assemblyId: string) {
-  return path.join(
-    process.cwd(),
-    "public",
-    "uploads",
-    "assembleias",
-    "anexos",
-    assemblyId,
-  );
-}
-
-function getPublicUrl(assemblyId: string, fileName: string) {
-  return `/uploads/assembleias/anexos/${assemblyId}/${fileName}`;
+function buildAdminDownloadUrl(params: {
+  assemblyId: string;
+  attachmentId: string;
+}) {
+  return `/api/admin/assembleias/${params.assemblyId}/anexos/${params.attachmentId}`;
 }
 
 function canEditDraft(assembly: {
@@ -137,6 +132,8 @@ async function findAssembly(params: {
     },
     select: {
       id: true,
+      administratorId: true,
+      condominiumId: true,
       status: true,
       convocationPublishedAt: true,
     },
@@ -144,7 +141,7 @@ async function findAssembly(params: {
 }
 
 async function loadAttachments(assemblyId: string) {
-  return db.assemblyAttachment.findMany({
+  const attachments = await db.assemblyAttachment.findMany({
     where: { assemblyId },
     include: {
       agendaItem: {
@@ -164,6 +161,14 @@ async function loadAttachments(assemblyId: string) {
     },
     orderBy: [{ createdAt: "desc" }],
   });
+
+  return attachments.map((attachment) => ({
+    ...attachment,
+    url: buildAdminDownloadUrl({
+      assemblyId: attachment.assemblyId,
+      attachmentId: attachment.id,
+    }),
+  }));
 }
 
 export async function GET(_request: NextRequest, context: RouteContext) {
@@ -275,18 +280,39 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
     }
 
+    const attachmentId = randomUUID();
     const originalName = sanitizeOriginalName(file.name);
     const storedName = `${randomUUID()}${extension}`;
-    const uploadFolder = getUploadFolder(assembly.id);
-    const absolutePath = path.join(uploadFolder, storedName);
-    const url = getPublicUrl(assembly.id, storedName);
+    const storageKey = buildDocumentStorageKey(
+      "assembleias",
+      "anexos",
+      assembly.administratorId,
+      assembly.condominiumId,
+      assembly.id,
+      attachmentId,
+      storedName,
+    );
 
-    await mkdir(uploadFolder, { recursive: true });
-    await writeFile(absolutePath, Buffer.from(await file.arrayBuffer()));
+    const bytes = Buffer.from(await file.arrayBuffer());
+
+    const storage = await writePrivateDocument({
+      key: storageKey,
+      bytes,
+      contentType: file.type,
+      metadata: {
+        assemblyid: assembly.id,
+        attachmentid: attachmentId,
+        administratorid: assembly.administratorId,
+        condominiumid: assembly.condominiumId,
+        scope,
+        documenttype: documentType,
+      },
+    });
 
     const attachment = await db.$transaction(async (tx) => {
       const created = await tx.assemblyAttachment.create({
         data: {
+          id: attachmentId,
           assemblyId: assembly.id,
           agendaItemId,
           uploadedByUserId: auth.authUser.id,
@@ -295,10 +321,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
           storedName,
           mimeType: file.type,
           sizeBytes: file.size,
-          url,
+          url: `private://${storage.key}`,
           description,
           metadata: {
             documentType,
+            storageDriver: storage.driver,
+            storageKey: storage.key,
+            storageBucketName: storage.bucketName,
           },
         },
         include: {
@@ -330,6 +359,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
             scope,
             documentType,
             agendaItemId,
+            storageDriver: storage.driver,
+            storageKey: storage.key,
           },
         },
       });
@@ -338,7 +369,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     });
 
     return NextResponse.json({
-      attachment,
+      attachment: {
+        ...attachment,
+        url: buildAdminDownloadUrl({
+          assemblyId: assembly.id,
+          attachmentId: attachment.id,
+        }),
+      },
       message: "Documento adicionado com sucesso.",
     });
   } catch (error) {

@@ -1,4 +1,4 @@
-import { unlink } from "fs/promises";
+import { readFile, unlink } from "fs/promises";
 import path from "path";
 import {
   AssemblyLogAction,
@@ -7,14 +7,18 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdminModuleApiAccess } from "@/lib/admin-api-guard";
+import {
+  deletePrivateDocument,
+  readPrivateDocument,
+} from "@/lib/storage/document-storage";
 
 /* =========================================================
-   API ADMIN - REMOÇÃO DE ANEXO DA ASSEMBLEIA
+   API ADMIN - DOWNLOAD E REMOÇÃO DE ANEXO DA ASSEMBLEIA
 
    Arquivo:
    src/app/api/admin/assembleias/[id]/anexos/[attachmentId]/route.ts
 
-   ELOGEST — ETAPA 51.6
+   ELOGEST — ETAPA 52.9.2
    ========================================================= */
 
 export const runtime = "nodejs";
@@ -37,6 +41,41 @@ function notFound(message: string) {
   return NextResponse.json({ error: message }, { status: 404 });
 }
 
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getMetadataString(metadata: unknown, key: string) {
+  if (!isRecord(metadata)) return null;
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getPrivateStorageKey(params: {
+  metadata: unknown;
+  url?: string | null;
+}) {
+  const metadataKey = getMetadataString(params.metadata, "storageKey");
+  if (metadataKey) return metadataKey;
+
+  const url = String(params.url || "");
+  return url.startsWith("private://") ? url.slice("private://".length) : null;
+}
+
+function buildContentDisposition(fileName: string) {
+  const fallback = fileName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "documento";
+
+  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
+
 function canEditDraft(assembly: {
   status: AssemblyStatus;
   convocationPublishedAt: Date | null;
@@ -48,7 +87,7 @@ function canEditDraft(assembly: {
   );
 }
 
-function getAbsolutePathFromUrl(params: {
+function getLegacyAbsolutePath(params: {
   assemblyId: string;
   url: string;
 }) {
@@ -82,6 +121,96 @@ function getAbsolutePathFromUrl(params: {
   return absolutePath.startsWith(safeFolder) ? absolutePath : null;
 }
 
+async function findAttachment(params: {
+  assemblyId: string;
+  attachmentId: string;
+  administratorId: string;
+}) {
+  return db.assemblyAttachment.findFirst({
+    where: {
+      id: params.attachmentId,
+      assemblyId: params.assemblyId,
+      assembly: {
+        administratorId: params.administratorId,
+      },
+    },
+    include: {
+      assembly: {
+        select: {
+          id: true,
+          status: true,
+          convocationPublishedAt: true,
+        },
+      },
+    },
+  });
+}
+
+async function readAttachmentBytes(attachment: {
+  assemblyId: string;
+  url: string;
+  metadata: unknown;
+}) {
+  const storageKey = getPrivateStorageKey({
+    metadata: attachment.metadata,
+    url: attachment.url,
+  });
+
+  if (storageKey) {
+    return readPrivateDocument({ key: storageKey });
+  }
+
+  const legacyPath = getLegacyAbsolutePath({
+    assemblyId: attachment.assemblyId,
+    url: attachment.url,
+  });
+
+  if (!legacyPath) {
+    throw new Error("Documento privado não localizado.");
+  }
+
+  return readFile(legacyPath);
+}
+
+export async function GET(_request: NextRequest, context: RouteContext) {
+  const auth = await requireAdminModuleApiAccess(
+    ASSEMBLIES_MODULE_SLUG,
+    ASSEMBLIES_MODULE_LABEL,
+  );
+
+  if ("error" in auth) return auth.error;
+
+  try {
+    const { id, attachmentId } = await context.params;
+    const attachment = await findAttachment({
+      assemblyId: id,
+      attachmentId,
+      administratorId: auth.administratorId,
+    });
+
+    if (!attachment) {
+      return notFound("Documento não encontrado nesta assembleia.");
+    }
+
+    const bytes = await readAttachmentBytes(attachment);
+
+    return new NextResponse(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": attachment.mimeType || "application/octet-stream",
+        "Content-Disposition": buildContentDisposition(attachment.originalName),
+        "Content-Length": String(bytes.length),
+        "Cache-Control": "private, no-store",
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao baixar anexo da assembleia:", error);
+    return NextResponse.json(
+      { error: "Não foi possível baixar o documento da assembleia." },
+      { status: 500 },
+    );
+  }
+}
+
 export async function DELETE(_request: NextRequest, context: RouteContext) {
   const auth = await requireAdminModuleApiAccess(
     ASSEMBLIES_MODULE_SLUG,
@@ -92,24 +221,10 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
 
   try {
     const { id, attachmentId } = await context.params;
-
-    const attachment = await db.assemblyAttachment.findFirst({
-      where: {
-        id: attachmentId,
-        assemblyId: id,
-        assembly: {
-          administratorId: auth.administratorId,
-        },
-      },
-      include: {
-        assembly: {
-          select: {
-            id: true,
-            status: true,
-            convocationPublishedAt: true,
-          },
-        },
-      },
+    const attachment = await findAttachment({
+      assemblyId: id,
+      attachmentId,
+      administratorId: auth.administratorId,
     });
 
     if (!attachment) {
@@ -141,22 +256,34 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
       });
     });
 
-    const absolutePath = getAbsolutePathFromUrl({
-      assemblyId: attachment.assemblyId,
+    const storageKey = getPrivateStorageKey({
+      metadata: attachment.metadata,
       url: attachment.url,
     });
 
-    if (absolutePath) {
-      try {
-        await unlink(absolutePath);
-      } catch (error) {
-        const code =
-          error && typeof error === "object" && "code" in error
-            ? String((error as { code?: unknown }).code || "")
-            : "";
+    if (storageKey) {
+      await deletePrivateDocument({
+        key: storageKey,
+        ignoreMissing: true,
+      });
+    } else {
+      const legacyPath = getLegacyAbsolutePath({
+        assemblyId: attachment.assemblyId,
+        url: attachment.url,
+      });
 
-        if (code !== "ENOENT") {
-          console.error("Erro ao remover arquivo físico do anexo:", error);
+      if (legacyPath) {
+        try {
+          await unlink(legacyPath);
+        } catch (error) {
+          const code =
+            error && typeof error === "object" && "code" in error
+              ? String((error as { code?: unknown }).code || "")
+              : "";
+
+          if (code !== "ENOENT") {
+            console.error("Erro ao remover arquivo legado do anexo:", error);
+          }
         }
       }
     }

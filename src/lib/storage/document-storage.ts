@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import path from "path";
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -44,6 +45,11 @@ export type WritePrivateDocumentInput = {
 export type ReadPrivateDocumentInput = {
   key: string;
   fallbackKeys?: string[];
+};
+
+export type DeletePrivateDocumentInput = {
+  key: string;
+  ignoreMissing?: boolean;
 };
 
 export type DocumentStorageConfiguration = {
@@ -291,4 +297,57 @@ export async function readPrivateDocument(input: ReadPrivateDocumentInput) {
   );
 
   return streamBodyToBuffer(result.Body);
+}
+
+
+/* =========================================================
+   ETAPA 52.9.2 — REMOÇÃO DE DOCUMENTOS PRIVADOS
+
+   - LOCAL: remove o arquivo físico dentro de /storage.
+   - R2: remove o objeto privado do bucket.
+   - ignoreMissing=true mantém exclusões idempotentes.
+   ========================================================= */
+
+export async function deletePrivateDocument(
+  input: DeletePrivateDocumentInput,
+) {
+  const key = normalizeStorageKey(input.key);
+  const config = getDocumentStorageConfiguration();
+
+  if (config.driver === "LOCAL") {
+    try {
+      await unlink(getLocalAbsolutePath(key));
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code?: unknown }).code || "")
+          : "";
+
+      if (!(input.ignoreMissing && code === "ENOENT")) {
+        throw error;
+      }
+    }
+
+    return {
+      driver: config.driver,
+      key,
+      bucketName: null,
+    };
+  }
+
+  const env = getR2Environment();
+  const client = getR2Client();
+
+  await client.send(
+    new DeleteObjectCommand({
+      Bucket: env.bucketName!,
+      Key: key,
+    }),
+  );
+
+  return {
+    driver: config.driver,
+    key,
+    bucketName: env.bucketName,
+  };
 }

@@ -1,38 +1,41 @@
 import { randomUUID } from "crypto";
-import { mkdir, unlink, writeFile } from "fs/promises";
+import { unlink } from "fs/promises";
 import path from "path";
 import { AssemblyStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { requireAdminModuleApiAccess } from "@/lib/admin-api-guard";
+import {
+  buildDocumentStorageKey,
+  deletePrivateDocument,
+  readPrivateDocument,
+  writePrivateDocument,
+} from "@/lib/storage/document-storage";
 
 /* =========================================================
-   API ADMIN - UPLOAD DE DOCUMENTO COMPROBATÓRIO DA PROCURAÇÃO
+   API ADMIN - DOCUMENTO COMPROBATÓRIO DA PROCURAÇÃO
 
    Arquivo:
    src/app/api/admin/assembleias/[id]/procuracoes/upload/route.ts
 
-   ELOGEST — ETAPA 51.6
+   ELOGEST — ETAPA 52.9.2
 
-   Objetivo:
-   - Receber documento comprobatório da procuração.
-   - Aceitar PDF ou imagem legível.
-   - Armazenar o arquivo em diretório público organizado por assembleia.
-   - Permitir remoção segura antes da conclusão do cadastro.
-   - Manter upload disponível enquanto a votação estiver vigente,
-     inclusive após a publicação da convocação.
+   GET:
+   - Entrega documento privado pela API administrativa.
 
-   Observação:
-   - O registro definitivo do documento continua sendo salvo em
-     AssemblyRepresentation.documentUrl e documentName quando a
-     procuração é cadastrada ou atualizada.
+   POST:
+   - Grava documento temporário no storage privado LOCAL ou R2.
+   - Retorna URL protegida para o formulário administrativo.
+
+   DELETE:
+   - Remove documento temporário privado antes da conclusão do cadastro.
+   - Mantém compatibilidade com URLs locais legadas.
    ========================================================= */
 
 export const runtime = "nodejs";
 
 const ASSEMBLIES_MODULE_SLUG = "assembleias";
 const ASSEMBLIES_MODULE_LABEL = "Assembleias";
-
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 const MIME_TO_EXTENSION: Record<string, string> = {
@@ -71,27 +74,32 @@ function sanitizeOriginalName(value: string) {
   return normalized || "documento";
 }
 
-function getUploadRoot() {
-  return path.join(process.cwd(), "public", "uploads", "assembleias", "procuracoes");
+function buildContentDisposition(fileName: string) {
+  return `inline; filename="${sanitizeOriginalName(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
 
-function getAssemblyUploadFolder(assemblyId: string) {
-  return path.join(getUploadRoot(), assemblyId);
+function buildProtectedDocumentUrl(params: {
+  assemblyId: string;
+  storageKey: string;
+  documentName: string;
+  mimeType: string;
+}) {
+  const search = new URLSearchParams({
+    documentKey: params.storageKey,
+    documentName: params.documentName,
+    mimeType: params.mimeType,
+  });
+
+  return `/api/admin/assembleias/${params.assemblyId}/procuracoes/upload?${search.toString()}`;
 }
 
-function getPublicUrl(assemblyId: string, fileName: string) {
-  return `/uploads/assembleias/procuracoes/${assemblyId}/${fileName}`;
-}
-
-function getAbsolutePathFromDocumentUrl(params: {
+function getLegacyAbsolutePath(params: {
   assemblyId: string;
   documentUrl: string;
 }) {
   const expectedPrefix = `/uploads/assembleias/procuracoes/${params.assemblyId}/`;
 
-  if (!params.documentUrl.startsWith(expectedPrefix)) {
-    return null;
-  }
+  if (!params.documentUrl.startsWith(expectedPrefix)) return null;
 
   const relativeFileName = params.documentUrl.slice(expectedPrefix.length);
 
@@ -104,15 +112,19 @@ function getAbsolutePathFromDocumentUrl(params: {
     return null;
   }
 
-  const folder = getAssemblyUploadFolder(params.assemblyId);
+  const folder = path.join(
+    process.cwd(),
+    "public",
+    "uploads",
+    "assembleias",
+    "procuracoes",
+    params.assemblyId,
+  );
+
   const absolutePath = path.resolve(folder, relativeFileName);
   const safeFolder = `${path.resolve(folder)}${path.sep}`;
 
-  if (!absolutePath.startsWith(safeFolder)) {
-    return null;
-  }
-
-  return absolutePath;
+  return absolutePath.startsWith(safeFolder) ? absolutePath : null;
 }
 
 async function findEditableAssembly(params: {
@@ -126,8 +138,9 @@ async function findEditableAssembly(params: {
     },
     select: {
       id: true,
+      administratorId: true,
+      condominiumId: true,
       status: true,
-      convocationPublishedAt: true,
       votingEndsAt: true,
     },
   });
@@ -147,6 +160,82 @@ function canManageRepresentationDocument(assembly: {
   return !assembly.votingEndsAt || assembly.votingEndsAt > new Date();
 }
 
+function isAllowedRepresentationStorageKey(params: {
+  storageKey: string;
+  assemblyId: string;
+  administratorId: string;
+  condominiumId: string;
+}) {
+  const prefix = buildDocumentStorageKey(
+    "assembleias",
+    "procuracoes",
+    params.administratorId,
+    params.condominiumId,
+    params.assemblyId,
+  );
+
+  return params.storageKey.startsWith(`${prefix}/`);
+}
+
+export async function GET(request: NextRequest, context: RouteContext) {
+  const auth = await requireAdminModuleApiAccess(
+    ASSEMBLIES_MODULE_SLUG,
+    ASSEMBLIES_MODULE_LABEL,
+  );
+
+  if ("error" in auth) return auth.error;
+
+  try {
+    const { id } = await context.params;
+    const assembly = await findEditableAssembly({
+      assemblyId: id,
+      administratorId: auth.administratorId,
+    });
+
+    if (!assembly) {
+      return notFound("Assembleia não encontrada na carteira ativa da administradora.");
+    }
+
+    const { searchParams } = new URL(request.url);
+    const documentKey = String(searchParams.get("documentKey") || "").trim();
+    const documentName = String(searchParams.get("documentName") || "documento").trim();
+    const mimeType = String(
+      searchParams.get("mimeType") || "application/octet-stream",
+    ).trim();
+
+    if (
+      !documentKey ||
+      !isAllowedRepresentationStorageKey({
+        storageKey: documentKey,
+        assemblyId: assembly.id,
+        administratorId: assembly.administratorId,
+        condominiumId: assembly.condominiumId,
+      })
+    ) {
+      return badRequest("O caminho do documento informado é inválido.");
+    }
+
+    const bytes = await readPrivateDocument({
+      key: documentKey,
+    });
+
+    return new NextResponse(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": mimeType,
+        "Content-Disposition": buildContentDisposition(documentName),
+        "Content-Length": String(bytes.length),
+        "Cache-Control": "private, no-store",
+      },
+    });
+  } catch (error) {
+    console.error("Erro ao baixar documento comprobatório da procuração:", error);
+    return NextResponse.json(
+      { error: "Não foi possível baixar o documento comprobatório." },
+      { status: 500 },
+    );
+  }
+}
+
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireAdminModuleApiAccess(
     ASSEMBLIES_MODULE_SLUG,
@@ -157,7 +246,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-
     const assembly = await findEditableAssembly({
       assemblyId: id,
       administratorId: auth.administratorId,
@@ -194,22 +282,42 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return badRequest("Envie um arquivo PDF, PNG, JPG ou WEBP.");
     }
 
-    const originalName = sanitizeOriginalName(file.name);
+    const documentName = sanitizeOriginalName(file.name);
     const storedName = `${randomUUID()}${extension}`;
-    const uploadFolder = getAssemblyUploadFolder(assembly.id);
-    const absolutePath = path.join(uploadFolder, storedName);
+    const storageKey = buildDocumentStorageKey(
+      "assembleias",
+      "procuracoes",
+      assembly.administratorId,
+      assembly.condominiumId,
+      assembly.id,
+      "temporarios",
+      storedName,
+    );
 
-    await mkdir(uploadFolder, { recursive: true });
-    await writeFile(absolutePath, Buffer.from(await file.arrayBuffer()));
+    const storage = await writePrivateDocument({
+      key: storageKey,
+      bytes: Buffer.from(await file.arrayBuffer()),
+      contentType: file.type,
+      metadata: {
+        assemblyid: assembly.id,
+        administratorid: assembly.administratorId,
+        condominiumid: assembly.condominiumId,
+        temporary: "true",
+      },
+    });
 
     return NextResponse.json({
-      documentUrl: getPublicUrl(assembly.id, storedName),
-      documentName: originalName,
+      documentUrl: buildProtectedDocumentUrl({
+        assemblyId: assembly.id,
+        storageKey: storage.key,
+        documentName,
+        mimeType: file.type,
+      }),
+      documentName,
       message: "Documento enviado com sucesso.",
     });
   } catch (error) {
     console.error("Erro ao enviar documento comprobatório da procuração:", error);
-
     return NextResponse.json(
       { error: "Não foi possível enviar o documento comprobatório." },
       { status: 500 },
@@ -227,7 +335,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-
     const assembly = await findEditableAssembly({
       assemblyId: id,
       administratorId: auth.administratorId,
@@ -254,26 +361,50 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       return badRequest("Informe o documento que deve ser removido.");
     }
 
-    const absolutePath = getAbsolutePathFromDocumentUrl({
+    if (documentUrl.startsWith("/api/admin/assembleias/")) {
+      const parsed = new URL(documentUrl, "http://elogest.local");
+      const documentKey = String(parsed.searchParams.get("documentKey") || "").trim();
+
+      if (
+        !documentKey ||
+        !isAllowedRepresentationStorageKey({
+          storageKey: documentKey,
+          assemblyId: assembly.id,
+          administratorId: assembly.administratorId,
+          condominiumId: assembly.condominiumId,
+        })
+      ) {
+        return badRequest("O caminho do documento informado é inválido.");
+      }
+
+      await deletePrivateDocument({
+        key: documentKey,
+        ignoreMissing: true,
+      });
+
+      return NextResponse.json({
+        message: "Documento removido com sucesso.",
+      });
+    }
+
+    const legacyPath = getLegacyAbsolutePath({
       assemblyId: assembly.id,
       documentUrl,
     });
 
-    if (!absolutePath) {
+    if (!legacyPath) {
       return badRequest("O caminho do documento informado é inválido.");
     }
 
     try {
-      await unlink(absolutePath);
+      await unlink(legacyPath);
     } catch (error) {
       const code =
         error && typeof error === "object" && "code" in error
           ? String((error as { code?: unknown }).code || "")
           : "";
 
-      if (code !== "ENOENT") {
-        throw error;
-      }
+      if (code !== "ENOENT") throw error;
     }
 
     return NextResponse.json({
@@ -281,7 +412,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     console.error("Erro ao remover documento comprobatório da procuração:", error);
-
     return NextResponse.json(
       { error: "Não foi possível remover o documento comprobatório." },
       { status: 500 },
