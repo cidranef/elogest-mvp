@@ -135,7 +135,7 @@ interface TicketRating {
   ratedCondominiumId?: string | null;
   ratedProviderId?: string | null;
   ratedLabel?: string | null;
-  ratedMetadata?: any;
+  ratedMetadata?: unknown;
 
   createdAt: string;
   updatedAt?: string;
@@ -242,7 +242,13 @@ function extractAccessCount(data: unknown) {
     return 0;
   }
 
-  return list.filter((item: any) => item?.isActive !== false).length;
+  return list.filter((item) => {
+    if (typeof item !== "object" || item === null) {
+      return true;
+    }
+
+    return !("isActive" in item) || item.isActive !== false;
+  }).length;
 }
 
 
@@ -250,6 +256,14 @@ function extractAccessCount(data: unknown) {
 /* =========================================================
    PÁGINA
    ========================================================= */
+
+
+function getPortalAttachmentHref(params: {
+  ticketId: string;
+  attachmentId: string;
+}) {
+  return `/api/portal/chamados/${encodeURIComponent(params.ticketId)}/attachments/${encodeURIComponent(params.attachmentId)}`;
+}
 
 export default function PortalChamadoDetalhesPage() {
   const params = useParams();
@@ -284,6 +298,7 @@ export default function PortalChamadoDetalhesPage() {
   >("overview");
 
   const [activeTimelineIndex, setActiveTimelineIndex] = useState(0);
+  const [renderTimestamp] = useState(() => Date.now());
 
   const canSwitchProfile = accessCount > 1;
 
@@ -347,6 +362,7 @@ export default function PortalChamadoDetalhesPage() {
       setRole(data.role || "");
       setPortalUser(data.user || null);
       setTicket(data.ticket);
+      setActiveTimelineIndex(0);
     } catch (err) {
       console.error(err);
       showError("Erro ao carregar chamado.");
@@ -635,15 +651,21 @@ export default function PortalChamadoDetalhesPage() {
      ========================================================= */
 
   useEffect(() => {
-    loadTicket();
-    loadAccessCount();
+    let isMounted = true;
+
+    void Promise.resolve().then(async () => {
+      if (!isMounted) return;
+
+      await Promise.all([
+        loadTicket(),
+        loadAccessCount(),
+      ]);
+    });
+
+    return () => {
+      isMounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId]);
-
-
-
-  useEffect(() => {
-    setActiveTimelineIndex(0);
   }, [ticketId]);
 
 
@@ -761,22 +783,6 @@ export default function PortalChamadoDetalhesPage() {
 
 
 
-  function getTicketLocationLabel(currentTicket: Ticket) {
-    if (currentTicket.scope === "CONDOMINIUM") {
-      return "Condomínio / Área comum";
-    }
-
-    if (currentTicket.unit) {
-      return `Unidade ${
-        currentTicket.unit.block ? currentTicket.unit.block + " - " : ""
-      }${currentTicket.unit.unitNumber}`;
-    }
-
-    return "Unidade";
-  }
-
-
-
   function getFullLocationLabel(currentTicket: Ticket) {
     const condominiumName =
       currentTicket.condominium?.name || "Condomínio não informado";
@@ -794,16 +800,6 @@ export default function PortalChamadoDetalhesPage() {
     }
 
     return condominiumName;
-  }
-
-
-
-  function getRoleLabel(roleValue?: string | null) {
-    if (roleValue === "SINDICO") return "Síndico";
-    if (roleValue === "MORADOR") return "Morador";
-    if (roleValue === "PROPRIETARIO") return "Proprietário";
-    if (roleValue === "CONSELHEIRO") return "Conselheiro";
-    return "Usuário";
   }
 
 
@@ -859,7 +855,7 @@ export default function PortalChamadoDetalhesPage() {
     const createdAt = new Date(currentTicket.createdAt).getTime();
     const elapsedHours = Math.max(
       0,
-      Math.floor((Date.now() - createdAt) / (1000 * 60 * 60))
+      Math.floor((renderTimestamp - createdAt) / (1000 * 60 * 60))
     );
 
     const remainingHours = limitHours - elapsedHours;
@@ -1873,13 +1869,20 @@ export default function PortalChamadoDetalhesPage() {
                       >
                         {isImage ? (
                           <a
-                            href={attachment.url}
+                            href={getPortalAttachmentHref({
+                              ticketId: attachment.ticketId,
+                              attachmentId: attachment.id,
+                            })}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="block bg-[#17211B]"
                           >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={attachment.url}
+                              src={getPortalAttachmentHref({
+                              ticketId: attachment.ticketId,
+                              attachmentId: attachment.id,
+                            })}
                               alt={attachment.originalName}
                               className="h-44 w-full object-cover"
                             />
@@ -1911,7 +1914,10 @@ export default function PortalChamadoDetalhesPage() {
 
                           <div className="mt-4 flex flex-wrap gap-2">
                             <a
-                              href={attachment.url}
+                              href={getPortalAttachmentHref({
+                              ticketId: attachment.ticketId,
+                              attachmentId: attachment.id,
+                            })}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex h-10 items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"

@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import { Prisma, Status } from "@prisma/client";
@@ -7,6 +6,10 @@ import { db } from "@/lib/db";
 import { requireActiveAdminApiAccess } from "@/lib/admin-api-guard";
 import { getAuthUser } from "@/lib/auth-guard";
 import { canUploadAttachment } from "@/lib/access-control";
+import {
+  buildDocumentStorageKey,
+  writePrivateDocument,
+} from "@/lib/storage/document-storage";
 import {
   buildActorLabel,
   buildActorRole,
@@ -331,7 +334,12 @@ export async function GET(_req: Request, context: RouteContext) {
       },
     });
 
-    return NextResponse.json(attachments);
+    return NextResponse.json(
+      attachments.map((attachment) => ({
+        ...attachment,
+        url: `/api/admin/chamados/${chamado.id}/attachments/${attachment.id}`,
+      })),
+    );
   } catch (error: unknown) {
     console.error("ERRO AO LISTAR ANEXOS:", error);
 
@@ -500,32 +508,40 @@ export async function POST(req: Request, context: RouteContext) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const uploadDir = path.join(
-      process.cwd(),
-      "public",
-      "uploads",
+    const attachmentId = randomUUID();
+    const storedName = `${randomUUID()}${extension}`;
+    const storageKey = buildDocumentStorageKey(
       "chamados",
-      chamado.id
+      "anexos",
+      chamado.condominium.administrator.id,
+      chamado.condominium.id,
+      chamado.id,
+      attachmentId,
+      storedName,
     );
 
-    await mkdir(uploadDir, { recursive: true });
-
-    const storedName = `${randomUUID()}${extension}`;
-    const fullPath = path.join(uploadDir, storedName);
-
-    await writeFile(fullPath, buffer);
-
-    const publicUrl = `/uploads/chamados/${chamado.id}/${storedName}`;
+    const storage = await writePrivateDocument({
+      key: storageKey,
+      bytes: buffer,
+      contentType: file.type,
+      metadata: {
+        ticketid: chamado.id,
+        attachmentid: attachmentId,
+        condominiumid: chamado.condominium.id,
+        administratorid: chamado.condominium.administrator.id,
+      },
+    });
 
     const attachment = await db.ticketAttachment.create({
       data: {
+        id: attachmentId,
         ticketId: chamado.id,
         uploadedByUserId: user.id,
         originalName: file.name,
         storedName,
         mimeType: file.type,
         sizeBytes: file.size,
-        url: publicUrl,
+        url: `private://${storage.key}`,
       },
       include: {
         uploadedByUser: {
@@ -553,7 +569,10 @@ export async function POST(req: Request, context: RouteContext) {
       },
     });
 
-    return NextResponse.json(attachment);
+    return NextResponse.json({
+      ...attachment,
+      url: `/api/admin/chamados/${chamado.id}/attachments/${attachment.id}`,
+    });
   } catch (error: unknown) {
     console.error("ERRO AO ENVIAR ANEXO:", error);
 
@@ -577,3 +596,13 @@ export async function POST(req: Request, context: RouteContext) {
     );
   }
 }
+
+
+/* =========================================================
+   ETAPA 52.9.2.1 — DOCUMENTOS PRIVADOS DOS CHAMADOS
+
+   Ajuste:
+   - Upload administrativo passa a persistir em LOCAL ou R2.
+   - TicketAttachment.url armazena referência privada.
+   - Resposta pública entrega somente rota autenticada do EloGest.
+   ========================================================= */

@@ -1,10 +1,13 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
-import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import {
+  buildDocumentStorageKey,
+  writePrivateDocument,
+} from "@/lib/storage/document-storage";
 import crypto from "crypto";
-import { Status } from "@prisma/client";
+import { Prisma, Status } from "@prisma/client";
 import {
   canUploadAttachment,
   isMorador,
@@ -63,6 +66,23 @@ type RouteContext = {
     id: string;
   }>;
 };
+
+type PortalTicketUser = {
+  id: string;
+};
+
+type PortalAttachmentOperationTicket = {
+  condominium?: {
+    status?: Status | null;
+    administrator?: {
+      status?: Status | null;
+    } | null;
+  } | null;
+};
+
+function isUnauthorizedError(error: unknown) {
+  return error instanceof Error && error.message === "UNAUTHORIZED";
+}
 
 
 
@@ -167,10 +187,10 @@ function getPortalTicketWhere({
   access,
   ticketId,
 }: {
-  user: any;
+  user: PortalTicketUser;
   access: ActiveUserAccess;
   ticketId: string;
-}) {
+}): Prisma.TicketWhereInput {
   if (isResidentialPortalAccess(access)) {
     if (!access.condominiumId || !access.unitId) {
       return {
@@ -178,7 +198,7 @@ function getPortalTicketWhere({
       };
     }
 
-    const ownershipConditions: any[] = [
+    const ownershipConditions: Prisma.TicketWhereInput[] = [
       {
         createdByUserId: user.id,
       },
@@ -231,7 +251,7 @@ async function validatePortalAttachmentOperation({
   chamado,
 }: {
   access: ActiveUserAccess;
-  chamado: any;
+  chamado: PortalAttachmentOperationTicket;
 }) {
   if (
     chamado.condominium?.status !== Status.ACTIVE ||
@@ -354,7 +374,7 @@ function sanitizeOriginalName(name: string) {
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    const authUser: any = await getAuthUser();
+    const authUser = await getAuthUser();
     const { id } = await context.params;
 
     const ticketId = cleanText(id);
@@ -543,26 +563,32 @@ export async function POST(req: Request, context: RouteContext) {
     const originalName = sanitizeOriginalName(file.name);
     const storedName = `${Date.now()}-${crypto.randomUUID()}${extension}`;
 
-    const uploadDir = path.join(
-      process.cwd(),
-      "public",
-      "uploads",
-      "chamados",
-      chamado.id
-    );
-
-    await mkdir(uploadDir, {
-      recursive: true,
-    });
-
+    const attachmentId = crypto.randomUUID();
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    const storageKey = buildDocumentStorageKey(
+      "chamados",
+      "anexos",
+      chamado.condominium.administrator.id,
+      chamado.condominium.id,
+      chamado.id,
+      attachmentId,
+      storedName,
+    );
 
-    const filePath = path.join(uploadDir, storedName);
+    const storage = await writePrivateDocument({
+      key: storageKey,
+      bytes: buffer,
+      contentType: file.type,
+      metadata: {
+        ticketid: chamado.id,
+        attachmentid: attachmentId,
+        condominiumid: chamado.condominium.id,
+        administratorid: chamado.condominium.administrator.id,
+      },
+    });
 
-    await writeFile(filePath, buffer);
-
-    const url = `/uploads/chamados/${chamado.id}/${storedName}`;
+    const url = `private://${storage.key}`;
 
 
 
@@ -572,6 +598,7 @@ export async function POST(req: Request, context: RouteContext) {
 
     const attachment = await db.ticketAttachment.create({
       data: {
+        id: attachmentId,
         ticketId: chamado.id,
         uploadedByUserId: user.id,
         originalName,
@@ -609,11 +636,14 @@ export async function POST(req: Request, context: RouteContext) {
       },
     });
 
-    return NextResponse.json(attachment);
-  } catch (error: any) {
+    return NextResponse.json({
+      ...attachment,
+      url: `/api/portal/chamados/${chamado.id}/attachments/${attachment.id}`,
+    });
+  } catch (error: unknown) {
     console.error("ERRO AO ENVIAR ANEXO PELO PORTAL:", error);
 
-    if (error.message === "UNAUTHORIZED") {
+    if (isUnauthorizedError(error)) {
       return NextResponse.json(
         { error: "Não autorizado." },
         { status: 401 }
@@ -626,3 +656,12 @@ export async function POST(req: Request, context: RouteContext) {
     );
   }
 }
+
+/* =========================================================
+   ETAPA 52.9.2.1 — DOCUMENTOS PRIVADOS DOS CHAMADOS
+
+   Ajuste:
+   - Upload do portal passa a persistir em LOCAL ou R2.
+   - TicketAttachment.url armazena referência privada.
+   - Resposta pública entrega somente rota autenticada do EloGest.
+   ========================================================= */

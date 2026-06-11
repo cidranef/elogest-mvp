@@ -218,6 +218,14 @@ type TicketUpdatePayload = {
    - Mantida toda a lógica funcional já aprovada.
    ========================================================= */
 
+
+function getAdminAttachmentHref(params: {
+  ticketId: string;
+  attachmentId: string;
+}) {
+  return `/api/admin/chamados/${encodeURIComponent(params.ticketId)}/attachments/${encodeURIComponent(params.attachmentId)}`;
+}
+
 export default function ChamadoDetalhesPage() {
   const params = useParams();
 
@@ -1947,10 +1955,16 @@ export default function ChamadoDetalhesPage() {
                       className="rounded-2xl border border-[#DDE5DF] bg-[#F9FBFA] p-4"
                     >
                       {isImageAttachment(attachment) && (
-                        <a href={attachment.url} target="_blank" rel="noreferrer">
+                        <a href={getAdminAttachmentHref({
+                            ticketId: attachment.ticketId,
+                            attachmentId: attachment.id,
+                          })} target="_blank" rel="noreferrer">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={attachment.url}
+                            src={getAdminAttachmentHref({
+                            ticketId: attachment.ticketId,
+                            attachmentId: attachment.id,
+                          })}
                             alt={attachment.originalName}
                             className="mb-3 h-40 w-full rounded-2xl object-cover"
                           />
@@ -1970,7 +1984,10 @@ export default function ChamadoDetalhesPage() {
 
                       <div className="mt-4 flex flex-wrap gap-2">
                         <a
-                          href={attachment.url}
+                          href={getAdminAttachmentHref({
+                            ticketId: attachment.ticketId,
+                            attachmentId: attachment.id,
+                          })}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex h-10 items-center justify-center rounded-2xl border border-[#DDE5DF] bg-white px-4 text-sm font-semibold text-[#17211B] transition hover:border-[#256D3C] hover:text-[#256D3C]"

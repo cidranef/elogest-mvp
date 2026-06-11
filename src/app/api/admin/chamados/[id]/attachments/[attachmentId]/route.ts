@@ -1,10 +1,14 @@
 import { db } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-guard";
 import { NextResponse } from "next/server";
-import { unlink } from "fs/promises";
+import { readFile, unlink } from "fs/promises";
 import path from "path";
 import { Status } from "@prisma/client";
 import { canDeleteAttachment } from "@/lib/access-control";
+import {
+  deletePrivateDocument,
+  readPrivateDocument,
+} from "@/lib/storage/document-storage";
 import {
   buildActorLabel,
   buildActorRole,
@@ -61,6 +65,117 @@ function getDatabaseAccessId(access: ActiveUserAccess | null) {
   return access.source === "USER_ACCESS" ? access.accessId : null;
 }
 
+
+
+
+function getPrivateStorageKey(url: string) {
+  const normalized = String(url || "").trim();
+  return normalized.startsWith("private://")
+    ? normalized.slice("private://".length)
+    : null;
+}
+
+function buildContentDisposition(fileName: string) {
+  const fallback = String(fileName || "documento")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "documento";
+
+  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
+function getLegacyAbsolutePath(params: {
+  ticketId: string;
+  storedName: string;
+}) {
+  if (
+    !params.storedName ||
+    params.storedName.includes("/") ||
+    params.storedName.includes("\\") ||
+    params.storedName.includes("..")
+  ) {
+    return null;
+  }
+
+  const folder = path.join(
+    process.cwd(),
+    "public",
+    "uploads",
+    "chamados",
+    params.ticketId,
+  );
+
+  const absolutePath = path.resolve(folder, params.storedName);
+  const safeFolder = `${path.resolve(folder)}${path.sep}`;
+
+  return absolutePath.startsWith(safeFolder) ? absolutePath : null;
+}
+
+async function readAttachmentBytes(attachment: {
+  ticketId: string;
+  storedName: string;
+  url: string;
+}) {
+  const storageKey = getPrivateStorageKey(attachment.url);
+
+  if (storageKey) {
+    return readPrivateDocument({
+      key: storageKey,
+    });
+  }
+
+  const legacyPath = getLegacyAbsolutePath({
+    ticketId: attachment.ticketId,
+    storedName: attachment.storedName,
+  });
+
+  if (!legacyPath) {
+    throw new Error("Documento privado não localizado.");
+  }
+
+  return readFile(legacyPath);
+}
+
+async function deleteAttachmentBytes(attachment: {
+  ticketId: string;
+  storedName: string;
+  url: string;
+}) {
+  const storageKey = getPrivateStorageKey(attachment.url);
+
+  if (storageKey) {
+    await deletePrivateDocument({
+      key: storageKey,
+      ignoreMissing: true,
+    });
+
+    return;
+  }
+
+  const legacyPath = getLegacyAbsolutePath({
+    ticketId: attachment.ticketId,
+    storedName: attachment.storedName,
+  });
+
+  if (!legacyPath) {
+    return;
+  }
+
+  try {
+    await unlink(legacyPath);
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
+
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
 
 
 /* =========================================================
@@ -159,6 +274,99 @@ function validateAdminAttachmentContext(access: ActiveUserAccess | null) {
 }
 
 
+
+
+/* =========================================================
+   GET - DOWNLOAD PROTEGIDO DO ANEXO ADMINISTRATIVO
+   ========================================================= */
+
+export async function GET(_req: Request, context: RouteContext) {
+  try {
+    const user = await getAuthUser();
+    const { id, attachmentId } = await context.params;
+    const ticketId = cleanText(id);
+    const safeAttachmentId = cleanText(attachmentId);
+
+    if (!user?.id) {
+      return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+    }
+
+    if (!ticketId || !safeAttachmentId) {
+      return NextResponse.json(
+        { error: "Chamado ou anexo não informado." },
+        { status: 400 },
+      );
+    }
+
+    const activeAccess = await getActiveUserAccessFromCookies({
+      userId: user.id,
+    });
+
+    const contextValidation = validateAdminAttachmentContext(activeAccess);
+
+    if (!contextValidation.ok || !activeAccess) {
+      return NextResponse.json(
+        { error: contextValidation.message },
+        { status: contextValidation.status },
+      );
+    }
+
+    const chamado = await db.ticket.findFirst({
+      where: getAttachmentTicketWhere({
+        access: activeAccess,
+        ticketId,
+      }),
+      select: {
+        id: true,
+      },
+    });
+
+    if (!chamado) {
+      return NextResponse.json(
+        { error: "Chamado não encontrado ou acesso negado." },
+        { status: 404 },
+      );
+    }
+
+    const attachment = await db.ticketAttachment.findFirst({
+      where: {
+        id: safeAttachmentId,
+        ticketId: chamado.id,
+      },
+      select: {
+        ticketId: true,
+        originalName: true,
+        storedName: true,
+        mimeType: true,
+        url: true,
+      },
+    });
+
+    if (!attachment) {
+      return NextResponse.json(
+        { error: "Anexo não encontrado para este chamado." },
+        { status: 404 },
+      );
+    }
+
+    const bytes = await readAttachmentBytes(attachment);
+
+    return new NextResponse(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": attachment.mimeType || "application/octet-stream",
+        "Content-Disposition": buildContentDisposition(attachment.originalName),
+        "Content-Length": String(bytes.length),
+        "Cache-Control": "private, no-store",
+      },
+    });
+  } catch (error) {
+    console.error("ERRO AO BAIXAR ANEXO ADMINISTRATIVO:", error);
+    return NextResponse.json(
+      { error: "Erro ao baixar anexo." },
+      { status: 500 },
+    );
+  }
+}
 
 /* =========================================================
    DELETE - REMOVER ANEXO DO CHAMADO
@@ -352,6 +560,7 @@ export async function DELETE(req: Request, context: RouteContext) {
         uploadedByUserId: true,
         originalName: true,
         storedName: true,
+        url: true,
       },
     });
 
@@ -408,28 +617,16 @@ export async function DELETE(req: Request, context: RouteContext) {
 
 
     /* =========================================================
-       REMOVE ARQUIVO FÍSICO
+       REMOVE OBJETO PRIVADO OU ARQUIVO LOCAL LEGADO
 
-       O arquivo está salvo em:
-       /public/uploads/chamados/[ticketId]/[storedName]
-
-       Se a remoção física falhar, não derrubamos a operação,
-       pois o registro do banco já foi removido.
+       Falha física não derruba a operação, pois o registro do
+       banco já foi removido.
        ========================================================= */
 
     try {
-      const filePath = path.join(
-        process.cwd(),
-        "public",
-        "uploads",
-        "chamados",
-        chamado.id,
-        attachment.storedName
-      );
-
-      await unlink(filePath);
+      await deleteAttachmentBytes(attachment);
     } catch (fileError) {
-      console.warn("Arquivo físico não removido ou já inexistente:", fileError);
+      console.warn("Arquivo privado não removido ou já inexistente:", fileError);
     }
 
 
@@ -478,3 +675,12 @@ export async function DELETE(req: Request, context: RouteContext) {
     );
   }
 }
+
+
+/* =========================================================
+   ETAPA 52.9.2.1 — DOCUMENTOS PRIVADOS DOS CHAMADOS
+
+   Ajustes:
+   - GET autenticado para leitura do anexo.
+   - DELETE remove objeto no R2 ou arquivo local legado.
+   ========================================================= */
