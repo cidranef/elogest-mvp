@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  AssemblyMinuteStatus,
   AssemblyStatus,
   AssemblyVoteVisibility,
   type Prisma,
@@ -101,6 +102,24 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         convocationPublishedAt: true,
         resultsPublishedAt: true,
         allowVoteChange: true,
+        minute: {
+          select: {
+            status: true,
+            currentVersion: true,
+            publishedAt: true,
+            officialPdfName: true,
+            officialPdfMimeType: true,
+            officialPdfSizeBytes: true,
+            officialPdfHash: true,
+            officialPdfGeneratedAt: true,
+            publishedByUser: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
         condominium: {
           select: {
             id: true,
@@ -246,6 +265,26 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       now,
     });
 
+    const publicMinute =
+      assembly.minute?.status === AssemblyMinuteStatus.PUBLISHED &&
+      assembly.minute.publishedAt
+        ? {
+            status: assembly.minute.status,
+            currentVersion: assembly.minute.currentVersion,
+            publishedAt: assembly.minute.publishedAt,
+            officialPdfAvailable: Boolean(assembly.minute.officialPdfName),
+            officialPdfName: assembly.minute.officialPdfName,
+            officialPdfMimeType: assembly.minute.officialPdfMimeType,
+            officialPdfSizeBytes: assembly.minute.officialPdfSizeBytes,
+            officialPdfHash: assembly.minute.officialPdfHash,
+            officialPdfGeneratedAt: assembly.minute.officialPdfGeneratedAt,
+            publishedByLabel:
+              assembly.minute.publishedByUser?.name ||
+              assembly.minute.publishedByUser?.email ||
+              "Responsável identificado no histórico da ata",
+          }
+        : null;
+
     const agendaItems = assembly.agendaItems.map((agendaItem) => {
       const { votes: internalVotes, ...publicAgendaItem } = agendaItem;
 
@@ -344,6 +383,11 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       };
     });
 
+    const publicAssembly = {
+      ...assembly,
+      minute: undefined,
+    };
+
     return NextResponse.json({
       activeAccess: {
         role: access.activeAccess.role,
@@ -353,7 +397,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         canVote: access.activeAccess.canVote ?? null,
       },
       assembly: {
-        ...assembly,
+        ...publicAssembly,
+        officialMinute: publicMinute,
         agendaItems,
         votingUnits,
         votingOpen,
@@ -368,3 +413,12 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     );
   }
 }
+
+/* =========================================================
+   ETAPA 52.9.3 — ATA OFICIAL DISPONÍVEL NO PORTAL
+
+   Ajuste:
+   - O detalhe público expõe somente metadados da ata publicada.
+   - Minutas em revisão, versões internas e auditoria permanecem restritas.
+   - O PDF é oferecido somente quando o arquivo oficial já foi gerado.
+   ========================================================= */

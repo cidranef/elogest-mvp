@@ -66,6 +66,7 @@ interface PortalAssemblyListItem {
   votingEndsAt?: string | null;
   convocationPublishedAt?: string | null;
   allowVoteChange: boolean;
+  officialMinute?: OfficialMinute | null;
   condominium?: {
     id: string;
     name: string;
@@ -167,6 +168,19 @@ interface AgendaItem {
   publicResult?: PublicAgendaResult | null;
 }
 
+interface OfficialMinute {
+  status: "PUBLISHED";
+  currentVersion: number;
+  publishedAt: string;
+  officialPdfAvailable: boolean;
+  officialPdfName?: string | null;
+  officialPdfMimeType?: string | null;
+  officialPdfSizeBytes?: number | null;
+  officialPdfHash?: string | null;
+  officialPdfGeneratedAt?: string | null;
+  publishedByLabel: string;
+}
+
 interface SubmittedVote {
   id: string;
   agendaItemId: string;
@@ -195,6 +209,7 @@ interface PortalAssemblyDetail {
   convocationPublishedAt?: string | null;
   resultsPublishedAt?: string | null;
   allowVoteChange: boolean;
+  officialMinute?: OfficialMinute | null;
   condominium?: {
     id: string;
     name: string;
@@ -362,6 +377,10 @@ function getPortalAttachmentHref(params: {
   attachmentId: string;
 }) {
   return `/api/portal/assembleias/${encodeURIComponent(params.assemblyId)}/anexos/${encodeURIComponent(params.attachmentId)}`;
+}
+
+function getPortalOfficialMinutePdfHref(assemblyId: string) {
+  return `/api/portal/assembleias/${encodeURIComponent(assemblyId)}/ata/pdf`;
 }
 
 function formatFileSize(sizeBytes?: number | null) {
@@ -981,6 +1000,89 @@ function PortalAssembleiasPageContent() {
                       )}
                     </article>
 
+
+                    {selectedAssembly.officialMinute && (
+                      <article>
+                        <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#7A877F]">
+                          Documento Oficial
+                        </p>
+                        <h3 className="mt-1 text-lg font-semibold text-[#17211B]">
+                          Ata Oficial Da Assembleia
+                        </h3>
+
+                        <div className="mt-3 rounded-2xl border border-[#CFE6D4] bg-[#EAF7EE] p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-bold text-[#17211B]">
+                                Ata Publicada
+                              </p>
+                              <p className="mt-1 text-xs font-semibold leading-5 text-[#5E6B63]">
+                                Versão {selectedAssembly.officialMinute.currentVersion} · Publicada em{" "}
+                                {formatDateTime(selectedAssembly.officialMinute.publishedAt)}
+                              </p>
+                              <p className="mt-1 text-xs leading-5 text-[#5E6B63]">
+                                Responsável pela publicação:{" "}
+                                {selectedAssembly.officialMinute.publishedByLabel}
+                              </p>
+                            </div>
+
+                            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-bold text-emerald-700">
+                              Documento Oficial
+                            </span>
+                          </div>
+
+                          {selectedAssembly.officialMinute.officialPdfAvailable ? (
+                            <div className="mt-4 space-y-3">
+                              <div className="grid gap-2 text-xs text-[#5E6B63] sm:grid-cols-2">
+                                <p>
+                                  Arquivo:{" "}
+                                  <span className="font-semibold text-[#17211B]">
+                                    {selectedAssembly.officialMinute.officialPdfName || "Ata oficial em PDF"}
+                                  </span>
+                                </p>
+                                <p>
+                                  Tamanho:{" "}
+                                  <span className="font-semibold text-[#17211B]">
+                                    {formatFileSize(selectedAssembly.officialMinute.officialPdfSizeBytes)}
+                                  </span>
+                                </p>
+                                <p>
+                                  PDF gerado em:{" "}
+                                  <span className="font-semibold text-[#17211B]">
+                                    {formatDateTime(selectedAssembly.officialMinute.officialPdfGeneratedAt)}
+                                  </span>
+                                </p>
+                              </div>
+
+                              {selectedAssembly.officialMinute.officialPdfHash && (
+                                <div className="rounded-xl border border-[#CFE6D4] bg-white px-3 py-2">
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#7A877F]">
+                                    Hash SHA-256 Do Arquivo
+                                  </p>
+                                  <p className="mt-1 break-all font-mono text-[11px] leading-5 text-[#5E6B63]">
+                                    {selectedAssembly.officialMinute.officialPdfHash}
+                                  </p>
+                                </div>
+                              )}
+
+                              <a
+                                href={getPortalOfficialMinutePdfHref(selectedAssembly.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-11 items-center rounded-xl bg-[#256D3C] px-4 text-sm font-bold text-white transition hover:bg-[#1E5A32]"
+                              >
+                                Baixar PDF Oficial
+                              </a>
+                            </div>
+                          ) : (
+                            <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
+                              A ata já foi publicada, mas o PDF oficial ainda não foi gerado pela administradora.
+                            </p>
+                          )}
+                        </div>
+                      </article>
+                    )}
+
                     <article>
                       <p className="text-xs font-bold uppercase tracking-[0.14em] text-[#7A877F]">Pautas</p>
                       <h3 className="mt-1 text-lg font-semibold text-[#17211B]">Deliberações E Itens Informativos</h3>
@@ -1304,3 +1406,12 @@ export default function PortalAssembleiasPage() {
     </Suspense>
   );
 }
+
+/* =========================================================
+   ETAPA 52.9.3 — ATA OFICIAL DISPONÍVEL NO PORTAL
+
+   Ajuste:
+   - Exibe metadados públicos da ata oficialmente publicada.
+   - Permite download protegido do PDF oficial pelo portal.
+   - Não expõe minuta interna, versões em revisão ou URL pública do bucket.
+   ========================================================= */
