@@ -783,6 +783,7 @@ export async function notifyAdministradoraUsers({
   title,
   message,
   metadata,
+  href,
 }: {
   administratorId?: string | null;
   actorUser?: BasicActor | null;
@@ -792,6 +793,7 @@ export async function notifyAdministradoraUsers({
   title: string;
   message: string;
   metadata?: NotificationMetadata;
+  href?: string | null;
 }) {
   if (!administratorId) {
     console.warn("notifyAdministradoraUsers: administratorId não informado.", {
@@ -837,6 +839,7 @@ export async function notifyAdministradoraUsers({
       type,
       title,
       message,
+      href: href || null,
       metadata: {
         ...(metadata || {}),
         administratorId,
@@ -2557,4 +2560,141 @@ export async function notifyAssemblyAudience({
   }
 
   return { createdNotifications, externalRepresentatives };
+}
+
+
+
+/* =========================================================
+   FINANCEIRO — NOTIFICAÇÕES INTERNAS
+
+   Etapa 53.7:
+   - Centraliza notificações operacionais do Financeiro.
+   - Mantém o mesmo padrão de deduplicação por userId.
+   - Usa SYSTEM no MVP para não ativar e-mail/WhatsApp financeiro
+     antes de aprovação comercial específica.
+   ========================================================= */
+
+export async function notifyFinancialAdministradoraUsers({
+  administratorId,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  href,
+  metadata,
+}: {
+  administratorId?: string | null;
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  href?: string | null;
+  metadata?: NotificationMetadata;
+}) {
+  return notifyAdministradoraUsers({
+    administratorId,
+    actorUser,
+    notifiedUserIds,
+    type,
+    title,
+    message,
+    href: href || "/admin/financeiro",
+    metadata: {
+      ...(metadata || {}),
+      notificationScope: "FINANCIAL_ADMINISTRADORA_USERS",
+    },
+  });
+}
+
+export async function notifyFinancialUnitUsers({
+  administratorId,
+  condominiumId,
+  unitId,
+  actorUser,
+  notifiedUserIds,
+  type,
+  title,
+  message,
+  href,
+  metadata,
+}: {
+  administratorId?: string | null;
+  condominiumId?: string | null;
+  unitId?: string | null;
+  actorUser?: BasicActor | null;
+  notifiedUserIds?: Set<string>;
+  type: string;
+  title: string;
+  message: string;
+  href?: string | null;
+  metadata?: NotificationMetadata;
+}) {
+  if (!administratorId || !condominiumId || !unitId) {
+    return [];
+  }
+
+  const accesses = await db.userAccess.findMany({
+    where: {
+      isActive: true,
+      administratorId,
+      condominiumId,
+      unitId,
+      role: {
+        in: [AccessRole.MORADOR, AccessRole.PROPRIETARIO],
+      },
+      user: {
+        isActive: true,
+      },
+    },
+    select: {
+      id: true,
+      label: true,
+      role: true,
+      user: {
+        select: userNotificationSelect,
+      },
+    },
+    orderBy: [
+      {
+        role: "asc",
+      },
+      {
+        label: "asc",
+      },
+    ],
+  });
+
+  const createdNotifications = [];
+
+  for (const access of accesses) {
+    const notification = await notifySingleUser({
+      targetUser: access.user,
+      actorUser,
+      notifiedUserIds,
+      accessId: access.id,
+      type,
+      title,
+      message,
+      href: href || "/portal/financeiro",
+      metadata: {
+        ...(metadata || {}),
+        administratorId,
+        condominiumId,
+        unitId,
+        accessId: access.id,
+        accessRole: access.role,
+        accessLabel: access.label,
+        notificationScope: "FINANCIAL_UNIT_USERS",
+      },
+      allowNotifyActor: false,
+    });
+
+    if (notification) {
+      createdNotifications.push(notification);
+    }
+  }
+
+  return createdNotifications;
 }

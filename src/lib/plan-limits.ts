@@ -801,6 +801,25 @@ export async function requireCanAccessAssemblies(administratorId: string) {
 
 
 
+
+/* =========================================================
+   ETAPA 53 — FINANCEIRO INICIAL
+
+   Acesso comercial ao módulo financeiro condominial.
+   A segurança operacional deve continuar sendo aplicada nas
+   APIs administrativas com isolamento por administratorId e
+   validação dos vínculos de condomínio, unidade e fornecedor.
+   ========================================================= */
+
+export async function requireCanAccessFinancial(administratorId: string) {
+  return requireModuleAccess({
+    administratorId,
+    moduleSlug: MODULE_SLUGS.FINANCEIRO,
+  });
+}
+
+
+
 /* =========================================================
    Helpers Para Respostas De API
 

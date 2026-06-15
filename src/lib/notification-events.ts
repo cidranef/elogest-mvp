@@ -138,6 +138,11 @@ export type NotificationEventType =
   | "ASSEMBLY_VOTING_REMINDER"
   | "ASSEMBLY_VOTING_DEADLINE_EXTENDED"
   | "ASSEMBLY_RESULTS_PUBLISHED"
+  | "FINANCIAL_CHARGE_BATCH_GENERATED_ADMIN"
+  | "FINANCIAL_CHARGE_AVAILABLE_PORTAL"
+  | "FINANCIAL_SETTLEMENT_REGISTERED_ADMIN"
+  | "FINANCIAL_PAYMENT_REGISTERED_PORTAL"
+  | "FINANCIAL_SETTLEMENT_REVERSED_ADMIN"
   | "EMAIL_PENDING"
   | "WHATSAPP_PENDING";
 
@@ -488,6 +493,61 @@ export const NOTIFICATION_EVENTS: Record<
     enabledChannels: SYSTEM_AND_EMAIL,
     externalReady: true,
     userPreferenceEnabled: true,
+  },
+
+  FINANCIAL_CHARGE_BATCH_GENERATED_ADMIN: {
+    type: "FINANCIAL_CHARGE_BATCH_GENERATED_ADMIN",
+    label: "Mensalidades geradas",
+    description:
+      "Aviso operacional interno para a administradora quando um lote de mensalidades é gerado no Financeiro.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
+  },
+
+  FINANCIAL_CHARGE_AVAILABLE_PORTAL: {
+    type: "FINANCIAL_CHARGE_AVAILABLE_PORTAL",
+    label: "Nova cobrança disponível",
+    description:
+      "Aviso interno no portal quando uma mensalidade ou cobrança da unidade fica disponível para consulta.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
+  },
+
+  FINANCIAL_SETTLEMENT_REGISTERED_ADMIN: {
+    type: "FINANCIAL_SETTLEMENT_REGISTERED_ADMIN",
+    label: "Baixa financeira registrada",
+    description:
+      "Aviso operacional interno para a administradora quando uma baixa financeira é registrada.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
+  },
+
+  FINANCIAL_PAYMENT_REGISTERED_PORTAL: {
+    type: "FINANCIAL_PAYMENT_REGISTERED_PORTAL",
+    label: "Pagamento registrado",
+    description:
+      "Aviso interno no portal quando uma baixa é registrada para uma cobrança da unidade.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
+  },
+
+  FINANCIAL_SETTLEMENT_REVERSED_ADMIN: {
+    type: "FINANCIAL_SETTLEMENT_REVERSED_ADMIN",
+    label: "Baixa financeira estornada",
+    description:
+      "Aviso operacional interno para a administradora quando uma baixa financeira é estornada.",
+    availableChannels: SYSTEM_ONLY,
+    enabledChannels: SYSTEM_ONLY,
+    externalReady: false,
+    userPreferenceEnabled: false,
   },
 
   EMAIL_PENDING: {

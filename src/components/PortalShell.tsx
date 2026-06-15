@@ -127,6 +127,7 @@ type PortalNavKey =
   | "comunicados"
   | "enquetes"
   | "assembleias"
+  | "financeiro"
   | "reunioes-conselho"
   | "perfil";
 
@@ -266,6 +267,7 @@ function PortalIcon({
     | "announcement"
     | "poll"
     | "assembly"
+    | "finance"
     | "meeting"
     | "bell"
     | "profile"
@@ -352,6 +354,17 @@ function PortalIcon({
         </>
       )}
 
+      {type === "finance" && (
+        <>
+          <path {...common} d="M4 19V5" />
+          <path {...common} d="M4 19h16" />
+          <path {...common} d="M8 16V9" />
+          <path {...common} d="M12 16V7" />
+          <path {...common} d="M16 16v-4" />
+          <path {...common} d="M7 5h10" />
+        </>
+      )}
+
       {type === "meeting" && (
         <>
           <path
@@ -430,6 +443,7 @@ function getPortalNavItems(
   showCouncilMeetings: boolean,
   showPolls: boolean,
   showAssemblies: boolean,
+  showFinancial: boolean,
 ) {
   const items: {
     key: PortalNavKey;
@@ -472,6 +486,15 @@ function getPortalNavItems(
       label: "Assembleias",
       href: "/portal/assembleias",
       icon: "assembly",
+    });
+  }
+
+  if (showFinancial) {
+    items.push({
+      key: "financeiro",
+      label: "Financeiro",
+      href: "/portal/financeiro",
+      icon: "finance",
     });
   }
 
@@ -530,9 +553,11 @@ function PortalSidebar({
   unreadAnnouncementsCount,
   pendingPollsCount,
   pendingAssembliesCount,
+  pendingFinancialCount,
   showCouncilMeetings,
   showPolls,
   showAssemblies,
+  showFinancial,
   onNavigate,
 }: {
   current?: PortalNavKey;
@@ -540,9 +565,11 @@ function PortalSidebar({
   unreadAnnouncementsCount: number;
   pendingPollsCount: number;
   pendingAssembliesCount: number;
+  pendingFinancialCount: number;
   showCouncilMeetings: boolean;
   showPolls: boolean;
   showAssemblies: boolean;
+  showFinancial: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -551,6 +578,7 @@ function PortalSidebar({
     showCouncilMeetings,
     showPolls,
     showAssemblies,
+    showFinancial,
   );
 
   return (
@@ -651,6 +679,22 @@ function PortalSidebar({
                   >
                     <PortalIcon type="bell" className="h-3.5 w-3.5" />
                     <span>{pendingAssembliesCount > 99 ? "99+" : pendingAssembliesCount}</span>
+                  </span>
+                )}
+
+                {item.key === "financeiro" && pendingFinancialCount > 0 && (
+                  <span
+                    className={[
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] font-bold transition",
+                      active
+                        ? "border-white/20 bg-white/14 text-white"
+                        : "border-[#8ED08E]/30 bg-[#8ED08E]/12 text-[#EAF7EE] group-hover:border-[#8ED08E]/45 group-hover:bg-[#8ED08E]/18",
+                    ].join(" ")}
+                    title={`${pendingFinancialCount} cobrança(s) em aberto ou atraso`}
+                    aria-label={`${pendingFinancialCount} cobrança(s) em aberto ou atraso`}
+                  >
+                    <PortalIcon type="bell" className="h-3.5 w-3.5" />
+                    <span>{pendingFinancialCount > 99 ? "99+" : pendingFinancialCount}</span>
                   </span>
                 )}
               </Link>
@@ -817,11 +861,13 @@ function PortalFooter({
   showCouncilMeetings,
   showPolls,
   showAssemblies,
+  showFinancial,
 }: {
   canSwitchProfile: boolean;
   showCouncilMeetings: boolean;
   showPolls: boolean;
   showAssemblies: boolean;
+  showFinancial: boolean;
 }) {
   return (
     <footer className="mt-10 border-t border-[#DDE5DF] py-6">
@@ -861,6 +907,12 @@ function PortalFooter({
             </Link>
           )}
 
+          {showFinancial && (
+            <Link href="/portal/financeiro" className="font-semibold hover:text-[#256D3C]">
+              Financeiro
+            </Link>
+          )}
+
           {showCouncilMeetings && (
             <Link href="/portal/reunioes-conselho" className="font-semibold hover:text-[#256D3C]">
               Reuniões De Conselho
@@ -894,12 +946,14 @@ export default function PortalShell({
   const [unreadAnnouncementsCount, setUnreadAnnouncementsCount] = useState(0);
   const [pendingPollsCount, setPendingPollsCount] = useState(0);
   const [pendingAssembliesCount, setPendingAssembliesCount] = useState(0);
+  const [pendingFinancialCount, setPendingFinancialCount] = useState(0);
   const [unreadAssemblyNotificationsCount, setUnreadAssemblyNotificationsCount] = useState(0);
   const [showCouncilMeetings, setShowCouncilMeetings] = useState(
     current === "reunioes-conselho",
   );
   const [showPolls, setShowPolls] = useState(current === "enquetes");
   const [showAssemblies, setShowAssemblies] = useState(current === "assembleias");
+  const [showFinancial, setShowFinancial] = useState(current === "financeiro");
   const pathname = usePathname();
 
   useEffect(() => {
@@ -1147,6 +1201,57 @@ export default function PortalShell({
     };
   }, [pathname]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadFinancialAccess() {
+      try {
+        const response = await fetch("/api/portal/financeiro?page=1&pageSize=1", {
+          cache: "no-store",
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.ok) {
+          const data = (await response.json()) as {
+            kpis?: {
+              open?: number;
+              overdue?: number;
+              partiallyPaid?: number;
+            };
+          };
+
+          setShowFinancial(true);
+          setPendingFinancialCount(
+            Math.max(
+              0,
+              Number(data.kpis?.open ?? 0) +
+                Number(data.kpis?.overdue ?? 0) +
+                Number(data.kpis?.partiallyPaid ?? 0),
+            ),
+          );
+          return;
+        }
+
+        setPendingFinancialCount(0);
+        setShowFinancial(pathname.startsWith("/portal/financeiro"));
+      } catch {
+        if (isMounted) {
+          setPendingFinancialCount(0);
+          setShowFinancial(pathname.startsWith("/portal/financeiro"));
+        }
+      }
+    }
+
+    void loadFinancialAccess();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname]);
+
   // ETAPA 51.9.3 — o menu deve sinalizar tanto pendências de voto
   // quanto avisos de assembleia ainda não lidos. Usamos o maior valor
   // para evitar dupla contagem quando uma notificação corresponde à
@@ -1166,9 +1271,11 @@ export default function PortalShell({
           unreadAnnouncementsCount={unreadAnnouncementsCount}
           pendingPollsCount={pendingPollsCount}
           pendingAssembliesCount={assemblyMenuBadgeCount}
+          pendingFinancialCount={pendingFinancialCount}
           showCouncilMeetings={showCouncilMeetings}
           showPolls={showPolls}
           showAssemblies={showAssemblies}
+          showFinancial={showFinancial}
         />
       </div>
 
@@ -1191,9 +1298,11 @@ export default function PortalShell({
               unreadAnnouncementsCount={unreadAnnouncementsCount}
               pendingPollsCount={pendingPollsCount}
               pendingAssembliesCount={assemblyMenuBadgeCount}
+              pendingFinancialCount={pendingFinancialCount}
               showCouncilMeetings={showCouncilMeetings}
               showPolls={showPolls}
               showAssemblies={showAssemblies}
+              showFinancial={showFinancial}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -1233,6 +1342,7 @@ export default function PortalShell({
               showCouncilMeetings={showCouncilMeetings}
               showPolls={showPolls}
               showAssemblies={showAssemblies}
+              showFinancial={showFinancial}
             />
           </div>
         </main>

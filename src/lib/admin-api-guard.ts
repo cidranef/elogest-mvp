@@ -62,6 +62,13 @@ import {
    }
 
    const { administratorId } = auth;
+
+   ETAPA 53 — FINANCEIRO INICIAL
+
+   Atualização:
+   - Adicionado guard específico para o módulo Financeiro.
+   - As rotas /api/admin/financeiro/* devem exigir módulo comercial
+     Financeiro liberado, além do perfil administrativo ativo.
    ========================================================= */
 
 
@@ -518,6 +525,20 @@ export async function requireAdminModuleApiAccess(
 
 export async function requireAnnouncementsAdminApiAccess(): Promise<AdminModuleApiGuardResult> {
   return requireAdminModuleApiAccess("comunicados", "Comunicados");
+}
+
+
+
+/* =========================================================
+   GUARD ESPECÍFICO - FINANCEIRO
+
+   Etapa 53:
+   Centraliza a validação do módulo Financeiro.
+   Todas as rotas /api/admin/financeiro/* devem usar este helper.
+   ========================================================= */
+
+export async function requireFinancialAdminApiAccess(): Promise<AdminModuleApiGuardResult> {
+  return requireAdminModuleApiAccess("financeiro", "Financeiro");
 }
 
 

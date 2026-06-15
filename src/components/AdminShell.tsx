@@ -127,6 +127,14 @@ import NotificationBell from "@/components/NotificationBell";
    - Adicionado item "Assembleias" na navegação administrativa.
    - Adicionado ícone próprio para deliberações formais.
    - Adicionado bloqueio visual por plano/módulo usando a API de Assembleias.
+
+   ETAPA 53.1 — FINANCEIRO INICIAL
+
+   Ajustes desta revisão:
+   - Adicionada chave "financeiro" ao AdminNavKey.
+   - Adicionado item "Financeiro" na navegação administrativa.
+   - Adicionado ícone próprio para receitas, despesas e mensalidades.
+   - Adicionado bloqueio visual por plano/módulo usando a API Financeira.
    ========================================================= */
 
 
@@ -138,6 +146,7 @@ type AdminNavKey =
   | "comunicados"
   | "enquetes"
   | "assembleias"
+  | "financeiro"
   | "reunioes-conselho"
   | "condominios"
   | "unidades"
@@ -275,6 +284,7 @@ function ShellIcon({
     | "announcement"
     | "poll"
     | "assembly"
+    | "finance"
     | "meeting"
     | "building"
     | "unit"
@@ -373,6 +383,16 @@ function ShellIcon({
           <path {...common} d="M5 12h14" />
           <path {...common} d="M12 4l7 4H5z" />
           <path {...common} d="M10 15h4" />
+        </>
+      )}
+
+      {type === "finance" && (
+        <>
+          <rect {...common} x="4" y="5" width="16" height="14" rx="2" />
+          <path {...common} d="M4 9h16" />
+          <path {...common} d="M8 14h3" />
+          <path {...common} d="M16 13v3" />
+          <path {...common} d="M14.5 14.5h3" />
         </>
       )}
 
@@ -490,6 +510,7 @@ type AdminNavItem = {
   requiresCouncilMeetingAccess?: boolean;
   requiresPollsAccess?: boolean;
   requiresAssembliesAccess?: boolean;
+  requiresFinancialAccess?: boolean;
 };
 
 type AdminNavGroup = {
@@ -574,6 +595,13 @@ const adminNavGroups: AdminNavGroup[] = [
         requiresAssembliesAccess: true,
       },
       {
+        key: "financeiro",
+        label: "Financeiro",
+        href: "/admin/financeiro",
+        icon: "finance",
+        requiresFinancialAccess: true,
+      },
+      {
         key: "reunioes-conselho",
         label: "Reuniões De Conselho",
         href: "/admin/reunioes-conselho",
@@ -646,12 +674,14 @@ function AdminSidebar({
   councilMeetingAccessAllowed,
   pollsAccessAllowed,
   assembliesAccessAllowed,
+  financialAccessAllowed,
   onNavigate,
 }: {
   current?: AdminNavKey;
   councilMeetingAccessAllowed?: boolean | null;
   pollsAccessAllowed?: boolean | null;
   assembliesAccessAllowed?: boolean | null;
+  financialAccessAllowed?: boolean | null;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -692,10 +722,14 @@ function AdminSidebar({
                   const disabledByAssembliesPlan =
                     item.requiresAssembliesAccess && assembliesAccessAllowed === false;
 
+                  const disabledByFinancialPlan =
+                    item.requiresFinancialAccess && financialAccessAllowed === false;
+
                   const disabledByPlan =
                     disabledByCouncilPlan ||
                     disabledByPollsPlan ||
-                    disabledByAssembliesPlan;
+                    disabledByAssembliesPlan ||
+                    disabledByFinancialPlan;
 
                   const itemClassName = [
                     "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
@@ -754,7 +788,9 @@ function AdminSidebar({
                             ? "O módulo Enquetes não está liberado no plano atual."
                             : disabledByAssembliesPlan
                               ? "O módulo Assembleias não está liberado no plano atual."
-                              : "O módulo Reuniões De Conselho não está liberado no plano atual."
+                              : disabledByFinancialPlan
+                                ? "O módulo Financeiro não está liberado no plano atual."
+                                : "O módulo Reuniões De Conselho não está liberado no plano atual."
                         }
                         aria-disabled="true"
                       >
@@ -937,10 +973,12 @@ function AdminFooter({
   councilMeetingAccessAllowed,
   pollsAccessAllowed,
   assembliesAccessAllowed,
+  financialAccessAllowed,
 }: {
   councilMeetingAccessAllowed?: boolean | null;
   pollsAccessAllowed?: boolean | null;
   assembliesAccessAllowed?: boolean | null;
+  financialAccessAllowed?: boolean | null;
 }) {
   return (
     <footer className="mt-10 border-t border-[#DDE5DF] py-6">
@@ -994,6 +1032,19 @@ function AdminFooter({
             </Link>
           )}
 
+          {financialAccessAllowed === false ? (
+            <span
+              className="cursor-not-allowed font-semibold text-[#9AA7A0]"
+              title="O módulo Financeiro não está liberado no plano atual."
+            >
+              Financeiro
+            </span>
+          ) : (
+            <Link href="/admin/financeiro" className="font-semibold hover:text-[#256D3C]">
+              Financeiro
+            </Link>
+          )}
+
           {councilMeetingAccessAllowed === false ? (
             <span
               className="cursor-not-allowed font-semibold text-[#9AA7A0]"
@@ -1041,6 +1092,8 @@ export default function AdminShell({
   const [pollsAccessAllowed, setPollsAccessAllowed] =
     useState<boolean | null>(null);
   const [assembliesAccessAllowed, setAssembliesAccessAllowed] =
+    useState<boolean | null>(null);
+  const [financialAccessAllowed, setFinancialAccessAllowed] =
     useState<boolean | null>(null);
 
   useEffect(() => {
@@ -1124,9 +1177,38 @@ export default function AdminShell({
       }
     }
 
+    async function checkFinancialAccess() {
+      try {
+        const response = await fetch(
+          "/api/admin/financeiro/categorias?page=1&pageSize=1",
+          {
+            cache: "no-store",
+          },
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setFinancialAccessAllowed(false);
+          return;
+        }
+
+        if (response.ok) {
+          setFinancialAccessAllowed(true);
+        }
+      } catch {
+        if (isMounted) {
+          setFinancialAccessAllowed(null);
+        }
+      }
+    }
+
     void checkCouncilMeetingAccess();
     void checkPollsAccess();
     void checkAssembliesAccess();
+    void checkFinancialAccess();
 
     return () => {
       isMounted = false;
@@ -1142,6 +1224,7 @@ export default function AdminShell({
           councilMeetingAccessAllowed={councilMeetingAccessAllowed}
           pollsAccessAllowed={pollsAccessAllowed}
           assembliesAccessAllowed={assembliesAccessAllowed}
+          financialAccessAllowed={financialAccessAllowed}
         />
       </div>
 
@@ -1163,6 +1246,7 @@ export default function AdminShell({
               councilMeetingAccessAllowed={councilMeetingAccessAllowed}
               pollsAccessAllowed={pollsAccessAllowed}
               assembliesAccessAllowed={assembliesAccessAllowed}
+              financialAccessAllowed={financialAccessAllowed}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -1201,6 +1285,7 @@ export default function AdminShell({
               councilMeetingAccessAllowed={councilMeetingAccessAllowed}
               pollsAccessAllowed={pollsAccessAllowed}
               assembliesAccessAllowed={assembliesAccessAllowed}
+              financialAccessAllowed={financialAccessAllowed}
             />
           </div>
         </main>

@@ -92,7 +92,7 @@ const modules = [
   {
     name: "Financeiro",
     slug: "financeiro",
-    description: "Recursos financeiros, cobranças e visão gerencial futura.",
+    description: "Financeiro condominial inicial com lançamentos, mensalidades, baixas e visão gerencial.",
   },
   {
     name: "Relatórios",

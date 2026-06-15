@@ -627,6 +627,70 @@ enum AssemblyMinuteLogAction {
   PDF_GENERATED
 }
 
+// =========================================================
+// ETAPA 53 - FINANCEIRO INICIAL
+//
+// O módulo financeiro inicial controla categorias, lançamentos,
+// mensalidades por unidade, baixas, comprovantes privados e
+// histórico operacional. Valores monetários são armazenados em
+// centavos para evitar erros de arredondamento.
+// =========================================================
+
+enum FinancialEntryType {
+  REVENUE
+  EXPENSE
+}
+
+enum FinancialEntryOrigin {
+  MANUAL
+  UNIT_CHARGE_BATCH
+  UNIT_CHARGE_ADJUSTMENT
+  IMPORT
+  OTHER
+}
+
+enum FinancialEntryStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum FinancialSettlementType {
+  PAYMENT
+  REVERSAL
+}
+
+enum FinancialPaymentMethod {
+  CASH
+  PIX
+  BANK_TRANSFER
+  BOLETO
+  CREDIT_CARD
+  DEBIT_CARD
+  CHECK
+  OTHER
+}
+
+enum FinancialAttachmentScope {
+  ENTRY
+  SETTLEMENT
+}
+
+enum FinancialLogAction {
+  CREATED
+  UPDATED
+  CANCELED
+  REACTIVATED
+  SETTLEMENT_ADDED
+  SETTLEMENT_REVERSED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+  BATCH_CREATED
+  BATCH_ENTRY_CREATED
+}
+
 enum TicketScope {
   UNIT
   CONDOMINIUM
@@ -855,6 +919,14 @@ model Administrator {
   // ETAPA 52 - ATAS DE ASSEMBLEIA
   // =========================================================
   assemblyMinutes AssemblyMinute[]
+
+  // =========================================================
+  // ETAPA 53 - FINANCEIRO INICIAL
+  // =========================================================
+  financialCategories    FinancialCategory[]
+  financialEntries       FinancialEntry[]
+  financialChargeBatches FinancialChargeBatch[]
+  financialAttachments   FinancialAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1209,6 +1281,12 @@ model Condominium {
   // =========================================================
   assemblyMinutes AssemblyMinute[]
 
+  // =========================================================
+  // ETAPA 53 - FINANCEIRO INICIAL POR CONDOMÍNIO
+  // =========================================================
+  financialEntries       FinancialEntry[]
+  financialChargeBatches FinancialChargeBatch[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1268,6 +1346,11 @@ model Unit {
   assemblyEligibleUnits   AssemblyEligibleUnit[]
   assemblyRepresentations AssemblyRepresentation[]
   assemblyVotes           AssemblyVote[]
+
+  // =========================================================
+  // ETAPA 53 - MENSALIDADES E LANÇAMENTOS POR UNIDADE
+  // =========================================================
+  financialEntries FinancialEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1561,6 +1644,17 @@ model User {
   assemblyMinutesArchived  AssemblyMinute[]        @relation("AssemblyMinuteArchivedByUser")
   assemblyMinuteVersions   AssemblyMinuteVersion[] @relation("AssemblyMinuteVersionCreatedByUser")
   assemblyMinuteLogs       AssemblyMinuteLog[]
+
+  // =========================================================
+  // ETAPA 53 - FINANCEIRO INICIAL
+  // =========================================================
+  financialEntriesCreated        FinancialEntry[]       @relation("FinancialEntriesCreatedByUser")
+  financialEntriesCanceled       FinancialEntry[]       @relation("FinancialEntriesCanceledByUser")
+  financialChargeBatchesCreated  FinancialChargeBatch[] @relation("FinancialChargeBatchesCreatedByUser")
+  financialSettlementsRegistered FinancialSettlement[]  @relation("FinancialSettlementsRegisteredByUser")
+  financialSettlementsReversed   FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
+  uploadedFinancialAttachments   FinancialAttachment[]
+  financialLogs                  FinancialLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2242,6 +2336,11 @@ model Provider {
   // A Etapa 46 conecta o campo ao Provider.
   // =========================================================
   ratingsReceived TicketRating[] @relation("RatingsReceivedByProvider")
+
+  // =========================================================
+  // ETAPA 53 - DESPESAS VINCULADAS AO FORNECEDOR
+  // =========================================================
+  financialEntries FinancialEntry[]
 
   metadata Json?
 
@@ -3864,6 +3963,264 @@ model AssemblyMinuteLog {
   @@index([action])
   @@index([createdAt])
   @@index([minuteId, createdAt])
+}
+
+// =========================================================
+// ETAPA 53 - FINANCEIRO INICIAL
+//
+// FinancialCategory:
+// categorias reutilizáveis dentro da administradora.
+//
+// FinancialEntry:
+// lançamento individual de receita, despesa ou mensalidade.
+//
+// FinancialChargeBatch:
+// lote usado para gerar mensalidades por unidade.
+//
+// FinancialSettlement:
+// baixa financeira ou estorno auditável de uma baixa.
+//
+// FinancialAttachment:
+// comprovante privado armazenado pela camada central LOCAL/R2.
+//
+// FinancialLog:
+// histórico operacional do módulo financeiro.
+// =========================================================
+
+model FinancialCategory {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  type        FinancialEntryType
+  name        String
+  description String?
+  status      Status             @default(ACTIVE)
+  isDefault   Boolean            @default(false)
+  sortOrder   Int                @default(0)
+  metadata    Json?
+
+  entries       FinancialEntry[]
+  chargeBatches FinancialChargeBatch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([administratorId, type, name])
+  @@index([administratorId])
+  @@index([type])
+  @@index([status])
+  @@index([isDefault])
+  @@index([administratorId, type, status])
+}
+
+model FinancialChargeBatch {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String
+  condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   FinancialCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  competence        DateTime
+  dueDate           DateTime
+  description       String
+  defaultValueCents Int
+  notes             String?
+  metadata          Json?
+
+  createdByUserId String
+  createdByUser   User   @relation("FinancialChargeBatchesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  entries FinancialEntry[]
+  logs    FinancialLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([categoryId])
+  @@index([competence])
+  @@index([dueDate])
+  @@index([createdByUserId])
+  @@index([administratorId, condominiumId])
+  @@index([condominiumId, competence])
+}
+
+model FinancialEntry {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  condominiumId String
+  condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  providerId String?
+  provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  categoryId String
+  category   FinancialCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  chargeBatchId String?
+  chargeBatch   FinancialChargeBatch? @relation(fields: [chargeBatchId], references: [id], onDelete: SetNull)
+
+  type        FinancialEntryType
+  origin      FinancialEntryOrigin @default(MANUAL)
+  status      FinancialEntryStatus @default(OPEN)
+  description String
+  competence  DateTime
+  dueDate     DateTime
+  valueCents  Int
+  notes       String?
+  metadata    Json?
+
+  createdByUserId String
+  createdByUser   User   @relation("FinancialEntriesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  canceledAt         DateTime?
+  canceledByUserId   String?
+  canceledByUser     User?     @relation("FinancialEntriesCanceledByUser", fields: [canceledByUserId], references: [id], onDelete: SetNull)
+  cancellationReason String?
+
+  settlements FinancialSettlement[]
+  attachments FinancialAttachment[]
+  logs        FinancialLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([providerId])
+  @@index([categoryId])
+  @@index([chargeBatchId])
+  @@index([type])
+  @@index([origin])
+  @@index([status])
+  @@index([competence])
+  @@index([dueDate])
+  @@index([createdByUserId])
+  @@index([canceledByUserId])
+  @@index([administratorId, condominiumId])
+  @@index([condominiumId, competence])
+  @@index([condominiumId, status])
+  @@index([condominiumId, dueDate])
+  @@index([unitId, competence])
+}
+
+model FinancialSettlement {
+  id String @id @default(cuid())
+
+  financialEntryId String
+  financialEntry   FinancialEntry @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
+
+  type          FinancialSettlementType @default(PAYMENT)
+  paidAt        DateTime
+  amountCents   Int
+  interestCents Int                     @default(0)
+  fineCents     Int                     @default(0)
+  discountCents Int                     @default(0)
+  paymentMethod FinancialPaymentMethod?
+  notes         String?
+  metadata      Json?
+
+  registeredByUserId String
+  registeredByUser   User   @relation("FinancialSettlementsRegisteredByUser", fields: [registeredByUserId], references: [id], onDelete: Restrict)
+
+  reversedAt       DateTime?
+  reversedByUserId String?
+  reversedByUser   User?     @relation("FinancialSettlementsReversedByUser", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+  reversalReason   String?
+
+  attachments FinancialAttachment[]
+  logs        FinancialLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([financialEntryId])
+  @@index([type])
+  @@index([paidAt])
+  @@index([paymentMethod])
+  @@index([registeredByUserId])
+  @@index([reversedByUserId])
+  @@index([financialEntryId, type])
+}
+
+model FinancialAttachment {
+  id String @id @default(cuid())
+
+  administratorId String
+  administrator   Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+
+  financialEntryId String?
+  financialEntry   FinancialEntry? @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
+
+  financialSettlementId String?
+  financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
+
+  uploadedByUserId String
+  uploadedByUser   User   @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  scope FinancialAttachmentScope @default(ENTRY)
+
+  originalName String
+  storedName   String
+  storageKey   String
+  mimeType     String
+  sizeBytes    Int
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([administratorId])
+  @@index([financialEntryId])
+  @@index([financialSettlementId])
+  @@index([uploadedByUserId])
+  @@index([scope])
+  @@index([createdAt])
+}
+
+model FinancialLog {
+  id String @id @default(cuid())
+
+  financialEntryId String?
+  financialEntry   FinancialEntry? @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
+
+  financialChargeBatchId String?
+  financialChargeBatch   FinancialChargeBatch? @relation(fields: [financialChargeBatchId], references: [id], onDelete: Cascade)
+
+  financialSettlementId String?
+  financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action   FinancialLogAction
+  message  String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([financialEntryId])
+  @@index([financialChargeBatchId])
+  @@index([financialSettlementId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([financialEntryId, createdAt])
+  @@index([financialChargeBatchId, createdAt])
 }
 
 model Notification {
