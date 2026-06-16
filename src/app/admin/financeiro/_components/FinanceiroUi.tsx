@@ -1755,7 +1755,6 @@ export function LancamentosFinanceirosPage({
       if (settlementFile && settlementId) {
         const formData = new FormData();
         formData.append("file", settlementFile);
-        formData.append("financialEntryId", settlementForm.financialEntryId);
         formData.append("financialSettlementId", settlementId);
 
         const uploadRes = await fetch("/api/admin/financeiro/comprovantes", {
