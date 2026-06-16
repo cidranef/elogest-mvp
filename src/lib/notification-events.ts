@@ -143,6 +143,10 @@ export type NotificationEventType =
   | "FINANCIAL_SETTLEMENT_REGISTERED_ADMIN"
   | "FINANCIAL_PAYMENT_REGISTERED_PORTAL"
   | "FINANCIAL_SETTLEMENT_REVERSED_ADMIN"
+  | "FINANCIAL_PAYMENT_SUBMITTED_ADMIN"
+  | "FINANCIAL_PAYMENT_APPROVED_ADMIN"
+  | "FINANCIAL_PAYMENT_APPROVED_PORTAL"
+  | "FINANCIAL_PAYMENT_REJECTED_PORTAL"
   | "EMAIL_PENDING"
   | "WHATSAPP_PENDING";
 
@@ -222,6 +226,47 @@ export const NOTIFICATION_EVENTS: Record<
   NotificationEventType,
   NotificationEventConfig
 > = {
+
+  FINANCIAL_PAYMENT_SUBMITTED_ADMIN: {
+    type: "FINANCIAL_PAYMENT_SUBMITTED_ADMIN",
+    label: "Pagamento informado pelo portal",
+    description: "Aviso para a administradora quando um usuário envia comprovante para conferência.",
+    availableChannels: ["SYSTEM", "EMAIL", "WHATSAPP"],
+    enabledChannels: ["SYSTEM"],
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  FINANCIAL_PAYMENT_APPROVED_ADMIN: {
+    type: "FINANCIAL_PAYMENT_APPROVED_ADMIN",
+    label: "Pagamento aprovado pela administradora",
+    description: "Aviso interno quando um comprovante enviado pelo portal é aprovado.",
+    availableChannels: ["SYSTEM", "EMAIL", "WHATSAPP"],
+    enabledChannels: ["SYSTEM"],
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  FINANCIAL_PAYMENT_APPROVED_PORTAL: {
+    type: "FINANCIAL_PAYMENT_APPROVED_PORTAL",
+    label: "Pagamento confirmado",
+    description: "Aviso ao usuário do portal quando a administradora confirma o pagamento.",
+    availableChannels: ["SYSTEM", "EMAIL", "WHATSAPP"],
+    enabledChannels: ["SYSTEM"],
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
+  FINANCIAL_PAYMENT_REJECTED_PORTAL: {
+    type: "FINANCIAL_PAYMENT_REJECTED_PORTAL",
+    label: "Pagamento não confirmado",
+    description: "Aviso ao usuário do portal quando a administradora recusa o comprovante enviado.",
+    availableChannels: ["SYSTEM", "EMAIL", "WHATSAPP"],
+    enabledChannels: ["SYSTEM"],
+    externalReady: false,
+    userPreferenceEnabled: true,
+  },
+
   GENERAL: {
     type: "GENERAL",
     label: "Geral",

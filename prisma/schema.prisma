@@ -662,6 +662,13 @@ enum FinancialSettlementType {
   REVERSAL
 }
 
+enum FinancialPaymentSubmissionStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
 enum FinancialPaymentMethod {
   CASH
   PIX
@@ -923,10 +930,10 @@ model Administrator {
   // =========================================================
   // ETAPA 53 - FINANCEIRO INICIAL
   // =========================================================
-  financialCategories    FinancialCategory[]
-  financialEntries       FinancialEntry[]
+  financialCategories  FinancialCategory[]
+  financialEntries     FinancialEntry[]
   financialChargeBatches FinancialChargeBatch[]
-  financialAttachments   FinancialAttachment[]
+  financialAttachments FinancialAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1347,6 +1354,7 @@ model Unit {
   assemblyRepresentations AssemblyRepresentation[]
   assemblyVotes           AssemblyVote[]
 
+
   // =========================================================
   // ETAPA 53 - MENSALIDADES E LANÇAMENTOS POR UNIDADE
   // =========================================================
@@ -1645,16 +1653,17 @@ model User {
   assemblyMinuteVersions   AssemblyMinuteVersion[] @relation("AssemblyMinuteVersionCreatedByUser")
   assemblyMinuteLogs       AssemblyMinuteLog[]
 
+
   // =========================================================
   // ETAPA 53 - FINANCEIRO INICIAL
   // =========================================================
-  financialEntriesCreated        FinancialEntry[]       @relation("FinancialEntriesCreatedByUser")
-  financialEntriesCanceled       FinancialEntry[]       @relation("FinancialEntriesCanceledByUser")
-  financialChargeBatchesCreated  FinancialChargeBatch[] @relation("FinancialChargeBatchesCreatedByUser")
-  financialSettlementsRegistered FinancialSettlement[]  @relation("FinancialSettlementsRegisteredByUser")
-  financialSettlementsReversed   FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
-  uploadedFinancialAttachments   FinancialAttachment[]
-  financialLogs                  FinancialLog[]
+  financialEntriesCreated         FinancialEntry[]       @relation("FinancialEntriesCreatedByUser")
+  financialEntriesCanceled        FinancialEntry[]       @relation("FinancialEntriesCanceledByUser")
+  financialChargeBatchesCreated   FinancialChargeBatch[] @relation("FinancialChargeBatchesCreatedByUser")
+  financialSettlementsRegistered  FinancialSettlement[]  @relation("FinancialSettlementsRegisteredByUser")
+  financialSettlementsReversed    FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
+  uploadedFinancialAttachments    FinancialAttachment[]
+  financialLogs                   FinancialLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2336,6 +2345,7 @@ model Provider {
   // A Etapa 46 conecta o campo ao Provider.
   // =========================================================
   ratingsReceived TicketRating[] @relation("RatingsReceivedByProvider")
+
 
   // =========================================================
   // ETAPA 53 - DESPESAS VINCULADAS AO FORNECEDOR
@@ -4027,15 +4037,15 @@ model FinancialChargeBatch {
   categoryId String
   category   FinancialCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
-  competence        DateTime
-  dueDate           DateTime
-  description       String
+  competence       DateTime
+  dueDate          DateTime
+  description      String
   defaultValueCents Int
-  notes             String?
-  metadata          Json?
+  notes            String?
+  metadata         Json?
 
   createdByUserId String
-  createdByUser   User   @relation("FinancialChargeBatchesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User @relation("FinancialChargeBatchesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   entries FinancialEntry[]
   logs    FinancialLog[]
@@ -4063,7 +4073,7 @@ model FinancialEntry {
   condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
 
   unitId String?
-  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  unit   Unit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
 
   providerId String?
   provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
@@ -4085,11 +4095,11 @@ model FinancialEntry {
   metadata    Json?
 
   createdByUserId String
-  createdByUser   User   @relation("FinancialEntriesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User @relation("FinancialEntriesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
-  canceledAt         DateTime?
-  canceledByUserId   String?
-  canceledByUser     User?     @relation("FinancialEntriesCanceledByUser", fields: [canceledByUserId], references: [id], onDelete: SetNull)
+  canceledAt       DateTime?
+  canceledByUserId String?
+  canceledByUser   User?     @relation("FinancialEntriesCanceledByUser", fields: [canceledByUserId], references: [id], onDelete: SetNull)
   cancellationReason String?
 
   settlements FinancialSettlement[]
@@ -4125,18 +4135,18 @@ model FinancialSettlement {
   financialEntryId String
   financialEntry   FinancialEntry @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
 
-  type          FinancialSettlementType @default(PAYMENT)
-  paidAt        DateTime
-  amountCents   Int
-  interestCents Int                     @default(0)
-  fineCents     Int                     @default(0)
-  discountCents Int                     @default(0)
+  type        FinancialSettlementType @default(PAYMENT)
+  paidAt      DateTime
+  amountCents Int
+  interestCents Int @default(0)
+  fineCents     Int @default(0)
+  discountCents Int @default(0)
   paymentMethod FinancialPaymentMethod?
   notes         String?
   metadata      Json?
 
   registeredByUserId String
-  registeredByUser   User   @relation("FinancialSettlementsRegisteredByUser", fields: [registeredByUserId], references: [id], onDelete: Restrict)
+  registeredByUser   User @relation("FinancialSettlementsRegisteredByUser", fields: [registeredByUserId], references: [id], onDelete: Restrict)
 
   reversedAt       DateTime?
   reversedByUserId String?
@@ -4171,7 +4181,7 @@ model FinancialAttachment {
   financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
 
   uploadedByUserId String
-  uploadedByUser   User   @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  uploadedByUser   User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
 
   scope FinancialAttachmentScope @default(ENTRY)
 
@@ -4192,6 +4202,52 @@ model FinancialAttachment {
   @@index([createdAt])
 }
 
+model FinancialPaymentSubmission {
+  id String @id @default(cuid())
+
+  administratorId String
+  condominiumId   String
+  unitId          String
+  financialEntryId String
+
+  submittedByUserId String
+  submittedByAccessId String?
+
+  financialAttachmentId String?
+  approvedFinancialSettlementId String?
+
+  status FinancialPaymentSubmissionStatus @default(PENDING_REVIEW)
+
+  paidAt DateTime
+  amountCents Int
+  paymentMethod FinancialPaymentMethod?
+  notes String?
+  metadata Json?
+
+  reviewedAt DateTime?
+  reviewedByUserId String?
+  reviewNotes String?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId])
+  @@index([condominiumId])
+  @@index([unitId])
+  @@index([financialEntryId])
+  @@index([submittedByUserId])
+  @@index([submittedByAccessId])
+  @@index([financialAttachmentId])
+  @@index([approvedFinancialSettlementId])
+  @@index([status])
+  @@index([paidAt])
+  @@index([createdAt])
+  @@index([administratorId, status])
+  @@index([unitId, status])
+  @@index([financialEntryId, status])
+}
+
 model FinancialLog {
   id String @id @default(cuid())
 
@@ -4205,7 +4261,7 @@ model FinancialLog {
   financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
 
   userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   action   FinancialLogAction
   message  String?

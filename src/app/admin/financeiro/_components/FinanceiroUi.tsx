@@ -869,6 +869,11 @@ function FinanceiroSubnav() {
       description: "Geração por unidade",
     },
     {
+      href: "/admin/financeiro/pagamentos-informados",
+      label: "Pagamentos",
+      description: "Comprovantes enviados",
+    },
+    {
       href: "/admin/financeiro/configuracoes/categorias",
       label: "Categorias",
       description: "Configurações",
@@ -1028,6 +1033,12 @@ export function FinanceiroHubPage() {
       title: "Mensalidades",
       description: "Gere mensalidades por unidade, acompanhe lotes e bloqueie duplicidades.",
       label: "Gerar Mensalidades",
+    },
+    {
+      href: "/admin/financeiro/pagamentos-informados",
+      title: "Pagamentos Informados",
+      description: "Analise comprovantes enviados pelo portal e aprove a baixa oficial.",
+      label: "Conferir Pagamentos",
     },
     {
       href: "/admin/financeiro/configuracoes/categorias",
