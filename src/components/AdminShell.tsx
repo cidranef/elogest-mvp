@@ -135,6 +135,13 @@ import NotificationBell from "@/components/NotificationBell";
    - Adicionado item "Financeiro" na navegação administrativa.
    - Adicionado ícone próprio para receitas, despesas e mensalidades.
    - Adicionado bloqueio visual por plano/módulo usando a API Financeira.
+
+   ETAPA 54.8.1 — LINK DA CENTRAL DE RELATÓRIOS
+
+   Ajustes desta revisão:
+   - Item "Relatórios" passa a apontar para /admin/relatorios.
+   - Rodapé administrativo recebe link direto para Relatórios.
+   - Mantida compatibilidade com current="relatorios" nas páginas da Etapa 54.
    ========================================================= */
 
 
@@ -617,7 +624,7 @@ const adminNavGroups: AdminNavGroup[] = [
       {
         key: "relatorios",
         label: "Relatórios",
-        href: "/admin/chamados/relatorios",
+        href: "/admin/relatorios",
         icon: "report",
       },
       {
@@ -1064,6 +1071,10 @@ function AdminFooter({
 
           <Link href="/admin/fornecedores" className="font-semibold hover:text-[#256D3C]">
             Fornecedores
+          </Link>
+
+          <Link href="/admin/relatorios" className="font-semibold hover:text-[#256D3C]">
+            Relatórios
           </Link>
 
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
