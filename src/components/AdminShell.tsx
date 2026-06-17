@@ -142,6 +142,16 @@ import NotificationBell from "@/components/NotificationBell";
    - Item "Relatórios" passa a apontar para /admin/relatorios.
    - Rodapé administrativo recebe link direto para Relatórios.
    - Mantida compatibilidade com current="relatorios" nas páginas da Etapa 54.
+
+   ETAPA 55.9 — NAVEGAÇÃO DA IA OPERACIONAL
+
+   Ajustes desta revisão:
+   - Adicionada chave "ia" ao AdminNavKey.
+   - Adicionado item "IA Operacional" na navegação administrativa.
+   - Adicionado ícone próprio para governança e auditoria da IA.
+   - Adicionado bloqueio visual por plano/módulo usando a API de status da IA.
+   - Rodapé administrativo recebe link direto para IA Operacional.
+   - Página /admin/ia passa a ter item próprio no menu.
    ========================================================= */
 
 
@@ -161,6 +171,7 @@ type AdminNavKey =
   | "fornecedores"
   | "usuarios"
   | "relatorios"
+  | "ia"
   | "documentos"
   | "configuracoes";
 
@@ -302,6 +313,7 @@ function ShellIcon({
     | "document"
     | "settings"
     | "chart"
+    | "ai"
     | "close";
   className?: string;
 }) {
@@ -498,6 +510,22 @@ function ShellIcon({
           <path {...common} d="M8 15l3-3 3 2 5-7" />
         </>
       )}
+
+      {type === "ai" && (
+        <>
+          <path {...common} d="M12 3v3" />
+          <path {...common} d="M12 18v3" />
+          <path {...common} d="M3 12h3" />
+          <path {...common} d="M18 12h3" />
+          <path {...common} d="M5.6 5.6l2.1 2.1" />
+          <path {...common} d="M16.3 16.3l2.1 2.1" />
+          <path {...common} d="M18.4 5.6l-2.1 2.1" />
+          <path {...common} d="M7.7 16.3l-2.1 2.1" />
+          <circle {...common} cx="12" cy="12" r="5" />
+          <path {...common} d="M10 12h4" />
+          <path {...common} d="M12 10v4" />
+        </>
+      )}
     </svg>
   );
 }
@@ -518,6 +546,7 @@ type AdminNavItem = {
   requiresPollsAccess?: boolean;
   requiresAssembliesAccess?: boolean;
   requiresFinancialAccess?: boolean;
+  requiresOperationalAiAccess?: boolean;
 };
 
 type AdminNavGroup = {
@@ -628,6 +657,13 @@ const adminNavGroups: AdminNavGroup[] = [
         icon: "report",
       },
       {
+        key: "ia",
+        label: "IA Operacional",
+        href: "/admin/ia",
+        icon: "ai",
+        requiresOperationalAiAccess: true,
+      },
+      {
         key: "documentos",
         label: "Documentos",
         href: "/admin/documentos",
@@ -682,6 +718,7 @@ function AdminSidebar({
   pollsAccessAllowed,
   assembliesAccessAllowed,
   financialAccessAllowed,
+  operationalAiAccessAllowed,
   onNavigate,
 }: {
   current?: AdminNavKey;
@@ -689,6 +726,7 @@ function AdminSidebar({
   pollsAccessAllowed?: boolean | null;
   assembliesAccessAllowed?: boolean | null;
   financialAccessAllowed?: boolean | null;
+  operationalAiAccessAllowed?: boolean | null;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -732,11 +770,15 @@ function AdminSidebar({
                   const disabledByFinancialPlan =
                     item.requiresFinancialAccess && financialAccessAllowed === false;
 
+                  const disabledByOperationalAiPlan =
+                    item.requiresOperationalAiAccess && operationalAiAccessAllowed === false;
+
                   const disabledByPlan =
                     disabledByCouncilPlan ||
                     disabledByPollsPlan ||
                     disabledByAssembliesPlan ||
-                    disabledByFinancialPlan;
+                    disabledByFinancialPlan ||
+                    disabledByOperationalAiPlan;
 
                   const itemClassName = [
                     "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
@@ -797,7 +839,9 @@ function AdminSidebar({
                               ? "O módulo Assembleias não está liberado no plano atual."
                               : disabledByFinancialPlan
                                 ? "O módulo Financeiro não está liberado no plano atual."
-                                : "O módulo Reuniões De Conselho não está liberado no plano atual."
+                                : disabledByOperationalAiPlan
+                                  ? "O módulo IA Operacional não está liberado no plano atual."
+                                  : "O módulo Reuniões De Conselho não está liberado no plano atual."
                         }
                         aria-disabled="true"
                       >
@@ -981,11 +1025,13 @@ function AdminFooter({
   pollsAccessAllowed,
   assembliesAccessAllowed,
   financialAccessAllowed,
+  operationalAiAccessAllowed,
 }: {
   councilMeetingAccessAllowed?: boolean | null;
   pollsAccessAllowed?: boolean | null;
   assembliesAccessAllowed?: boolean | null;
   financialAccessAllowed?: boolean | null;
+  operationalAiAccessAllowed?: boolean | null;
 }) {
   return (
     <footer className="mt-10 border-t border-[#DDE5DF] py-6">
@@ -1077,6 +1123,19 @@ function AdminFooter({
             Relatórios
           </Link>
 
+          {operationalAiAccessAllowed === false ? (
+            <span
+              className="cursor-not-allowed font-semibold text-[#9AA7A0]"
+              title="O módulo IA Operacional não está liberado no plano atual."
+            >
+              IA Operacional
+            </span>
+          ) : (
+            <Link href="/admin/ia" className="font-semibold hover:text-[#256D3C]">
+              IA Operacional
+            </Link>
+          )}
+
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
             Trocar perfil
           </Link>
@@ -1105,6 +1164,8 @@ export default function AdminShell({
   const [assembliesAccessAllowed, setAssembliesAccessAllowed] =
     useState<boolean | null>(null);
   const [financialAccessAllowed, setFinancialAccessAllowed] =
+    useState<boolean | null>(null);
+  const [operationalAiAccessAllowed, setOperationalAiAccessAllowed] =
     useState<boolean | null>(null);
 
   useEffect(() => {
@@ -1216,10 +1277,36 @@ export default function AdminShell({
       }
     }
 
+    async function checkOperationalAiAccess() {
+      try {
+        const response = await fetch("/api/admin/ia/status", {
+          cache: "no-store",
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.status === 403) {
+          setOperationalAiAccessAllowed(false);
+          return;
+        }
+
+        if (response.ok) {
+          setOperationalAiAccessAllowed(true);
+        }
+      } catch {
+        if (isMounted) {
+          setOperationalAiAccessAllowed(null);
+        }
+      }
+    }
+
     void checkCouncilMeetingAccess();
     void checkPollsAccess();
     void checkAssembliesAccess();
     void checkFinancialAccess();
+    void checkOperationalAiAccess();
 
     return () => {
       isMounted = false;
@@ -1236,6 +1323,7 @@ export default function AdminShell({
           pollsAccessAllowed={pollsAccessAllowed}
           assembliesAccessAllowed={assembliesAccessAllowed}
           financialAccessAllowed={financialAccessAllowed}
+          operationalAiAccessAllowed={operationalAiAccessAllowed}
         />
       </div>
 
@@ -1258,6 +1346,7 @@ export default function AdminShell({
               pollsAccessAllowed={pollsAccessAllowed}
               assembliesAccessAllowed={assembliesAccessAllowed}
               financialAccessAllowed={financialAccessAllowed}
+              operationalAiAccessAllowed={operationalAiAccessAllowed}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -1297,6 +1386,7 @@ export default function AdminShell({
               pollsAccessAllowed={pollsAccessAllowed}
               assembliesAccessAllowed={assembliesAccessAllowed}
               financialAccessAllowed={financialAccessAllowed}
+              operationalAiAccessAllowed={operationalAiAccessAllowed}
             />
           </div>
         </main>

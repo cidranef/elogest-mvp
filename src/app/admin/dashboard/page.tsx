@@ -6,6 +6,7 @@ import Link from "next/link";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import ResponsiveSection from "@/components/ui/ResponsiveSection";
+import OperationalAiSummaryCard from "@/components/admin/OperationalAiSummaryCard";
 
 
 
@@ -402,6 +403,51 @@ function DistributionRow({
   );
 }
 
+
+
+
+/* =========================================================
+   CARD DE MÓDULO ESTRATÉGICO
+   ========================================================= */
+
+function ModuleShortcutCard({
+  title,
+  description,
+  href,
+  badge,
+}: {
+  title: string;
+  description: string;
+  href: string;
+  badge?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group block h-full rounded-[24px] border border-[#DDE5DF] bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#256D3C]/45 hover:shadow-[0_18px_50px_rgba(23,33,27,0.08)]"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-base font-semibold text-[#17211B]">
+          {title}
+        </h3>
+
+        {badge && (
+          <span className="rounded-full border border-[#CFE6D4] bg-[#F9FBFA] px-3 py-1 text-xs font-semibold text-[#256D3C]">
+            {badge}
+          </span>
+        )}
+      </div>
+
+      <p className="mt-3 text-sm leading-6 text-[#5E6B63]">
+        {description}
+      </p>
+
+      <p className="mt-4 text-sm font-semibold text-[#256D3C] transition group-hover:translate-x-0.5">
+        Acessar módulo →
+      </p>
+    </Link>
+  );
+}
 
 
 /* =========================================================
@@ -915,6 +961,16 @@ export default async function AdminDashboardPage() {
 
 
         {/* =====================================================
+            IA OPERACIONAL
+            ===================================================== */}
+
+        <section className="mb-6">
+          <OperationalAiSummaryCard />
+        </section>
+
+
+
+        {/* =====================================================
             VISÃO DA CARTEIRA
             ===================================================== */}
 
@@ -1043,6 +1099,72 @@ export default async function AdminDashboardPage() {
 
 
         <div className="space-y-6">
+
+          <ResponsiveSection
+            title="Módulos Estratégicos da Administradora"
+            description="Acesse rapidamente os módulos implantados nas etapas mais recentes do EloGest."
+            defaultOpenMobile
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <ModuleShortcutCard
+                title="Financeiro"
+                description="Mensalidades, receitas, despesas, baixas, estornos e visão gerencial financeira."
+                href="/admin/financeiro"
+                badge="Etapa 53"
+              />
+
+              <ModuleShortcutCard
+                title="Relatórios Gerenciais"
+                description="Indicadores operacionais e financeiros consolidados para tomada de decisão."
+                href="/admin/relatorios"
+                badge="Etapa 54"
+              />
+
+              <ModuleShortcutCard
+                title="Comunicados"
+                description="Comunicados oficiais, anexos, confirmação de leitura e lembretes para não lidos."
+                href="/admin/comunicados"
+                badge="Leitura"
+              />
+
+              <ModuleShortcutCard
+                title="Assembleias"
+                description="Convocações, pautas, procurações, votação pelo celular, apuração e ata oficial."
+                href="/admin/assembleias"
+                badge="Votação"
+              />
+
+              <ModuleShortcutCard
+                title="Reuniões de Conselho"
+                description="Reuniões, pautas, sala virtual, registros por item e histórico de deliberações."
+                href="/admin/reunioes-conselho"
+                badge="Conselho"
+              />
+
+              <ModuleShortcutCard
+                title="Enquetes"
+                description="Pesquisas consultivas, públicos-alvo, votação e publicação de resultados."
+                href="/admin/enquetes"
+                badge="Consulta"
+              />
+
+              <ModuleShortcutCard
+                title="Fornecedores"
+                description="Rede de fornecedores, homologação por administradora e vínculo por condomínio."
+                href="/admin/fornecedores"
+                badge="Rede"
+              />
+
+              <ModuleShortcutCard
+                title="IA Operacional"
+                description="Análise assistiva da operação, priorização, resumo de chamados e apoio gerencial."
+                href="/admin/relatorios"
+                badge="Etapa 55"
+              />
+            </div>
+          </ResponsiveSection>
+
+
           <ResponsiveSection
             title="Prioridades da Operação"
             description="Pontos de atenção e ações rápidas para manter a rotina da administradora organizada."

@@ -13,6 +13,7 @@ import {
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
+import OperationalFinancialAiSummary from "@/components/admin/OperationalFinancialAiSummary";
 
 /* =========================================================
    ELOGEST — ETAPA 53.8
@@ -1199,6 +1200,12 @@ export function FinanceiroDashboardPage() {
           {error}
         </div>
       )}
+
+      <OperationalFinancialAiSummary
+        kpis={dashboard.kpis || {}}
+        byCondominium={dashboard.byCondominium || []}
+        filters={appliedFilters}
+      />
 
       <section className="rounded-[28px] border border-[#DDE5DF] bg-white p-5 shadow-[0_18px_50px_rgba(23,33,27,0.05)]">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">

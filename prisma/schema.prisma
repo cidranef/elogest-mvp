@@ -930,10 +930,19 @@ model Administrator {
   // =========================================================
   // ETAPA 53 - FINANCEIRO INICIAL
   // =========================================================
-  financialCategories  FinancialCategory[]
-  financialEntries     FinancialEntry[]
+  financialCategories    FinancialCategory[]
+  financialEntries       FinancialEntry[]
   financialChargeBatches FinancialChargeBatch[]
-  financialAttachments FinancialAttachment[]
+  financialAttachments   FinancialAttachment[]
+
+  // =========================================================
+  // ETAPA 55 - IA OPERACIONAL
+  //
+  // Registra as solicitações de análise assistiva realizadas
+  // dentro da carteira da administradora, preservando
+  // isolamento por administratorId e rastreabilidade.
+  // =========================================================
+  aiOperationLogs AiOperationLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1664,6 +1673,15 @@ model User {
   financialSettlementsReversed    FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
   uploadedFinancialAttachments    FinancialAttachment[]
   financialLogs                   FinancialLog[]
+
+  // =========================================================
+  // ETAPA 55 - IA OPERACIONAL
+  //
+  // Solicitações de IA feitas por este usuário.
+  // A relação é opcional no log para preservar histórico mesmo
+  // se no futuro houver eventos sistêmicos sem usuário direto.
+  // =========================================================
+  aiOperationLogs AiOperationLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4382,4 +4400,43 @@ model NotificationPreference {
   @@index([systemEnabled])
   @@index([emailEnabled])
   @@index([whatsappEnabled])
+}
+
+// =========================================================
+// ETAPA 55 - IA OPERACIONAL
+//
+// Auditoria central das solicitações de IA Operacional.
+// O log não guarda o prompt completo por padrão: salva hashes
+// e uma prévia limitada da saída para rastreabilidade sem
+// expor dados sensíveis desnecessários.
+// =========================================================
+model AiOperationLog {
+  id              String  @id @default(cuid())
+  administratorId String
+  userId          String?
+
+  module     String
+  action     String
+  entityType String?
+  entityId   String?
+
+  promptVersion String?
+  status        String
+
+  inputHash     String?
+  outputHash    String?
+  outputPreview String?
+
+  errorMessage String?
+
+  administrator Administrator @relation(fields: [administratorId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([administratorId])
+  @@index([userId])
+  @@index([module])
+  @@index([entityType, entityId])
+  @@index([createdAt])
 }

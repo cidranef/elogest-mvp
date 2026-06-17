@@ -14,6 +14,7 @@ import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import ResponsiveSection from "@/components/ui/ResponsiveSection";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
+import OperationalTicketPriorityPanel from "@/components/admin/OperationalTicketPriorityPanel";
 
 
 
@@ -2058,6 +2059,12 @@ export default function ChamadosPage() {
               />
             </section>
           </ResponsiveSection>
+
+
+
+          <OperationalTicketPriorityPanel
+            condominiumId={condominioFilter !== "ALL" ? condominioFilter : null}
+          />
 
 
 

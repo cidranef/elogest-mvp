@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
+import OperationalAnnouncementAiAssistant from "@/components/admin/OperationalAnnouncementAiAssistant";
 
 
 
@@ -943,6 +944,17 @@ export default function AdminComunicadosPage() {
 
       return next;
     });
+  }
+
+  function applyAnnouncementAiSuggestion(suggestion: {
+    title?: string | null;
+    content?: string | null;
+  }) {
+    setForm((prev) => ({
+      ...prev,
+      title: suggestion.title || prev.title,
+      content: suggestion.content || prev.content,
+    }));
   }
 
   function applyFilters() {
@@ -2184,6 +2196,23 @@ export default function AdminComunicadosPage() {
                       required
                     />
                   </label>
+
+                  <OperationalAnnouncementAiAssistant
+                    context={{
+                      title: form.title,
+                      content: form.content,
+                      type: form.type,
+                      priority: form.priority,
+                      targetScope: form.targetScope,
+                      condominiumName:
+                        condominios.find((condominio) => condominio.id === form.condominiumId)?.name || null,
+                      eventStartAt: form.eventStartAt || null,
+                      eventEndAt: form.eventEndAt || null,
+                      expiresAt: form.expiresAt || null,
+                      requireReadingConfirmation: form.requireReadingConfirmation,
+                    }}
+                    onApplySuggestion={applyAnnouncementAiSuggestion}
+                  />
 
                   <label>
                     <span className="text-sm font-bold text-[#17211B]">Tipo</span>

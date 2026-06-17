@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
+import OperationalTicketAiAssistant from "@/components/admin/OperationalTicketAiAssistant";
 
 /* =========================================================
    INTERFACES
@@ -1663,6 +1664,22 @@ export default function ChamadoDetalhesPage() {
               )}
             </div>
           </section>
+
+          {/* =====================================================
+              ASSISTENTE OPERACIONAL COM IA
+              ===================================================== */}
+
+          <OperationalTicketAiAssistant
+            ticketId={ticket.id}
+            disabled={!isAdminContext()}
+            disabledReason="A IA Operacional está disponível apenas para a administradora neste detalhe do chamado."
+            onUsePublicSuggestion={(suggestion) => {
+              setPublicComment(suggestion);
+              setActiveTab("communication");
+              showSuccess("Sugestão aplicada no campo de Resposta Pública. Revise antes de enviar.");
+            }}
+          />
+
 
           {/* =====================================================
               ABAS

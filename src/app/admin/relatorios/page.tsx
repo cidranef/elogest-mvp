@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import AdminContextGuard from "@/components/AdminContextGuard";
 import AdminShell from "@/components/AdminShell";
 import EloGestLoadingScreen from "@/components/EloGestLoadingScreen";
+import OperationalReportsAiSummary from "@/components/admin/OperationalReportsAiSummary";
 
 /* =========================================================
    ETAPA 54.8 — CENTRAL DE RELATÓRIOS GERENCIAIS
@@ -368,6 +369,18 @@ export default function RelatoriosGerenciaisPage() {
               {error}
             </div>
           )}
+
+          <OperationalReportsAiSummary
+            summary={summary}
+            reports={reportCards.map((report) => ({
+              id: report.id,
+              title: report.title,
+              status: report.status,
+              metricLabel: report.metricLabel,
+              metricValue: report.metricValue,
+              highlights: report.highlights,
+            }))}
+          />
 
           <section className="rounded-[32px] border border-[#DDE5DF] bg-white shadow-sm">
             <div className="border-b border-[#DDE5DF] bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAF9_62%,#EAF7EE_135%)] p-6">

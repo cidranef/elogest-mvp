@@ -17,6 +17,7 @@ import { db } from "../../src/lib/db";
    - Criar os módulos controláveis da plataforma.
    - Incluir o módulo Reuniões De Conselho da Etapa 49.
    - Incluir o módulo Enquetes da Etapa 50.
+   - Incluir o módulo IA Operacional da Etapa 55.
    - Vincular módulos aos planos.
    - Definir limites comerciais iniciais.
 
@@ -108,6 +109,12 @@ const modules = [
     name: "IA",
     slug: "ia",
     description: "Recursos de inteligência artificial para apoio operacional.",
+  },
+  {
+    name: "IA Operacional",
+    slug: "ia_operacional",
+    description:
+      "Assistente inteligente para análise operacional, sugestões de resposta, priorização de chamados e apoio gerencial.",
   },
 ];
 
@@ -206,6 +213,7 @@ const plans = [
       "relatorios",
       "whatsapp",
       "ia",
+      "ia_operacional",
     ],
   },
   {
@@ -234,6 +242,7 @@ const plans = [
       "relatorios",
       "whatsapp",
       "ia",
+      "ia_operacional",
     ],
   },
 ];
