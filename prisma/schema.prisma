@@ -819,6 +819,36 @@ enum NotificationStatus {
   ARCHIVED
 }
 
+// =========================================================
+// ETAPA 56 - ONBOARDING PÚBLICO
+//
+// Controla o funil comercial público antes da criação efetiva
+// de uma administradora operacional no EloGest.
+//
+// PENDING_REVIEW:
+// solicitação recebida e aguardando análise do Super Admin.
+//
+// IN_CONTACT:
+// equipe já iniciou contato comercial ou validação.
+//
+// APPROVED:
+// solicitação aprovada para conversão controlada.
+//
+// CONVERTED:
+// solicitação convertida em administradora.
+//
+// REJECTED:
+// solicitação recusada com motivo registrado.
+// =========================================================
+
+enum OnboardingRequestStatus {
+  PENDING_REVIEW
+  IN_CONTACT
+  APPROVED
+  CONVERTED
+  REJECTED
+}
+
 model Administrator {
   id           String        @id @default(cuid())
   name         String
@@ -944,6 +974,14 @@ model Administrator {
   // =========================================================
   aiOperationLogs AiOperationLog[]
 
+  // =========================================================
+  // ETAPA 56 - ONBOARDING PÚBLICO
+  //
+  // Solicitações públicas que foram convertidas nesta
+  // administradora após análise do Super Admin.
+  // =========================================================
+  convertedOnboardingRequests OnboardingRequest[] @relation("OnboardingConvertedAdmin")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1000,8 +1038,9 @@ model Plan {
   isPublic  Boolean @default(true)
   sortOrder Int     @default(0)
 
-  administrators Administrator[]
-  modules        PlanModule[]
+  administrators     Administrator[]
+  modules            PlanModule[]
+  onboardingRequests OnboardingRequest[] @relation("OnboardingInterestedPlan")
 
   metadata Json?
 
@@ -1011,6 +1050,62 @@ model Plan {
   @@index([status])
   @@index([isPublic])
   @@index([sortOrder])
+}
+
+// =========================================================
+// ETAPA 56 - SOLICITAÇÕES DE ONBOARDING PÚBLICO
+//
+// Representa uma solicitação comercial recebida pela página
+// pública do EloGest.
+//
+// Importante:
+// - Uma solicitação não é uma administradora ativa.
+// - A conversão deve ser feita apenas pelo Super Admin.
+// - WhatsApp Real e integrações externas continuam fora desta etapa.
+// =========================================================
+
+model OnboardingRequest {
+  id String @id @default(cuid())
+
+  administratorName String
+  responsibleName   String
+  email             String
+  phone             String?
+  city              String?
+  state             String?
+
+  condominiumEstimate Int?
+  unitEstimate        Int?
+
+  message String?
+  status  OnboardingRequestStatus @default(PENDING_REVIEW)
+
+  interestedPlanId String?
+  interestedPlan   Plan?   @relation("OnboardingInterestedPlan", fields: [interestedPlanId], references: [id], onDelete: SetNull)
+
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  reviewedByUser   User?     @relation("OnboardingReviewedByUser", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  convertedAt      DateTime?
+  convertedAdminId String?
+  convertedAdmin   Administrator? @relation("OnboardingConvertedAdmin", fields: [convertedAdminId], references: [id], onDelete: SetNull)
+
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([email])
+  @@index([interestedPlanId])
+  @@index([reviewedByUserId])
+  @@index([convertedAdminId])
+  @@index([createdAt])
+  @@map("onboarding_requests")
 }
 
 model PlatformModule {
@@ -1363,7 +1458,6 @@ model Unit {
   assemblyRepresentations AssemblyRepresentation[]
   assemblyVotes           AssemblyVote[]
 
-
   // =========================================================
   // ETAPA 53 - MENSALIDADES E LANÇAMENTOS POR UNIDADE
   // =========================================================
@@ -1662,17 +1756,16 @@ model User {
   assemblyMinuteVersions   AssemblyMinuteVersion[] @relation("AssemblyMinuteVersionCreatedByUser")
   assemblyMinuteLogs       AssemblyMinuteLog[]
 
-
   // =========================================================
   // ETAPA 53 - FINANCEIRO INICIAL
   // =========================================================
-  financialEntriesCreated         FinancialEntry[]       @relation("FinancialEntriesCreatedByUser")
-  financialEntriesCanceled        FinancialEntry[]       @relation("FinancialEntriesCanceledByUser")
-  financialChargeBatchesCreated   FinancialChargeBatch[] @relation("FinancialChargeBatchesCreatedByUser")
-  financialSettlementsRegistered  FinancialSettlement[]  @relation("FinancialSettlementsRegisteredByUser")
-  financialSettlementsReversed    FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
-  uploadedFinancialAttachments    FinancialAttachment[]
-  financialLogs                   FinancialLog[]
+  financialEntriesCreated        FinancialEntry[]       @relation("FinancialEntriesCreatedByUser")
+  financialEntriesCanceled       FinancialEntry[]       @relation("FinancialEntriesCanceledByUser")
+  financialChargeBatchesCreated  FinancialChargeBatch[] @relation("FinancialChargeBatchesCreatedByUser")
+  financialSettlementsRegistered FinancialSettlement[]  @relation("FinancialSettlementsRegisteredByUser")
+  financialSettlementsReversed   FinancialSettlement[]  @relation("FinancialSettlementsReversedByUser")
+  uploadedFinancialAttachments   FinancialAttachment[]
+  financialLogs                  FinancialLog[]
 
   // =========================================================
   // ETAPA 55 - IA OPERACIONAL
@@ -1682,6 +1775,14 @@ model User {
   // se no futuro houver eventos sistêmicos sem usuário direto.
   // =========================================================
   aiOperationLogs AiOperationLog[]
+
+  // =========================================================
+  // ETAPA 56 - ONBOARDING PÚBLICO
+  //
+  // Solicitações públicas analisadas por este usuário Super Admin.
+  // A conversão em administradora fica relacionada ao model Administrator.
+  // =========================================================
+  reviewedOnboardingRequests OnboardingRequest[] @relation("OnboardingReviewedByUser")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2363,7 +2464,6 @@ model Provider {
   // A Etapa 46 conecta o campo ao Provider.
   // =========================================================
   ratingsReceived TicketRating[] @relation("RatingsReceivedByProvider")
-
 
   // =========================================================
   // ETAPA 53 - DESPESAS VINCULADAS AO FORNECEDOR
@@ -4055,15 +4155,15 @@ model FinancialChargeBatch {
   categoryId String
   category   FinancialCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
-  competence       DateTime
-  dueDate          DateTime
-  description      String
+  competence        DateTime
+  dueDate           DateTime
+  description       String
   defaultValueCents Int
-  notes            String?
-  metadata         Json?
+  notes             String?
+  metadata          Json?
 
   createdByUserId String
-  createdByUser   User @relation("FinancialChargeBatchesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("FinancialChargeBatchesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
   entries FinancialEntry[]
   logs    FinancialLog[]
@@ -4091,7 +4191,7 @@ model FinancialEntry {
   condominium   Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
 
   unitId String?
-  unit   Unit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
 
   providerId String?
   provider   Provider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
@@ -4113,11 +4213,11 @@ model FinancialEntry {
   metadata    Json?
 
   createdByUserId String
-  createdByUser   User @relation("FinancialEntriesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByUser   User   @relation("FinancialEntriesCreatedByUser", fields: [createdByUserId], references: [id], onDelete: Restrict)
 
-  canceledAt       DateTime?
-  canceledByUserId String?
-  canceledByUser   User?     @relation("FinancialEntriesCanceledByUser", fields: [canceledByUserId], references: [id], onDelete: SetNull)
+  canceledAt         DateTime?
+  canceledByUserId   String?
+  canceledByUser     User?     @relation("FinancialEntriesCanceledByUser", fields: [canceledByUserId], references: [id], onDelete: SetNull)
   cancellationReason String?
 
   settlements FinancialSettlement[]
@@ -4153,18 +4253,18 @@ model FinancialSettlement {
   financialEntryId String
   financialEntry   FinancialEntry @relation(fields: [financialEntryId], references: [id], onDelete: Cascade)
 
-  type        FinancialSettlementType @default(PAYMENT)
-  paidAt      DateTime
-  amountCents Int
-  interestCents Int @default(0)
-  fineCents     Int @default(0)
-  discountCents Int @default(0)
+  type          FinancialSettlementType @default(PAYMENT)
+  paidAt        DateTime
+  amountCents   Int
+  interestCents Int                     @default(0)
+  fineCents     Int                     @default(0)
+  discountCents Int                     @default(0)
   paymentMethod FinancialPaymentMethod?
   notes         String?
   metadata      Json?
 
   registeredByUserId String
-  registeredByUser   User @relation("FinancialSettlementsRegisteredByUser", fields: [registeredByUserId], references: [id], onDelete: Restrict)
+  registeredByUser   User   @relation("FinancialSettlementsRegisteredByUser", fields: [registeredByUserId], references: [id], onDelete: Restrict)
 
   reversedAt       DateTime?
   reversedByUserId String?
@@ -4199,7 +4299,7 @@ model FinancialAttachment {
   financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
 
   uploadedByUserId String
-  uploadedByUser   User @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+  uploadedByUser   User   @relation(fields: [uploadedByUserId], references: [id], onDelete: Restrict)
 
   scope FinancialAttachmentScope @default(ENTRY)
 
@@ -4223,29 +4323,29 @@ model FinancialAttachment {
 model FinancialPaymentSubmission {
   id String @id @default(cuid())
 
-  administratorId String
-  condominiumId   String
-  unitId          String
+  administratorId  String
+  condominiumId    String
+  unitId           String
   financialEntryId String
 
-  submittedByUserId String
+  submittedByUserId   String
   submittedByAccessId String?
 
-  financialAttachmentId String?
+  financialAttachmentId         String?
   approvedFinancialSettlementId String?
 
   status FinancialPaymentSubmissionStatus @default(PENDING_REVIEW)
 
-  paidAt DateTime
-  amountCents Int
+  paidAt        DateTime
+  amountCents   Int
   paymentMethod FinancialPaymentMethod?
-  notes String?
-  metadata Json?
+  notes         String?
+  metadata      Json?
 
-  reviewedAt DateTime?
+  reviewedAt       DateTime?
   reviewedByUserId String?
-  reviewNotes String?
-  rejectionReason String?
+  reviewNotes      String?
+  rejectionReason  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4279,7 +4379,7 @@ model FinancialLog {
   financialSettlement   FinancialSettlement? @relation(fields: [financialSettlementId], references: [id], onDelete: Cascade)
 
   userId String?
-  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   action   FinancialLogAction
   message  String?

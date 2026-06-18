@@ -53,6 +53,7 @@ import NotificationBell from "@/components/NotificationBell";
 type EloGestNavKey =
   | "dashboard"
   | "administradoras"
+  | "onboarding"
   | "usuarios"
   | "planos"
   | "indicadores"
@@ -180,6 +181,7 @@ function ShellIcon({
     | "search"
     | "dashboard"
     | "administrator"
+    | "onboarding"
     | "users"
     | "plans"
     | "chart"
@@ -240,6 +242,16 @@ function ShellIcon({
           <path {...common} d="M9 8h2" />
           <path {...common} d="M9 12h2" />
           <path {...common} d="M9 16h2" />
+        </>
+      )}
+
+      {type === "onboarding" && (
+        <>
+          <path {...common} d="M5 5h14a2 2 0 0 1 2 2v12H3V7a2 2 0 0 1 2-2z" />
+          <path {...common} d="M7 9h5" />
+          <path {...common} d="M7 13h4" />
+          <circle {...common} cx="16" cy="11" r="2" />
+          <path {...common} d="M13 18a4 4 0 0 1 6 0" />
         </>
       )}
 
@@ -338,6 +350,13 @@ const eloGestNavGroups: {
         href: "/elogest/administradoras",
         icon: "administrator",
         description: "Clientes, vínculos e usuários administrativos.",
+      },
+      {
+        key: "onboarding",
+        label: "Onboarding",
+        href: "/elogest/onboarding",
+        icon: "onboarding",
+        description: "Solicitações públicas de acesso recebidas pelo site.",
       },
     ],
   },
@@ -709,6 +728,10 @@ EloGest — Governança Condominial
 
           <Link href="/elogest/administradoras" className="font-semibold hover:text-[#256D3C]">
             Administradoras
+          </Link>
+
+          <Link href="/elogest/onboarding" className="font-semibold hover:text-[#256D3C]">
+            Onboarding
           </Link>
 
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
