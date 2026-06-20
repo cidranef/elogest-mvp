@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import EloGestShell from "@/components/EloGestShell";
+import TrialStatusCard from "@/components/elogest/TrialStatusCard";
 
 
 
@@ -1553,6 +1554,28 @@ export default function EloGestAdministradoraDetalhePage() {
                 description="A operação administrativa desta administradora está bloqueada. Usuários vinculados não conseguem acessar /admin e as APIs administrativas retornam bloqueio até que a administradora seja reativada."
               />
             )}
+
+
+
+            {/* =================================================
+               CICLO COMERCIAL DO TRIAL
+               ================================================= */}
+
+            {planData &&
+              ["TRIALING", "EXPIRED"].includes(planData.planStatus) && (
+                <TrialStatusCard
+                  administratorId={administrator.id}
+                  planStatus={planData.planStatus}
+                  planStartedAt={planData.planStartedAt}
+                  planExpiresAt={planData.planExpiresAt}
+                  currentPlanId={planData.currentPlan?.id || null}
+                  plans={planData.availablePlans.map((plan) => ({
+                    id: plan.id,
+                    name: plan.name,
+                    slug: plan.slug,
+                  }))}
+                />
+              )}
 
 
 

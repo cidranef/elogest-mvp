@@ -246,6 +246,9 @@ export default function Home() {
             <a href="#onboarding" className="transition hover:text-[#256D3C]">
               Onboarding
             </a>
+            <Link href="/faq" className="transition hover:text-[#256D3C]">
+              FAQ
+            </Link>
           </nav>
 
           <div className="flex items-center gap-3">
@@ -533,6 +536,15 @@ export default function Home() {
             </Link>
             <Link href="/onboarding" className="hover:text-[#256D3C]">
               Solicitar Acesso
+            </Link>
+            <Link href="/faq" className="hover:text-[#256D3C]">
+              FAQ
+            </Link>
+            <Link href="/termos" className="hover:text-[#256D3C]">
+              Termos De Uso
+            </Link>
+            <Link href="/privacidade" className="hover:text-[#256D3C]">
+              Política De Privacidade
             </Link>
             <Link href="/login" className="hover:text-[#256D3C]">
               Login

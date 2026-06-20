@@ -4,6 +4,7 @@ import {
   Status,
 } from "@prisma/client";
 import { db } from "@/lib/db";
+import { synchronizeAdministratorTrial } from "@/lib/trial-lifecycle";
 
 
 
@@ -256,6 +257,8 @@ function getCurrentMonthRange(referenceDate = new Date()) {
    ========================================================= */
 
 export async function getAdministratorPlanAccess(administratorId: string) {
+  await synchronizeAdministratorTrial(administratorId);
+
   const administrator = await db.administrator.findUnique({
     where: {
       id: administratorId,
@@ -474,7 +477,9 @@ export async function hasModuleAccess(params: {
       moduleSlug,
       source: "PLAN_STATUS_BLOCKED",
       message:
-        "O plano desta administradora não está ativo. Para continuar, regularize ou atualize o plano.",
+        administrator.planStatus === AdministratorPlanStatus.EXPIRED
+          ? "O período de trial desta administradora expirou. Ative um plano comercial para continuar."
+          : "O plano desta administradora não está ativo. Para continuar, regularize ou atualize o plano.",
     };
   }
 

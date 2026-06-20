@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
 export type PublicOnboardingPlan = {
   id: string;
@@ -25,6 +26,8 @@ type FormState = {
   unitEstimate: string;
   interestedPlanSlug: string;
   message: string;
+  termsAccepted: boolean;
+  privacyAcknowledged: boolean;
 };
 
 type ApiResponse = {
@@ -51,6 +54,8 @@ const INITIAL_FORM_STATE: FormState = {
   unitEstimate: "",
   interestedPlanSlug: "",
   message: "",
+  termsAccepted: false,
+  privacyAcknowledged: false,
 };
 
 function onlyNumbers(value: string) {
@@ -67,7 +72,17 @@ function normalizePositiveInteger(value: string) {
   return numbers;
 }
 
-function buildPayload(form: FormState) {
+type AttributionData = {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+  term?: string;
+  content?: string;
+  referrer?: string;
+  landingPath?: string;
+};
+
+function buildPayload(form: FormState, attribution: AttributionData) {
   const condominiumEstimate = form.condominiumEstimate
     ? Number(form.condominiumEstimate)
     : null;
@@ -85,6 +100,11 @@ function buildPayload(form: FormState) {
     unitEstimate,
     interestedPlanSlug: form.interestedPlanSlug || undefined,
     message: form.message.trim() || undefined,
+    termsAccepted: form.termsAccepted,
+    privacyAcknowledged: form.privacyAcknowledged,
+    termsVersion: "2026-06-20",
+    privacyVersion: "2026-06-20",
+    attribution,
   };
 }
 
@@ -122,6 +142,28 @@ export default function OnboardingForm({
   initialPlanSlug,
 }: OnboardingFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const attribution = useMemo<AttributionData>(() => {
+    const get = (key: string) => searchParams.get(key)?.trim() || undefined;
+
+    return {
+      source: get("utm_source") || get("source"),
+      medium: get("utm_medium"),
+      campaign: get("utm_campaign"),
+      term: get("utm_term"),
+      content: get("utm_content"),
+      referrer:
+        typeof document !== "undefined" && document.referrer
+          ? document.referrer
+          : undefined,
+      landingPath:
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}`
+          : undefined,
+    };
+  }, [searchParams]);
+
   const initialPlanExists = plans.some((plan) => plan.slug === initialPlanSlug);
 
   const [form, setForm] = useState<FormState>({
@@ -150,6 +192,14 @@ export default function OnboardingForm({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    if (!form.termsAccepted || !form.privacyAcknowledged) {
+      setError(
+        "Para enviar a solicitação, aceite os Termos De Uso e confirme a ciência da Política De Privacidade.",
+      );
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -158,7 +208,7 @@ export default function OnboardingForm({
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(buildPayload(form)),
+        body: JSON.stringify(buildPayload(form, attribution)),
       });
 
       const data = (await response.json()) as ApiResponse;
@@ -304,6 +354,70 @@ export default function OnboardingForm({
         </div>
       </div>
 
+
+      <div className="mt-6 rounded-3xl border border-[#DDE5DF] bg-[#F9FBFA] p-5">
+        <p className="text-sm font-bold text-[#17211B]">
+          Termos E Privacidade
+        </p>
+
+        <p className="mt-2 text-xs font-semibold leading-5 text-[#7A877F]">
+          Os aceites abaixo são necessários para registrar e analisar sua solicitação comercial.
+        </p>
+
+        <div className="mt-4 space-y-4">
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={form.termsAccepted}
+              onChange={(event) => updateField("termsAccepted", event.target.checked)}
+              className="mt-1 h-4 w-4 shrink-0 rounded border-[#AAB6AF] text-[#256D3C] accent-[#256D3C]"
+              required
+            />
+
+            <span className="text-sm leading-6 text-[#5E6B63]">
+              Li e aceito os{" "}
+              <Link
+                href="/termos"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-[#256D3C] underline underline-offset-4 hover:text-[#174B2A]"
+              >
+                Termos De Uso
+              </Link>
+              .
+              <span className="text-[#256D3C]"> *</span>
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              checked={form.privacyAcknowledged}
+              onChange={(event) =>
+                updateField("privacyAcknowledged", event.target.checked)
+              }
+              className="mt-1 h-4 w-4 shrink-0 rounded border-[#AAB6AF] text-[#256D3C] accent-[#256D3C]"
+              required
+            />
+
+            <span className="text-sm leading-6 text-[#5E6B63]">
+              Estou ciente de que meus dados serão tratados para análise da
+              solicitação e contato comercial, conforme a{" "}
+              <Link
+                href="/privacidade"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-[#256D3C] underline underline-offset-4 hover:text-[#174B2A]"
+              >
+                Política De Privacidade
+              </Link>
+              .
+              <span className="text-[#256D3C]"> *</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
       {selectedPlanName && (
         <div className="mt-5 rounded-3xl border border-[#8ED08E]/45 bg-[#EAF7EE] px-4 py-3 text-sm font-semibold text-[#256D3C]">
           Plano selecionado: {selectedPlanName}
@@ -318,12 +432,14 @@ export default function OnboardingForm({
 
       <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs font-semibold leading-5 text-[#7A877F]">
-          Ao enviar, sua solicitação será analisada pelo time EloGest. Nenhuma administradora será ativada automaticamente.
+          Ao enviar, sua solicitação será registrada para análise e eventual contato comercial. Nenhuma administradora será ativada automaticamente.
         </p>
 
         <button
           type="submit"
-          disabled={submitting}
+          disabled={
+            submitting || !form.termsAccepted || !form.privacyAcknowledged
+          }
           className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-[#256D3C] px-6 py-3.5 text-sm font-bold text-white shadow-[0_18px_45px_rgba(37,109,60,0.25)] transition hover:bg-[#174B2A] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {submitting ? "Enviando..." : "Enviar Solicitação"}

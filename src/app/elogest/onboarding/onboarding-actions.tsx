@@ -4,14 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 /* =========================================================
-   ELOGEST — AÇÕES DE ONBOARDING
-
-   ETAPA 56.7 — CONVERSÃO CONTROLADA EM ADMINISTRADORA
-
-   Objetivo:
-   - Permitir que o Super Admin marque contato, aprove, rejeite
-     ou converta solicitações aprovadas.
-   - Manter a criação de senha/acesso fora da conversão automática.
+   ELOGEST — ETAPA 56.10.5
+   AÇÕES DE ONBOARDING E CONVERSÃO EM TRIAL
    ========================================================= */
 
 type OnboardingActionsProps = {
@@ -20,6 +14,8 @@ type OnboardingActionsProps = {
   convertedAdminId?: string | null;
 };
 
+type ConversionMode = "ACTIVE" | "TRIAL";
+
 async function updateOnboardingRequest(params: {
   requestId: string;
   action: "markInContact" | "approve" | "reject";
@@ -27,9 +23,7 @@ async function updateOnboardingRequest(params: {
 }) {
   const response = await fetch(`/api/elogest/onboarding/${params.requestId}`, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: params.action,
       rejectionReason: params.rejectionReason,
@@ -48,21 +42,27 @@ async function updateOnboardingRequest(params: {
   return payload;
 }
 
-async function convertOnboardingRequest(requestId: string) {
-  const response = await fetch(`/api/elogest/onboarding/${requestId}/converter`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+async function convertOnboardingRequest(params: {
+  requestId: string;
+  conversionMode: ConversionMode;
+  trialDays?: number;
+}) {
+  const response = await fetch(
+    `/api/elogest/onboarding/${params.requestId}/converter`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversionMode: params.conversionMode,
+        trialDays: params.trialDays,
+      }),
     },
-    body: JSON.stringify({}),
-  });
+  );
 
   const payload = (await response.json().catch(() => null)) as {
     error?: string;
     message?: string;
-    administrator?: {
-      id: string;
-    };
+    administrator?: { id: string };
   } | null;
 
   if (!response.ok) {
@@ -127,20 +127,54 @@ export default function OnboardingActions({
     }
   }
 
-  async function runConversion() {
+  async function runConversion(conversionMode: ConversionMode) {
     try {
       setError(null);
-      setLoadingAction("convert");
 
-      const confirmed = window.confirm(
-        "Converter esta solicitação em administradora ativa? Nenhuma senha será criada automaticamente nesta ação.",
-      );
+      let trialDays: number | undefined;
 
-      if (!confirmed) {
+      if (conversionMode === "TRIAL") {
+        const typedDays = window.prompt(
+          "Informe a duração do trial em dias (1 a 90):",
+          "14",
+        );
+
+        if (typedDays === null) {
+          return;
+        }
+
+        const parsedDays = Number(typedDays);
+
+        if (
+          !Number.isInteger(parsedDays) ||
+          parsedDays < 1 ||
+          parsedDays > 90
+        ) {
+          setError("Informe uma duração inteira entre 1 e 90 dias.");
+          return;
+        }
+
+        trialDays = parsedDays;
+      }
+
+      const confirmationMessage =
+        conversionMode === "TRIAL"
+          ? `Converter esta solicitação em administradora com trial de ${trialDays} dias? Nenhuma senha será criada automaticamente.`
+          : "Converter esta solicitação em administradora ativa? Nenhuma senha será criada automaticamente.";
+
+      if (!window.confirm(confirmationMessage)) {
         return;
       }
 
-      const payload = await convertOnboardingRequest(requestId);
+      setLoadingAction(
+        conversionMode === "TRIAL" ? "convertTrial" : "convertActive",
+      );
+
+      const payload = await convertOnboardingRequest({
+        requestId,
+        conversionMode,
+        trialDays,
+      });
 
       if (payload?.administrator?.id) {
         router.push(`/elogest/administradoras/${payload.administrator.id}`);
@@ -191,26 +225,44 @@ export default function OnboardingActions({
         </button>
 
         {canConvert && (
-          <button
-            type="button"
-            onClick={runConversion}
-            disabled={Boolean(loadingAction)}
-            className="inline-flex min-h-9 items-center justify-center rounded-xl bg-[#256D3C] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1F5A32] disabled:cursor-not-allowed disabled:bg-[#9AA7A0]"
-          >
-            {loadingAction === "convert" ? "Convertendo..." : "Converter"}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => runConversion("TRIAL")}
+              disabled={Boolean(loadingAction)}
+              className="inline-flex min-h-9 items-center justify-center rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {loadingAction === "convertTrial"
+                ? "Criando Trial..."
+                : "Converter Em Trial"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => runConversion("ACTIVE")}
+              disabled={Boolean(loadingAction)}
+              className="inline-flex min-h-9 items-center justify-center rounded-xl bg-[#256D3C] px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1F5A32] disabled:cursor-not-allowed disabled:bg-[#9AA7A0]"
+            >
+              {loadingAction === "convertActive"
+                ? "Convertendo..."
+                : "Converter Ativa"}
+            </button>
+          </>
         )}
       </div>
 
       {status === "APPROVED" && !isConverted && (
         <p className="text-[11px] leading-4 text-[#64736A]">
-          A conversão cria a administradora ativa, vincula o plano e prepara as categorias financeiras padrão.
+          Escolha entre trial controlado ou ativação comercial. O trial usa o
+          plano de interesse; sem plano válido, utiliza Profissional e depois
+          Free como fallback.
         </p>
       )}
 
       {isConverted && (
         <p className="text-[11px] leading-4 text-[#256D3C]">
-          Solicitação convertida. O primeiro acesso administrativo deve ser criado com senha segura no cadastro da administradora.
+          Solicitação convertida. O primeiro acesso administrativo deve ser
+          criado com senha segura no cadastro da administradora.
         </p>
       )}
 

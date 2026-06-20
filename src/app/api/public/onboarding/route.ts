@@ -87,6 +87,28 @@ function normalizePositiveInteger(value: unknown) {
   return integer;
 }
 
+function normalizeBoolean(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function normalizeVersion(value: unknown, fallback: string) {
+  const normalized = normalizeText(value);
+
+  return normalized || fallback;
+}
+
+function getRequestContext(request: NextRequest) {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  const requestIp = forwardedFor?.split(",")[0]?.trim() || null;
+
+  return {
+    ip: requestIp,
+    userAgent: request.headers.get("user-agent"),
+    referer: request.headers.get("referer"),
+    language: request.headers.get("accept-language"),
+  };
+}
+
 function pickFirst(body: RequestBody, keys: string[]) {
   for (const key of keys) {
     const value = body[key];
@@ -206,7 +228,32 @@ export async function POST(request: NextRequest) {
         pickFirst(body, ["interestedPlanSlug", "planSlug", "plan"]),
       )?.toLowerCase() ?? null;
 
-    const message = normalizeOptional(pickFirst(body, ["message", "notes", "observations"]));
+    const message = normalizeOptional(
+      pickFirst(body, ["message", "notes", "observations"]),
+    );
+
+    const termsAccepted = normalizeBoolean(body.termsAccepted);
+    const privacyAcknowledged = normalizeBoolean(body.privacyAcknowledged);
+    const termsVersion = normalizeVersion(body.termsVersion, "2026-06-20");
+    const privacyVersion = normalizeVersion(body.privacyVersion, "2026-06-20");
+
+    const rawAttribution =
+      body.attribution &&
+      typeof body.attribution === "object" &&
+      !Array.isArray(body.attribution)
+        ? (body.attribution as Record<string, unknown>)
+        : {};
+
+    const attribution = {
+      source: normalizeOptional(rawAttribution.source) || "DIRECT",
+      medium: normalizeOptional(rawAttribution.medium),
+      campaign: normalizeOptional(rawAttribution.campaign),
+      term: normalizeOptional(rawAttribution.term),
+      content: normalizeOptional(rawAttribution.content),
+      referrer: normalizeOptional(rawAttribution.referrer),
+      landingPath: normalizeOptional(rawAttribution.landingPath),
+      capturedAt: new Date().toISOString(),
+    };
 
     if (!administratorName) {
       return NextResponse.json(
@@ -245,6 +292,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: "Informe um e-mail válido para contato.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (!termsAccepted) {
+      return NextResponse.json(
+        {
+          error: "É necessário aceitar os Termos De Uso.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (!privacyAcknowledged) {
+      return NextResponse.json(
+        {
+          error: "É necessário confirmar a ciência da Política De Privacidade.",
         },
         {
           status: 400,
@@ -306,6 +375,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const acceptedAt = new Date();
+    const requestContext = getRequestContext(request);
+
     const onboardingRequest = await db.onboardingRequest.create({
       data: {
         administratorName,
@@ -321,7 +393,32 @@ export async function POST(request: NextRequest) {
         status: DEFAULT_STATUS,
         metadata: {
           source: "PUBLIC_ONBOARDING_FORM",
-          etapa: "56.2",
+          etapa: "56.10.4",
+          consent: {
+            terms: {
+              accepted: true,
+              acceptedAt: acceptedAt.toISOString(),
+              version: termsVersion,
+            },
+            privacy: {
+              acknowledged: true,
+              acknowledgedAt: acceptedAt.toISOString(),
+              version: privacyVersion,
+            },
+          },
+          requestContext,
+          lead: {
+            channel: attribution.medium || "SITE_PUBLICO",
+            source: attribution.source,
+            priority: "NORMAL",
+            stage: "NOVO",
+            firstContactAt: null,
+            nextActionAt: null,
+            nextAction: null,
+            internalNotes: null,
+            commercialOwner: null,
+          },
+          attribution,
         },
       },
       select: {
