@@ -7,74 +7,20 @@ import {
   type ActiveUserAccess,
 } from "@/lib/user-access";
 
-
-
 /* =========================================================
    ADMIN API GUARD - ELOGEST
 
-   Arquivo:
-   src/lib/admin-api-guard.ts
-
    ETAPA 44 — SUPER ADMIN E MULTIADMINISTRADORA
+   ETAPA 48 — COMUNICADOS
+   ETAPA 53 — FINANCEIRO
+   ETAPA 57.1 — ESTRUTURA DA ADMINISTRADORA DEMO
 
-   Objetivo:
-   - Centralizar a proteção das APIs administrativas:
-     /api/admin/*
-   - Garantir que a área administrativa seja usada apenas por
-     perfil ativo ADMINISTRADORA.
-   - Bloquear chamadas diretas às APIs quando a administradora
-     vinculada estiver INACTIVE.
-   - Evitar que o layout /admin seja a única camada de segurança.
+   A Etapa 57.1 inclui no contexto autenticado:
+   - isDemo;
+   - demoProtectionEnabled.
 
-   Regra estratégica:
-   - SUPER_ADMIN opera em /elogest e /api/elogest/*.
-   - ADMINISTRADORA opera em /admin e /api/admin/*,
-     somente se a administradora estiver ACTIVE.
-   - Perfis de portal operam em /portal e /api/portal/*.
-
-   ETAPA 48 — COMUNICADOS E CONFIRMAÇÃO DE LEITURA
-
-   Atualização:
-   - Adicionado helper central para validar módulos comerciais
-     da administradora pelo plano e por overrides.
-   - Adicionado guard específico para o módulo Comunicados.
-   - A regra de plano/módulo fica centralizada aqui, evitando
-     duplicação nas rotas /api/admin/comunicados/*.
-
-   Uso recomendado nas rotas /api/admin/*:
-
-   const auth = await requireActiveAdminApiAccess();
-
-   if ("error" in auth) {
-     return auth.error;
-   }
-
-   const { activeAccess, administratorId } = auth;
-
-   Depois disso, usar administratorId nos filtros Prisma.
-
-   Uso recomendado nas rotas /api/admin/comunicados/*:
-
-   const auth = await requireAdminModuleApiAccess("comunicados");
-
-   if ("error" in auth) {
-     return auth.error;
-   }
-
-   const { administratorId } = auth;
-
-   ETAPA 53 — FINANCEIRO INICIAL
-
-   Atualização:
-   - Adicionado guard específico para o módulo Financeiro.
-   - As rotas /api/admin/financeiro/* devem exigir módulo comercial
-     Financeiro liberado, além do perfil administrativo ativo.
-   ========================================================= */
-
-
-
-/* =========================================================
-   TIPOS
+   Isso permite que rotas e serviços tomem decisões seguras
+   sem depender do nome, e-mail, slug ou ID da administradora.
    ========================================================= */
 
 export type AdminApiGuardUser = {
@@ -84,8 +30,6 @@ export type AdminApiGuardUser = {
   email?: string | null;
 };
 
-
-
 export type ActiveAdminApiAccess = {
   authUser: AdminApiGuardUser;
   activeAccess: ActiveUserAccess;
@@ -94,10 +38,10 @@ export type ActiveAdminApiAccess = {
     id: string;
     name: string;
     status: string;
+    isDemo: boolean;
+    demoProtectionEnabled: boolean;
   };
 };
-
-
 
 export type AdminModuleApiAccess = ActiveAdminApiAccess & {
   module: {
@@ -107,15 +51,11 @@ export type AdminModuleApiAccess = ActiveAdminApiAccess & {
   };
 };
 
-
-
 export type AdminApiGuardResult =
   | ActiveAdminApiAccess
   | {
       error: NextResponse;
     };
-
-
 
 export type AdminModuleApiGuardResult =
   | AdminModuleApiAccess
@@ -123,45 +63,22 @@ export type AdminModuleApiGuardResult =
       error: NextResponse;
     };
 
-
-
 type AdministratorModuleAccessInfo = {
   hasAccess: boolean;
   source: "PLAN" | "OVERRIDE" | "NONE";
   moduleSlug: string;
 };
 
-
-
-/* =========================================================
-   RESPOSTAS PADRÃO
-   ========================================================= */
-
 function unauthorizedResponse() {
   return NextResponse.json(
-    {
-      error: "Usuário não autenticado.",
-    },
-    {
-      status: 401,
-    }
+    { error: "Usuário não autenticado." },
+    { status: 401 }
   );
 }
-
-
 
 function forbiddenResponse(message = "Acesso restrito à administradora.") {
-  return NextResponse.json(
-    {
-      error: message,
-    },
-    {
-      status: 403,
-    }
-  );
+  return NextResponse.json({ error: message }, { status: 403 });
 }
-
-
 
 function inactiveAdministratorResponse() {
   return NextResponse.json(
@@ -170,13 +87,9 @@ function inactiveAdministratorResponse() {
         "A administradora vinculada a este perfil está inativa. O acesso às rotinas administrativas foi bloqueado.",
       code: "ADMINISTRATOR_INACTIVE",
     },
-    {
-      status: 403,
-    }
+    { status: 403 }
   );
 }
-
-
 
 function moduleNotAvailableResponse(moduleName = "este módulo") {
   return NextResponse.json(
@@ -185,25 +98,9 @@ function moduleNotAvailableResponse(moduleName = "este módulo") {
       code: "MODULE_NOT_AVAILABLE",
       upgradeAvailable: true,
     },
-    {
-      status: 403,
-    }
+    { status: 403 }
   );
 }
-
-
-
-/* =========================================================
-   HELPERS INTERNOS - MÓDULOS COMERCIAIS
-
-   Regra consolidada:
-   1. Override ativo da administradora tem prioridade.
-      - enabled true libera.
-      - enabled false bloqueia.
-   2. Sem override válido, usa módulos do plano.
-   3. Módulo precisa estar ACTIVE.
-   4. Vínculo PlanModule precisa estar enabled.
-   ========================================================= */
 
 function isDateWindowActive({
   startsAt,
@@ -214,18 +111,10 @@ function isDateWindowActive({
   expiresAt?: Date | null;
   now: Date;
 }) {
-  if (startsAt && startsAt > now) {
-    return false;
-  }
-
-  if (expiresAt && expiresAt < now) {
-    return false;
-  }
-
+  if (startsAt && startsAt > now) return false;
+  if (expiresAt && expiresAt < now) return false;
   return true;
 }
-
-
 
 async function getAdministratorModuleAccess({
   administratorId,
@@ -247,9 +136,7 @@ async function getAdministratorModuleAccess({
   const now = new Date();
 
   const administrator = await db.administrator.findUnique({
-    where: {
-      id: administratorId,
-    },
+    where: { id: administratorId },
     select: {
       id: true,
       planId: true,
@@ -343,12 +230,6 @@ async function getAdministratorModuleAccess({
   };
 }
 
-
-
-/* =========================================================
-   GUARD PRINCIPAL DAS APIs ADMINISTRATIVAS
-   ========================================================= */
-
 export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult> {
   try {
     const authUser = (await getAuthUser()) as AdminApiGuardUser;
@@ -357,12 +238,6 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
       userId: authUser.id,
     });
 
-    /*
-       Correção importante para TypeScript e segurança:
-       primeiro validamos explicitamente se activeAccess existe.
-       Assim, depois desta condição, o TypeScript entende que
-       activeAccess não é mais null.
-    */
     if (!activeAccess) {
       return {
         error: forbiddenResponse(
@@ -371,12 +246,6 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
       };
     }
 
-    /*
-       /api/admin/* é área da administradora cliente.
-
-       SUPER_ADMIN não deve operar por aqui.
-       A visão global e as rotas globais pertencem a /api/elogest/*.
-    */
     if (!canUseAdminAreaAccess(activeAccess)) {
       return {
         error: forbiddenResponse(
@@ -395,22 +264,14 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
       };
     }
 
-    /*
-       ETAPA 44 — BLOQUEIO POR STATUS DA ADMINISTRADORA
-
-       Mesmo que o usuário e o UserAccess estejam ativos, a administradora
-       cliente pode ter sido inativada pelo Super Admin EloGest.
-
-       Neste caso, as APIs /api/admin/* também devem bloquear.
-    */
     const administrator = await db.administrator.findUnique({
-      where: {
-        id: administratorId,
-      },
+      where: { id: administratorId },
       select: {
         id: true,
         name: true,
         status: true,
+        isDemo: true,
+        demoProtectionEnabled: true,
       },
     });
 
@@ -423,9 +284,7 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
     }
 
     if (administrator.status !== "ACTIVE") {
-      return {
-        error: inactiveAdministratorResponse(),
-      };
+      return { error: inactiveAdministratorResponse() };
     }
 
     return {
@@ -436,37 +295,19 @@ export async function requireActiveAdminApiAccess(): Promise<AdminApiGuardResult
     };
   } catch (error) {
     if (isAuthError(error)) {
-      return {
-        error: unauthorizedResponse(),
-      };
+      return { error: unauthorizedResponse() };
     }
 
     console.error("Erro ao validar acesso administrativo:", error);
 
     return {
       error: NextResponse.json(
-        {
-          error: "Não foi possível validar o acesso administrativo.",
-        },
-        {
-          status: 500,
-        }
+        { error: "Não foi possível validar o acesso administrativo." },
+        { status: 500 }
       ),
     };
   }
 }
-
-
-
-/* =========================================================
-   GUARD DE MÓDULO ADMINISTRATIVO
-
-   Use este helper quando uma rota /api/admin/* depender
-   de um módulo comercial específico do plano.
-
-   Exemplo:
-   const auth = await requireAdminModuleApiAccess("comunicados");
-   ========================================================= */
 
 export async function requireAdminModuleApiAccess(
   moduleSlug: string,
@@ -474,9 +315,7 @@ export async function requireAdminModuleApiAccess(
 ): Promise<AdminModuleApiGuardResult> {
   const auth = await requireActiveAdminApiAccess();
 
-  if ("error" in auth) {
-    return auth;
-  }
+  if ("error" in auth) return auth;
 
   try {
     const moduleAccess = await getAdministratorModuleAccess({
@@ -485,9 +324,7 @@ export async function requireAdminModuleApiAccess(
     });
 
     if (!moduleAccess.hasAccess) {
-      return {
-        error: moduleNotAvailableResponse(moduleName),
-      };
+      return { error: moduleNotAvailableResponse(moduleName) };
     }
 
     return {
@@ -503,58 +340,24 @@ export async function requireAdminModuleApiAccess(
 
     return {
       error: NextResponse.json(
-        {
-          error: "Não foi possível validar o módulo da administradora.",
-        },
-        {
-          status: 500,
-        }
+        { error: "Não foi possível validar o módulo da administradora." },
+        { status: 500 }
       ),
     };
   }
 }
 
-
-
-/* =========================================================
-   GUARD ESPECÍFICO - COMUNICADOS
-
-   Etapa 48:
-   Centraliza a validação do módulo Comunicados.
-   ========================================================= */
-
 export async function requireAnnouncementsAdminApiAccess(): Promise<AdminModuleApiGuardResult> {
   return requireAdminModuleApiAccess("comunicados", "Comunicados");
 }
-
-
-
-/* =========================================================
-   GUARD ESPECÍFICO - FINANCEIRO
-
-   Etapa 53:
-   Centraliza a validação do módulo Financeiro.
-   Todas as rotas /api/admin/financeiro/* devem usar este helper.
-   ========================================================= */
 
 export async function requireFinancialAdminApiAccess(): Promise<AdminModuleApiGuardResult> {
   return requireAdminModuleApiAccess("financeiro", "Financeiro");
 }
 
-
-
-/* =========================================================
-   HELPERS COMPLEMENTARES
-
-   Usar quando a rota já executou requireActiveAdminApiAccess()
-   e precisa comparar escopo de carteira com segurança.
-   ========================================================= */
-
 export function getAdminApiAdministratorId(auth: ActiveAdminApiAccess) {
   return auth.administratorId;
 }
-
-
 
 export function assertSameAdministratorScope(
   auth: ActiveAdminApiAccess,
@@ -563,10 +366,6 @@ export function assertSameAdministratorScope(
   return !!administratorId && administratorId === auth.administratorId;
 }
 
-
-
 export function adminScopeForbiddenResponse() {
-  return forbiddenResponse(
-    "Acesso negado para dados de outra administradora."
-  );
+  return forbiddenResponse("Acesso negado para dados de outra administradora.");
 }

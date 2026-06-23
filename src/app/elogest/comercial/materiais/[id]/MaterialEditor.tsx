@@ -1,0 +1,16 @@
+"use client";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { COMMERCIAL_MATERIAL_CATEGORIES, COMMERCIAL_MATERIAL_STATUSES } from "@/lib/commercial-materials";
+
+type Props = { item: { id:string; title:string; description:string|null; category:string; status:string } };
+export default function MaterialEditor({ item }: Props) {
+  const router = useRouter(); const [message,setMessage]=useState(""); const [saving,setSaving]=useState(false);
+  async function update(formData: FormData) { setSaving(true); setMessage(""); const r=await fetch(`/api/elogest/comercial/materiais/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.fromEntries(formData))}); const d=await r.json(); setMessage(r.ok?"Informações atualizadas.":d.error||"Erro ao salvar."); setSaving(false); if(r.ok) router.refresh(); }
+  async function version(formData: FormData) { setSaving(true); setMessage(""); const r=await fetch(`/api/elogest/comercial/materiais/${item.id}/versoes`,{method:"POST",body:formData}); const d=await r.json(); setMessage(r.ok?"Nova versão criada.":d.error||"Erro ao criar versão."); setSaving(false); if(r.ok) router.refresh(); }
+  return <div className="space-y-6">
+    <form action={update} className="space-y-4 rounded-3xl border border-[#DDE5DF] bg-white p-6 shadow-sm"><h2 className="text-lg font-semibold">Informações Do Material</h2><input name="title" defaultValue={item.title} required className="w-full rounded-2xl border border-[#DDE5DF] px-4 py-3"/><textarea name="description" defaultValue={item.description||""} rows={3} className="w-full rounded-2xl border border-[#DDE5DF] px-4 py-3"/><div className="grid gap-4 sm:grid-cols-2"><select name="category" defaultValue={item.category} className="rounded-2xl border border-[#DDE5DF] px-4 py-3">{COMMERCIAL_MATERIAL_CATEGORIES.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select><select name="status" defaultValue={item.status} className="rounded-2xl border border-[#DDE5DF] px-4 py-3">{COMMERCIAL_MATERIAL_STATUSES.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select></div><button disabled={saving} className="rounded-2xl bg-[#17211B] px-5 py-3 text-sm font-semibold text-white">Salvar Informações</button></form>
+    <form action={version} className="space-y-4 rounded-3xl border border-[#DDE5DF] bg-white p-6 shadow-sm"><h2 className="text-lg font-semibold">Criar Nova Versão</h2><div className="grid gap-4 sm:grid-cols-2"><input name="versionLabel" placeholder="Ex.: v1.0" className="rounded-2xl border border-[#DDE5DF] px-4 py-3"/><input name="file" type="file" accept=".pdf,.docx,.pptx,.xlsx" className="rounded-2xl border border-[#DDE5DF] px-4 py-3"/></div><textarea name="content" rows={12} placeholder="Conteúdo para visualização on-line" className="w-full rounded-2xl border border-[#DDE5DF] px-4 py-3 font-mono text-sm"/><textarea name="changeNotes" rows={3} placeholder="Notas desta versão" className="w-full rounded-2xl border border-[#DDE5DF] px-4 py-3"/><button disabled={saving} className="rounded-2xl bg-[#256D3C] px-5 py-3 text-sm font-semibold text-white">Criar Versão</button></form>
+    {message && <p className="rounded-2xl bg-[#EEF7F0] p-4 text-sm text-[#1F5B33]">{message}</p>}
+  </div>;
+}

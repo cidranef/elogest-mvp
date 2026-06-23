@@ -1,0 +1,67 @@
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+
+import EloGestShell from "@/components/EloGestShell";
+import { db } from "@/lib/db";
+import { requireEloGestSuperAdmin } from "@/lib/elogest-api-guard";
+
+import MeetingManager from "./MeetingManager";
+
+export const dynamic = "force-dynamic";
+
+type Props = { params: Promise<{ id: string }> };
+
+export default async function CommercialMeetingsPage({ params }: Props) {
+  const auth = await requireEloGestSuperAdmin();
+  if ("error" in auth) redirect("/login");
+
+  const { id } = await params;
+  const lead = await db.commercialLeadProfile.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      onboardingRequest: {
+        select: {
+          administratorName: true,
+          responsibleName: true,
+          email: true,
+        },
+      },
+      meetings: {
+        orderBy: [{ scheduledAt: "desc" }, { createdAt: "desc" }],
+      },
+    },
+  });
+
+  if (!lead) notFound();
+
+  return (
+    <EloGestShell current="comercial">
+      <main className="mx-auto w-full max-w-6xl space-y-8 p-4 sm:p-6 lg:p-8">
+        <header>
+          <Link
+            href={`/elogest/comercial/${id}`}
+            className="text-sm font-semibold text-[#256D3C] hover:text-[#1F5A32]"
+          >
+            ← Voltar Para O Lead
+          </Link>
+
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight text-[#17211B]">
+            Reuniões E Follow-up
+          </h1>
+
+          <p className="mt-2 text-sm text-[#5B665F]">
+            {lead.onboardingRequest.administratorName} ·{" "}
+            {lead.onboardingRequest.responsibleName} ·{" "}
+            {lead.onboardingRequest.email}
+          </p>
+        </header>
+
+        <MeetingManager
+          leadId={id}
+          initialMeetings={lead.meetings as never[]}
+        />
+      </main>
+    </EloGestShell>
+  );
+}

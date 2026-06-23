@@ -54,6 +54,9 @@ type EloGestNavKey =
   | "dashboard"
   | "administradoras"
   | "onboarding"
+  | "comercial"
+  | "materiais"
+  | "demo"
   | "usuarios"
   | "planos"
   | "indicadores"
@@ -182,6 +185,10 @@ function ShellIcon({
     | "dashboard"
     | "administrator"
     | "onboarding"
+    | "comercial"
+    | "materials"
+  | "materiais"
+    | "demo"
     | "users"
     | "plans"
     | "chart"
@@ -252,6 +259,35 @@ function ShellIcon({
           <path {...common} d="M7 13h4" />
           <circle {...common} cx="16" cy="11" r="2" />
           <path {...common} d="M13 18a4 4 0 0 1 6 0" />
+        </>
+      )}
+
+      {type === "comercial" && (
+        <>
+          <path {...common} d="M4 19V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v11" />
+          <path {...common} d="M8 6V4h8v2" />
+          <path {...common} d="M8 11h8" />
+          <path {...common} d="M8 15h5" />
+        </>
+      )}
+
+      {type === "materials" && (
+        <>
+          <path {...common} d="M6 3h9l3 3v15H6z" />
+          <path {...common} d="M15 3v4h4" />
+          <path {...common} d="M9 11h6" />
+          <path {...common} d="M9 15h6" />
+          <path {...common} d="M9 19h4" />
+        </>
+      )}
+
+      {type === "demo" && (
+        <>
+          <path {...common} d="M4 7h16v12H4z" />
+          <path {...common} d="M8 7V5h8v2" />
+          <path {...common} d="M8 11h8" />
+          <path {...common} d="M8 15h5" />
+          <circle {...common} cx="17" cy="15" r="1" />
         </>
       )}
 
@@ -357,6 +393,27 @@ const eloGestNavGroups: {
         href: "/elogest/onboarding",
         icon: "onboarding",
         description: "Solicitações públicas de acesso recebidas pelo site.",
+      },
+      {
+        key: "comercial",
+        label: "Central Comercial",
+        href: "/elogest/comercial",
+        icon: "comercial",
+        description: "Funil, qualificação e acompanhamento das oportunidades.",
+      },
+      {
+        key: "materiais",
+        label: "Materiais Comerciais",
+        href: "/elogest/comercial/materiais",
+        icon: "materials",
+        description: "Biblioteca, versões e downloads dos materiais comerciais.",
+      },
+      {
+        key: "demo",
+        label: "Ambiente Demo",
+        href: "/elogest/demo",
+        icon: "demo",
+        description: "Status, acessos e restauração da demonstração comercial.",
       },
     ],
   },

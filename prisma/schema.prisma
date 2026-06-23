@@ -11,6 +11,31 @@ datasource db {
   provider = "postgresql"
 }
 
+enum CommercialPilotStatus {
+  DRAFT
+  PLANNED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CommercialPilotDecision {
+  PENDING
+  APPROVED_FOR_CONTRACT
+  EXTEND_PILOT
+  NEEDS_ADJUSTMENTS
+  NOT_CONVERTED
+}
+
+enum CommercialPilotItemStatus {
+  PENDING
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  NOT_APPLICABLE
+}
+
 enum Role {
   SUPER_ADMIN
   ADMINISTRADORA
@@ -841,6 +866,199 @@ enum NotificationStatus {
 // solicitação recusada com motivo registrado.
 // =========================================================
 
+// =========================================================
+// ETAPA 57.8.1 - CENTRAL COMERCIAL ELOGEST
+//
+// Estágio do lead no funil comercial interno.
+// O OnboardingRequest permanece como origem pública do lead,
+// enquanto CommercialLeadProfile concentra a operação comercial.
+// =========================================================
+
+// =========================================================
+// ETAPA 57.8.4 - QUALIFICAÇÃO ON-LINE DO LEAD
+// =========================================================
+model CommercialLeadQualification {
+  id String @id @default(cuid())
+
+  commercialLeadProfileId String                @unique
+  commercialLeadProfile   CommercialLeadProfile @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+
+  status         CommercialQualificationStatus         @default(DRAFT)
+  classification CommercialQualificationClassification @default(LOW_PRIORITY)
+  totalScore     Int                                   @default(0)
+
+  yearsInMarket    Int?
+  condominiumCount Int?
+  unitCount        Int?
+  teamSize         Int?
+  currentSystems   String[]
+  painPoints       String[]
+  primaryPain      String?
+  painFrequency    String?
+  painSeverity     String?
+  desiredModules   String[]
+  urgency          String?
+  decisionRole     String?
+  budgetStatus     String?
+  pilotReadiness   String?
+  competitorName   String?
+  objections       String[]
+  notes            String?
+
+  painScore           Int @default(0)
+  urgencyScore        Int @default(0)
+  productFitScore     Int @default(0)
+  authorityScore      Int @default(0)
+  implementationScore Int @default(0)
+  financialScore      Int @default(0)
+  expansionScore      Int @default(0)
+  strategicScore      Int @default(0)
+  pilotScore          Int @default(0)
+  engagementScore     Int @default(0)
+
+  answers     Json?
+  completedAt DateTime?
+
+  updatedByUserId String?
+  updatedByUser   User?   @relation("CommercialQualificationUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  revisions CommercialLeadQualificationRevision[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([classification])
+  @@index([totalScore])
+  @@index([updatedByUserId])
+  @@map("commercial_lead_qualifications")
+}
+
+model CommercialLeadQualificationRevision {
+  id String @id @default(cuid())
+
+  commercialLeadQualificationId String
+  commercialLeadQualification   CommercialLeadQualification @relation(fields: [commercialLeadQualificationId], references: [id], onDelete: Cascade)
+
+  revisionNumber Int
+  status         CommercialQualificationStatus
+  classification CommercialQualificationClassification
+  totalScore     Int
+  snapshot       Json
+
+  createdByUserId String?
+  createdByUser   User?    @relation("CommercialQualificationRevisionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+
+  @@unique([commercialLeadQualificationId, revisionNumber], map: "clqr_qualification_revision_key")
+  @@index([commercialLeadQualificationId, createdAt], map: "clqr_qualification_created_at_idx")
+  @@index([createdByUserId])
+  @@map("commercial_lead_qualification_revisions")
+}
+
+// =========================================================
+// ETAPA 57.8.3 - BIBLIOTECA DE MATERIAIS COMERCIAIS
+// =========================================================
+enum CommercialMaterialCategory {
+  INSTITUTIONAL
+  PRESENTATION
+  SCRIPT
+  PLAN_COMPARISON
+  QUALIFICATION
+  PILOT
+  PROPOSAL
+  FOLLOW_UP
+  FAQ
+  OTHER
+}
+
+enum CommercialMaterialStatus {
+  DRAFT
+  APPROVED
+  ARCHIVED
+}
+
+enum CommercialMaterialFileType {
+  PDF
+  DOCX
+  PPTX
+  XLSX
+  OTHER
+}
+
+enum CommercialLeadStage {
+  NEW
+  CONTACT_PENDING
+  CONTACTED
+  DIAGNOSIS_SENT
+  DIAGNOSIS_RECEIVED
+  QUALIFIED
+  DEMO_SCHEDULED
+  DEMO_COMPLETED
+  PILOT_PROPOSED
+  PILOT_ACTIVE
+  PROPOSAL_SENT
+  NEGOTIATION
+  CONVERTED
+  LOST
+  FOLLOW_UP
+}
+
+enum CommercialLeadPriority {
+  LOW
+  MEDIUM
+  HIGH
+  STRATEGIC
+}
+
+enum CommercialLeadLogAction {
+  PROFILE_CREATED
+  PROFILE_UPDATED
+  STAGE_CHANGED
+  SCORE_RECALCULATED
+  OWNER_ASSIGNED
+  FOLLOW_UP_SCHEDULED
+  NOTE_ADDED
+  LOST_MARKED
+  REOPENED
+}
+
+// =========================================================
+// ETAPA 57.8.4 - QUALIFICAÇÃO COMERCIAL DO LEAD
+// =========================================================
+enum CommercialQualificationStatus {
+  DRAFT
+  COMPLETED
+}
+
+enum CommercialQualificationClassification {
+  LOW_PRIORITY
+  DEVELOPING
+  QUALIFIED
+  HIGH_PRIORITY
+  STRATEGIC
+}
+
+// =========================================================
+// ETAPA 57.8.5 - DIAGNÓSTICO EXTERNO POR LINK SEGURO
+// =========================================================
+enum CommercialDiagnosisLinkStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  REVOKED
+}
+
+enum CommercialDiagnosisEventType {
+  LINK_CREATED
+  OPENED
+  STARTED
+  DRAFT_SAVED
+  COMPLETED
+  REVOKED
+  IMPORTED
+}
+
 enum OnboardingRequestStatus {
   PENDING_REVIEW
   IN_CONTACT
@@ -849,15 +1067,56 @@ enum OnboardingRequestStatus {
   REJECTED
 }
 
+enum CommercialProposalStatus {
+  DRAFT
+  SENT
+  VIEWED
+  NEGOTIATION
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum CommercialProposalEventType {
+  CREATED
+  UPDATED
+  VERSION_CREATED
+  SENT
+  VIEWED
+  NEGOTIATION_STARTED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+  PDF_GENERATED
+  CONVERTED
+}
+
 model Administrator {
-  id           String        @id @default(cuid())
-  name         String
-  cnpj         String?       @unique
-  email        String?
-  phone        String?
-  status       Status        @default(ACTIVE)
-  condominiums Condominium[]
-  users        User[]
+  id     String  @id @default(cuid())
+  name   String
+  cnpj   String? @unique
+  email  String?
+  phone  String?
+  status Status  @default(ACTIVE)
+
+  // =========================================================
+  // ETAPA 57.1 - ADMINISTRADORA DEMO
+  //
+  // isDemo:
+  // identifica explicitamente uma administradora criada para
+  // demonstrações comerciais com dados totalmente fictícios.
+  //
+  // demoProtectionEnabled:
+  // ativa proteções adicionais sobre dados estruturais da
+  // administradora demo. Comunicações e integrações externas
+  // devem ser bloqueadas sempre que isDemo for true.
+  // =========================================================
+  isDemo                Boolean       @default(false)
+  demoProtectionEnabled Boolean       @default(false)
+  condominiums          Condominium[]
+  users                 User[]
 
   // =========================================================
   // ETAPA 47 - PLANO, MÓDULOS E LIMITES
@@ -980,13 +1239,15 @@ model Administrator {
   // Solicitações públicas que foram convertidas nesta
   // administradora após análise do Super Admin.
   // =========================================================
-  convertedOnboardingRequests OnboardingRequest[] @relation("OnboardingConvertedAdmin")
+  convertedOnboardingRequests  OnboardingRequest[]  @relation("OnboardingConvertedAdmin")
+  commercialProposalsConverted CommercialProposal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([planId])
   @@index([planStatus])
+  @@index([isDemo])
 }
 
 // =========================================================
@@ -1044,8 +1305,18 @@ model Plan {
 
   metadata Json?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // =========================================================
+  // ETAPA 57.8.1 - PERFIL COMERCIAL
+  //
+  // Relação 1:1 com a operação comercial interna.
+  // Evita duplicar o lead recebido no onboarding público.
+  // =========================================================
+  commercialProfile   CommercialLeadProfile? @relation(fields: [commercialLeadProfileId], references: [id])
+  commercialProposals CommercialProposal[]
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  commercialLeadProfileId String?
 
   @@index([status])
   @@index([isPublic])
@@ -1096,8 +1367,9 @@ model OnboardingRequest {
 
   metadata Json?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  commercialLeadProfile CommercialLeadProfile?
 
   @@index([status])
   @@index([email])
@@ -1106,6 +1378,229 @@ model OnboardingRequest {
   @@index([convertedAdminId])
   @@index([createdAt])
   @@map("onboarding_requests")
+}
+
+// =========================================================
+// ETAPA 57.8.1 - PERFIL COMERCIAL DO LEAD
+//
+// Extensão operacional 1:1 do OnboardingRequest.
+// Mantém estágio, prioridade, pontuação, responsável, follow-up
+// e sinais estratégicos sem duplicar os dados públicos do lead.
+// =========================================================
+
+model CommercialLeadProfile {
+  pilot CommercialPilot?
+  id    String           @id @default(cuid())
+
+  onboardingRequestId String            @unique
+  onboardingRequest   OnboardingRequest @relation(fields: [onboardingRequestId], references: [id], onDelete: Cascade)
+
+  stage    CommercialLeadStage    @default(NEW)
+  priority CommercialLeadPriority @default(MEDIUM)
+  score    Int                    @default(0)
+
+  ownerUserId String?
+  ownerUser   User?   @relation("CommercialLeadOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  nextFollowUpAt DateTime?
+  lastContactAt  DateTime?
+  qualifiedAt    DateTime?
+  lostAt         DateTime?
+  lostReason     String?
+
+  strategicPotential Boolean @default(false)
+  investorInterest   Boolean @default(false)
+
+  notes    String?
+  metadata Json?
+
+  logs           CommercialLeadLog[]
+  proposal       CommercialProposal?
+  qualification  CommercialLeadQualification?
+  diagnosisLinks CommercialDiagnosisLink[]
+  meetings       CommercialMeeting[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  plans     Plan[]
+
+  @@index([stage])
+  @@index([priority])
+  @@index([score])
+  @@index([ownerUserId])
+  @@index([nextFollowUpAt])
+  @@index([createdAt])
+  @@map("commercial_lead_profiles")
+}
+
+// =========================================================
+// ETAPA 57.8.1 - HISTÓRICO COMERCIAL
+//
+// Preserva as alterações relevantes do funil e prepara a base
+// para indicadores, auditoria e leitura futura pela IA.
+// =========================================================
+
+model CommercialLeadLog {
+  id String @id @default(cuid())
+
+  commercialLeadProfileId String
+  commercialLeadProfile   CommercialLeadProfile @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+
+  action    CommercialLeadLogAction
+  fromStage CommercialLeadStage?
+  toStage   CommercialLeadStage?
+  score     Int?
+
+  description String?
+  metadata    Json?
+
+  createdByUserId String?
+  createdByUser   User?   @relation("CommercialLeadLogCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([commercialLeadProfileId])
+  @@index([action])
+  @@index([createdByUserId])
+  @@index([createdAt])
+  @@map("commercial_lead_logs")
+}
+
+// =========================================================
+// ETAPA 57.8.5 - DIAGNÓSTICO EXTERNO POR LINK SEGURO
+// =========================================================
+model CommercialDiagnosisLink {
+  id String @id @default(cuid())
+
+  commercialLeadProfileId String
+  commercialLeadProfile   CommercialLeadProfile @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+
+  tokenHash String                        @unique
+  tokenHint String
+  status    CommercialDiagnosisLinkStatus @default(ACTIVE)
+  expiresAt DateTime
+
+  openedAt    DateTime?
+  startedAt   DateTime?
+  lastSavedAt DateTime?
+  completedAt DateTime?
+  revokedAt   DateTime?
+
+  respondentName  String?
+  respondentEmail String?
+  respondentPhone String?
+
+  consentAcceptedAt     DateTime?
+  privacyAcknowledgedAt DateTime?
+  responses             Json?
+
+  importedAt       DateTime?
+  importedByUserId String?
+  importedByUser   User?     @relation("CommercialDiagnosisImportedBy", fields: [importedByUserId], references: [id], onDelete: SetNull)
+
+  createdByUserId String?
+  createdByUser   User?   @relation("CommercialDiagnosisCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  events CommercialDiagnosisEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([commercialLeadProfileId, status], map: "cdl_lead_status_idx")
+  @@index([expiresAt], map: "cdl_expires_at_idx")
+  @@index([createdByUserId], map: "cdl_created_by_idx")
+  @@index([importedByUserId], map: "cdl_imported_by_idx")
+  @@map("commercial_diagnosis_links")
+}
+
+model CommercialDiagnosisEvent {
+  id                        String                       @id @default(cuid())
+  commercialDiagnosisLinkId String
+  commercialDiagnosisLink   CommercialDiagnosisLink      @relation(fields: [commercialDiagnosisLinkId], references: [id], onDelete: Cascade)
+  type                      CommercialDiagnosisEventType
+  ipAddress                 String?
+  userAgent                 String?
+  metadata                  Json?
+  createdAt                 DateTime                     @default(now())
+
+  @@index([commercialDiagnosisLinkId, createdAt], map: "cde_link_created_at_idx")
+  @@index([type], map: "cde_type_idx")
+  @@map("commercial_diagnosis_events")
+}
+
+// =========================================================
+// ETAPA 57.8.3 - BIBLIOTECA DE MATERIAIS COMERCIAIS
+// =========================================================
+model CommercialMaterial {
+  id                   String                     @id @default(cuid())
+  title                String
+  slug                 String                     @unique
+  description          String?
+  category             CommercialMaterialCategory
+  status               CommercialMaterialStatus   @default(DRAFT)
+  currentVersionNumber Int                        @default(0)
+
+  createdByUserId  String?
+  createdByUser    User?     @relation("CommercialMaterialCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUserId  String?
+  updatedByUser    User?     @relation("CommercialMaterialUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  approvedByUserId String?
+  approvedByUser   User?     @relation("CommercialMaterialApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  approvedAt       DateTime?
+
+  metadata  Json?
+  versions  CommercialMaterialVersion[]
+  downloads CommercialMaterialDownloadLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([updatedAt])
+  @@map("commercial_materials")
+}
+
+model CommercialMaterialVersion {
+  id                   String                          @id @default(cuid())
+  commercialMaterialId String
+  commercialMaterial   CommercialMaterial              @relation(fields: [commercialMaterialId], references: [id], onDelete: Cascade)
+  versionNumber        Int
+  versionLabel         String
+  content              String?
+  fileType             CommercialMaterialFileType?
+  fileKey              String?
+  fileName             String?
+  mimeType             String?
+  fileSizeBytes        Int?
+  checksumSha256       String?
+  changeNotes          String?
+  createdByUserId      String?
+  createdByUser        User?                           @relation("CommercialMaterialVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt            DateTime                        @default(now())
+  downloads            CommercialMaterialDownloadLog[]
+
+  @@unique([commercialMaterialId, versionNumber])
+  @@index([commercialMaterialId, createdAt])
+  @@map("commercial_material_versions")
+}
+
+model CommercialMaterialDownloadLog {
+  id                          String                    @id @default(cuid())
+  commercialMaterialId        String
+  commercialMaterial          CommercialMaterial        @relation(fields: [commercialMaterialId], references: [id], onDelete: Cascade)
+  commercialMaterialVersionId String
+  commercialMaterialVersion   CommercialMaterialVersion @relation(fields: [commercialMaterialVersionId], references: [id], onDelete: Cascade)
+  downloadedByUserId          String?
+  downloadedByUser            User?                     @relation("CommercialMaterialDownloadedBy", fields: [downloadedByUserId], references: [id], onDelete: SetNull)
+  ipAddress                   String?
+  userAgent                   String?
+  createdAt                   DateTime                  @default(now())
+
+  @@index([commercialMaterialId, createdAt])
+  @@index([commercialMaterialVersionId])
+  @@index([downloadedByUserId])
+  @@map("commercial_material_download_logs")
 }
 
 model PlatformModule {
@@ -1626,6 +2121,12 @@ model User {
   // =========================================================
   unitPersonLinks UnitPersonLink[]
 
+  commercialMaterialsCreated        CommercialMaterial[]            @relation("CommercialMaterialCreatedBy")
+  commercialMaterialsUpdated        CommercialMaterial[]            @relation("CommercialMaterialUpdatedBy")
+  commercialMaterialsApproved       CommercialMaterial[]            @relation("CommercialMaterialApprovedBy")
+  commercialMaterialVersionsCreated CommercialMaterialVersion[]     @relation("CommercialMaterialVersionCreatedBy")
+  commercialMaterialDownloads       CommercialMaterialDownloadLog[] @relation("CommercialMaterialDownloadedBy")
+
   createdTickets  Ticket[]    @relation("CreatedTickets")
   assignedTickets Ticket[]    @relation("AssignedTickets")
   ticketLogs      TicketLog[]
@@ -1783,6 +2284,16 @@ model User {
   // A conversão em administradora fica relacionada ao model Administrator.
   // =========================================================
   reviewedOnboardingRequests OnboardingRequest[] @relation("OnboardingReviewedByUser")
+
+  // =========================================================
+  // ETAPA 57.8.1 - CENTRAL COMERCIAL
+  // =========================================================
+  ownedCommercialLeads             CommercialLeadProfile[]               @relation("CommercialLeadOwner")
+  commercialLeadLogs               CommercialLeadLog[]                   @relation("CommercialLeadLogCreatedByUser")
+  commercialQualificationsUpdated  CommercialLeadQualification[]         @relation("CommercialQualificationUpdatedBy")
+  commercialQualificationRevisions CommercialLeadQualificationRevision[] @relation("CommercialQualificationRevisionCreatedBy")
+  commercialDiagnosisLinksCreated  CommercialDiagnosisLink[]             @relation("CommercialDiagnosisCreatedBy")
+  commercialDiagnosisLinksImported CommercialDiagnosisLink[]             @relation("CommercialDiagnosisImportedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4539,4 +5050,241 @@ model AiOperationLog {
   @@index([module])
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+// =========================================================
+// ETAPA 57.4.1 / 57.4.2 — RESET DO AMBIENTE DEMO
+//
+// Histórico independente para não criar dependência de FK com
+// a administradora que será arquivada durante a rotação segura.
+// =========================================================
+model DemoResetLog {
+  id String @id @default(cuid())
+
+  demoCnpj                String
+  requestedByUserId       String
+  requestedByName         String?
+  requestedByEmail        String?
+  status                  String
+  strategy                String    @default("SAFE_ROTATION")
+  archivedAdministratorId String?
+  createdAdministratorId  String?
+  startedAt               DateTime  @default(now())
+  completedAt             DateTime?
+  errorMessage            String?
+  summary                 Json?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([demoCnpj])
+  @@index([status])
+  @@index([startedAt])
+}
+
+enum CommercialMeetingType {
+  DISCOVERY
+  DEMO_10
+  DEMO_30
+  DEMO_60
+  PILOT_ALIGNMENT
+  PROPOSAL
+  NEGOTIATION
+  INVESTMENT
+  FOLLOW_UP
+  OTHER
+}
+
+enum CommercialMeetingStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model CommercialMeeting {
+  id String @id @default(cuid())
+
+  commercialLeadProfileId String
+  commercialLeadProfile   CommercialLeadProfile @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+
+  type   CommercialMeetingType   @default(DISCOVERY)
+  status CommercialMeetingStatus @default(SCHEDULED)
+  title  String
+
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationMinutes Int?
+
+  participants     Json?
+  scriptUsed       String?
+  modulesPresented String[]
+  painsIdentified  String[]
+  objections       String[]
+  interestLevel    Int?
+  summary          String?
+  nextStep         String?
+  followUpAt       DateTime?
+
+  ownerUserId     String?
+  createdByUserId String
+  updatedByUserId String?
+  metadata        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([commercialLeadProfileId, createdAt])
+  @@index([status, scheduledAt])
+  @@index([followUpAt])
+  @@index([ownerUserId])
+  @@map("commercial_meetings")
+}
+
+model CommercialPilot {
+  id                      String                    @id
+  commercialLeadProfileId String                    @unique
+  title                   String
+  condominiumOrOperation  String?
+  objective               String?
+  modules                 String[]                  @default([])
+  internalResponsible     String?
+  clientResponsible       String?
+  startDate               DateTime?
+  expectedEndDate         DateTime?
+  actualEndDate           DateTime?
+  status                  CommercialPilotStatus     @default(DRAFT)
+  decision                CommercialPilotDecision   @default(PENDING)
+  finalEvaluation         String?
+  decisionNotes           String?
+  createdByUserId         String
+  updatedByUserId         String?
+  metadata                Json?
+  lead                    CommercialLeadProfile     @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+  items                   CommercialPilotItem[]
+  evidences               CommercialPilotEvidence[]
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
+
+  @@index([status])
+  @@index([decision])
+  @@map("commercial_pilots")
+}
+
+model CommercialPilotItem {
+  id                String                    @id
+  commercialPilotId String
+  title             String
+  description       String?
+  position          Int                       @default(0)
+  status            CommercialPilotItemStatus @default(PENDING)
+  responsible       String?
+  dueDate           DateTime?
+  completedAt       DateTime?
+  blocker           String?
+  notes             String?
+  pilot             CommercialPilot           @relation(fields: [commercialPilotId], references: [id], onDelete: Cascade)
+  evidences         CommercialPilotEvidence[]
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@index([commercialPilotId, position])
+  @@index([status])
+  @@map("commercial_pilot_items")
+}
+
+model CommercialPilotEvidence {
+  id                    String               @id
+  commercialPilotId     String
+  commercialPilotItemId String?
+  title                 String
+  fileName              String
+  mimeType              String
+  sizeBytes             Int
+  storageKey            String               @unique
+  sha256                String
+  uploadedByUserId      String
+  pilot                 CommercialPilot      @relation(fields: [commercialPilotId], references: [id], onDelete: Cascade)
+  item                  CommercialPilotItem? @relation(fields: [commercialPilotItemId], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+
+  @@index([commercialPilotId, createdAt])
+  @@index([commercialPilotItemId])
+  @@map("commercial_pilot_evidences")
+}
+
+model CommercialProposal {
+  id                       String                      @id @default(cuid())
+  commercialLeadProfileId  String                      @unique
+  commercialLeadProfile    CommercialLeadProfile       @relation(fields: [commercialLeadProfileId], references: [id], onDelete: Cascade)
+  planId                   String?
+  plan                     Plan?                       @relation(fields: [planId], references: [id], onDelete: SetNull)
+  status                   CommercialProposalStatus    @default(DRAFT)
+  title                    String
+  monthlyPriceCents        Int?
+  implementationFeeCents   Int?
+  discountCents            Int                         @default(0)
+  discountPercent          Float?
+  validUntil               DateTime?
+  paymentTerms             String?
+  commercialNotes          String?
+  modules                  String[]                    @default([])
+  limits                   Json?
+  publicTokenHash          String?                     @unique
+  publicTokenExpiresAt     DateTime?
+  sentAt                   DateTime?
+  firstViewedAt            DateTime?
+  lastViewedAt             DateTime?
+  acceptedAt               DateTime?
+  acceptedByName           String?
+  acceptedByEmail          String?
+  acceptedIp               String?
+  acceptedUserAgent        String?
+  acceptanceStatement      String?
+  rejectedAt               DateTime?
+  rejectionReason          String?
+  convertedAt              DateTime?
+  convertedAdministratorId String?
+  convertedAdministrator   Administrator?              @relation(fields: [convertedAdministratorId], references: [id], onDelete: SetNull)
+  currentVersion           Int                         @default(1)
+  createdByUserId          String
+  updatedByUserId          String?
+  versions                 CommercialProposalVersion[]
+  events                   CommercialProposalEvent[]
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+
+  @@index([status])
+  @@index([validUntil])
+  @@index([planId])
+  @@map("commercial_proposals")
+}
+
+model CommercialProposalVersion {
+  id                   String             @id @default(cuid())
+  commercialProposalId String
+  commercialProposal   CommercialProposal @relation(fields: [commercialProposalId], references: [id], onDelete: Cascade)
+  version              Int
+  snapshot             Json
+  createdByUserId      String
+  createdAt            DateTime           @default(now())
+
+  @@unique([commercialProposalId, version])
+  @@index([commercialProposalId, createdAt])
+  @@map("commercial_proposal_versions")
+}
+
+model CommercialProposalEvent {
+  id                   String                      @id @default(cuid())
+  commercialProposalId String
+  commercialProposal   CommercialProposal          @relation(fields: [commercialProposalId], references: [id], onDelete: Cascade)
+  type                 CommercialProposalEventType
+  description          String?
+  metadata             Json?
+  createdByUserId      String?
+  createdAt            DateTime                    @default(now())
+
+  @@index([commercialProposalId, createdAt])
+  @@index([type])
+  @@map("commercial_proposal_events")
 }

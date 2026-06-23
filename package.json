@@ -10,7 +10,13 @@
     "postinstall": "prisma generate",
     "db:seed": "tsx prisma/seeds/seed.ts",
     "seed:plans": "tsx prisma/seeds/seed-etapa47-planos.ts",
-    "seed:homologacao": "tsx prisma/seeds/seed-etapa47-planos.ts && tsx prisma/seeds/seed-homologacao-etapa52.ts"
+    "seed:homologacao": "tsx prisma/seeds/seed-etapa47-planos.ts && tsx prisma/seeds/seed-homologacao-etapa52.ts",
+    "seed:demo": "tsx prisma/seeds/seed-etapa47-planos.ts && tsx prisma/seeds/seed-demo-etapa57.ts",
+    "seed:demo:cenarios": "tsx prisma/seeds/seed-demo-etapa57-cenarios.ts",
+    "seed:demo:completo": "tsx prisma/seeds/seed-etapa47-planos.ts && tsx prisma/seeds/seed-demo-etapa57.ts && tsx prisma/seeds/seed-demo-etapa57-cenarios.ts",
+    "validate:demo:logins": "tsx prisma/seeds/validate-demo-logins-etapa57.ts",
+    "validate:demo:protections": "tsx prisma/seeds/validate-demo-protections-etapa57.ts",
+    "reset:demo": "tsx prisma/seeds/reset-demo-etapa57.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1065.0",
@@ -21,6 +27,7 @@
     "next": "^16.2.7",
     "next-auth": "^4.24.14",
     "nodemailer": "^7.0.13",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.20.0",
     "prisma": "^7.8.0",
     "react": "19.2.4",
