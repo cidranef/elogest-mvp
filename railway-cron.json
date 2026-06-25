@@ -1,0 +1,9 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "echo \"Cron de cobrança preparado\""
+  },
+  "deploy": {
+    "startCommand": "node scripts/railway-cron-billing-daily.mjs"
+  }
+}
