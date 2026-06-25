@@ -104,6 +104,132 @@ enum AdministratorPlanStatus {
 // reservado para casos específicos.
 // =========================================================
 
+// =========================================================
+// ETAPA 58.1 - ASSINATURAS E COBRANÇAS COMERCIAIS ELOGEST
+//
+// Esta estrutura controla a assinatura SaaS da administradora
+// perante o EloGest. Não se confunde com o módulo Financeiro
+// condominial da Etapa 53.
+//
+// Nesta primeira fase, a cobrança é manual. Os identificadores
+// externos permanecem opcionais para futura integração com gateway,
+// após a regularização empresarial do EloGest.
+// =========================================================
+
+enum SubscriptionBillingInterval {
+  MONTHLY
+  ANNUAL
+  CUSTOM
+}
+
+enum SubscriptionOrigin {
+  COMMERCIAL_PROPOSAL
+  ONBOARDING
+  TRIAL_CONVERSION
+  MANUAL
+  MIGRATION
+}
+
+enum SubscriptionChargeStatus {
+  DRAFT
+  PENDING
+  PAID
+  OVERDUE
+  CANCELED
+  WAIVED
+  REFUNDED
+}
+
+enum SubscriptionPaymentStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  CANCELED
+  REFUNDED
+}
+
+enum SubscriptionPaymentMethod {
+  PIX
+  BANK_TRANSFER
+  BOLETO
+  CASH
+  OTHER
+  FUTURE_GATEWAY
+}
+
+enum SubscriptionEventType {
+  CREATED
+  TRIAL_STARTED
+  ACTIVATED
+  PLAN_CHANGED
+  PRICE_CHANGED
+  BILLING_DATE_CHANGED
+  CHARGE_CREATED
+  CHARGE_MARKED_OVERDUE
+  PAYMENT_RECORDED
+  PAYMENT_CONFIRMED
+  PAYMENT_CANCELED
+  PAYMENT_REFUNDED
+  PAST_DUE
+  SUSPENDED
+  REACTIVATED
+  CANCELLATION_SCHEDULED
+  CANCELLATION_REVERSED
+  CANCELED
+  EXPIRED
+  NOTES_UPDATED
+  EXTERNAL_REFERENCE_UPDATED
+}
+
+enum SubscriptionRequestType {
+  UPGRADE
+  DOWNGRADE
+  CANCELLATION
+  CYCLE_REVIEW
+}
+
+enum SubscriptionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// =========================================================
+// ETAPA 58.1 - GATEWAY DE COBRANÇA
+// =========================================================
+
+enum BillingGatewayProvider {
+  MANUAL
+  MOCK
+  ASAAS
+  MERCADO_PAGO
+  PAGARME
+  STRIPE
+  OTHER
+}
+
+enum BillingGatewayEnvironment {
+  DISABLED
+  SANDBOX
+  PRODUCTION
+}
+
+enum BillingGatewayConnectionStatus {
+  NOT_CONFIGURED
+  CONFIGURED
+  CONNECTED
+  ERROR
+  DISABLED
+}
+
+enum BillingWebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
 enum CondominiumType {
   RESIDENTIAL
   COMMERCIAL
@@ -1242,6 +1368,18 @@ model Administrator {
   convertedOnboardingRequests  OnboardingRequest[]  @relation("OnboardingConvertedAdmin")
   commercialProposalsConverted CommercialProposal[]
 
+  // =========================================================
+  // ETAPA 58.1 - ASSINATURAS E COBRANÇAS COMERCIAIS
+  //
+  // subscriptions preserva todo o histórico contratual.
+  // subscriptionCharges e subscriptionPayments facilitam o
+  // isolamento por administradora e a gestão manual no Super Admin.
+  // =========================================================
+  subscriptions        AdministratorSubscription[]
+  subscriptionCharges  SubscriptionCharge[]
+  subscriptionPayments SubscriptionPayment[]
+  subscriptionRequests SubscriptionRequest[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1313,6 +1451,10 @@ model Plan {
   // =========================================================
   commercialProfile   CommercialLeadProfile? @relation(fields: [commercialLeadProfileId], references: [id])
   commercialProposals CommercialProposal[]
+
+  // ETAPA 58.1 - Histórico de assinaturas contratadas neste plano.
+  subscriptions        AdministratorSubscription[]
+  subscriptionRequests SubscriptionRequest[]
 
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
@@ -5251,8 +5393,11 @@ model CommercialProposal {
   updatedByUserId          String?
   versions                 CommercialProposalVersion[]
   events                   CommercialProposalEvent[]
-  createdAt                DateTime                    @default(now())
-  updatedAt                DateTime                    @updatedAt
+
+  // ETAPA 58.1 - Assinatura originada desta proposta aceita.
+  subscription AdministratorSubscription?
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
 
   @@index([status])
   @@index([validUntil])
@@ -5287,4 +5432,309 @@ model CommercialProposalEvent {
   @@index([commercialProposalId, createdAt])
   @@index([type])
   @@map("commercial_proposal_events")
+}
+
+// =========================================================
+// ETAPA 58.1 - ASSINATURA COMERCIAL DA ADMINISTRADORA
+//
+// Fonte histórica e financeira da contratação SaaS.
+// Administrator.planId e Administrator.planStatus permanecem como
+// espelho operacional por compatibilidade com os guards existentes.
+// Toda alteração deve sincronizar ambos dentro da mesma transação.
+//
+// Regra de negócio obrigatória na camada de serviço:
+// uma administradora não pode possuir mais de uma assinatura principal
+// em TRIALING, ACTIVE, PAST_DUE ou SUSPENDED ao mesmo tempo.
+// =========================================================
+model AdministratorSubscription {
+  id              String @id @default(cuid())
+  administratorId String
+  planId          String
+
+  commercialProposalId String? @unique
+
+  status          AdministratorPlanStatus     @default(ACTIVE)
+  billingInterval SubscriptionBillingInterval @default(MONTHLY)
+  origin          SubscriptionOrigin          @default(MANUAL)
+  currency        String                      @default("BRL")
+
+  basePriceCents         Int
+  discountCents          Int     @default(0)
+  finalPriceCents        Int
+  implementationFeeCents Int     @default(0)
+  isComplimentary        Boolean @default(false)
+  manualBillingOnly      Boolean @default(true)
+
+  startedAt          DateTime
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  nextBillingAt      DateTime?
+
+  cancelAtPeriodEnd       Boolean   @default(false)
+  cancellationScheduledAt DateTime?
+  canceledAt              DateTime?
+  cancellationReason      String?
+  endedAt                 DateTime?
+
+  // Preparação neutra para integração futura, sem dependência de gateway.
+  externalProvider       String?
+  externalCustomerId     String?
+  externalSubscriptionId String?
+
+  notes           String?
+  createdByUserId String?
+  updatedByUserId String?
+  metadata        Json?
+
+  administrator      Administrator         @relation(fields: [administratorId], references: [id], onDelete: Restrict)
+  plan               Plan                  @relation(fields: [planId], references: [id], onDelete: Restrict)
+  commercialProposal CommercialProposal?   @relation(fields: [commercialProposalId], references: [id], onDelete: SetNull)
+  charges            SubscriptionCharge[]
+  events             SubscriptionEvent[]
+  requests           SubscriptionRequest[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId, status])
+  @@index([planId])
+  @@index([nextBillingAt])
+  @@index([trialEndsAt])
+  @@index([externalProvider, externalSubscriptionId])
+  @@map("administrator_subscriptions")
+}
+
+// =========================================================
+// ETAPA 58.1 - COBRANÇA COMERCIAL MANUAL
+//
+// Representa uma obrigação financeira do cliente EloGest.
+// Não utiliza FinancialEntry nem FinancialChargeBatch, pois esses
+// models pertencem à operação financeira dos condomínios.
+// =========================================================
+model SubscriptionCharge {
+  id              String @id @default(cuid())
+  subscriptionId  String
+  administratorId String
+
+  status      SubscriptionChargeStatus @default(PENDING)
+  description String
+  currency    String                   @default("BRL")
+  amountCents Int
+
+  referenceMonth Int?
+  referenceYear  Int?
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  dueAt          DateTime
+
+  paidAt          DateTime?
+  paidAmountCents Int       @default(0)
+  overdueAt       DateTime?
+  canceledAt      DateTime?
+  waivedAt        DateTime?
+  refundedAt      DateTime?
+
+  externalProvider  String?
+  externalChargeId  String?
+  externalReference String?
+
+  notes           String?
+  createdByUserId String?
+  updatedByUserId String?
+  metadata        Json?
+
+  subscription  AdministratorSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  administrator Administrator             @relation(fields: [administratorId], references: [id], onDelete: Restrict)
+  payments      SubscriptionPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subscriptionId, referenceMonth, referenceYear])
+  @@index([administratorId, status])
+  @@index([subscriptionId, dueAt])
+  @@index([dueAt, status])
+  @@index([externalProvider, externalChargeId])
+  @@map("subscription_charges")
+}
+
+// =========================================================
+// ETAPA 58.1 - PAGAMENTO REGISTRADO MANUALMENTE
+//
+// Permite múltiplos pagamentos por cobrança, conferência manual,
+// estorno futuro e anexação de comprovante privado no R2.
+// =========================================================
+model SubscriptionPayment {
+  id              String @id @default(cuid())
+  chargeId        String
+  administratorId String
+
+  status      SubscriptionPaymentStatus @default(PENDING_CONFIRMATION)
+  method      SubscriptionPaymentMethod
+  currency    String                    @default("BRL")
+  amountCents Int
+  paidAt      DateTime
+  confirmedAt DateTime?
+  canceledAt  DateTime?
+  refundedAt  DateTime?
+
+  referenceCode String?
+  payerName     String?
+  payerDocument String?
+
+  receiptStorageKey String? @unique
+  receiptFileName   String?
+  receiptMimeType   String?
+  receiptSizeBytes  Int?
+  receiptSha256     String?
+
+  externalProvider  String?
+  externalPaymentId String?
+
+  notes             String?
+  recordedByUserId  String?
+  confirmedByUserId String?
+  canceledByUserId  String?
+  metadata          Json?
+
+  charge        SubscriptionCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  administrator Administrator      @relation(fields: [administratorId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([chargeId, status])
+  @@index([administratorId, paidAt])
+  @@index([externalProvider, externalPaymentId])
+  @@map("subscription_payments")
+}
+
+// =========================================================
+// ETAPA 58.1 - HISTÓRICO IMUTÁVEL DA ASSINATURA
+// =========================================================
+model SubscriptionEvent {
+  id              String                @id @default(cuid())
+  subscriptionId  String
+  type            SubscriptionEventType
+  description     String?
+  createdByUserId String?
+  metadata        Json?
+
+  subscription AdministratorSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([subscriptionId, createdAt])
+  @@index([type])
+  @@map("subscription_events")
+}
+
+// =========================================================
+// ETAPA 58.2 - SOLICITAÇÕES COMERCIAIS DA ADMINISTRADORA
+//
+// A administradora pode solicitar mudança de plano, cancelamento
+// ou revisão de ciclo. A solicitação não altera dados comerciais
+// até análise explícita do Super Admin.
+// =========================================================
+model SubscriptionRequest {
+  id              String  @id @default(cuid())
+  administratorId String
+  subscriptionId  String
+  targetPlanId    String?
+
+  type   SubscriptionRequestType
+  status SubscriptionRequestStatus @default(PENDING)
+
+  reason      String
+  reviewNotes String?
+
+  requestedByUserId String?
+  reviewedByUserId  String?
+
+  reviewedAt  DateTime?
+  withdrawnAt DateTime?
+
+  metadata Json?
+
+  administrator Administrator             @relation(fields: [administratorId], references: [id], onDelete: Restrict)
+  subscription  AdministratorSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  targetPlan    Plan?                     @relation(fields: [targetPlanId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([administratorId, status, createdAt])
+  @@index([subscriptionId, status])
+  @@index([targetPlanId])
+  @@index([type, status])
+  @@map("subscription_requests")
+}
+
+// =========================================================
+// ETAPA 58.1 - CONFIGURAÇÃO DO GATEWAY DE COBRANÇA
+// =========================================================
+model BillingGatewayConfiguration {
+  id          String                         @id @default(cuid())
+  provider    BillingGatewayProvider         @default(MANUAL)
+  environment BillingGatewayEnvironment      @default(DISABLED)
+  status      BillingGatewayConnectionStatus @default(NOT_CONFIGURED)
+
+  automaticBillingEnabled Boolean @default(false)
+  pixEnabled              Boolean @default(false)
+  boletoEnabled           Boolean @default(false)
+  cardEnabled             Boolean @default(false)
+
+  gracePeriodDays Int @default(5)
+  retryLimit      Int @default(0)
+
+  webhookPublicId String? @unique
+  webhookUrl      String?
+
+  lastConnectionTestAt DateTime?
+  lastWebhookAt        DateTime?
+  lastErrorAt          DateTime?
+  lastErrorMessage     String?
+
+  createdByUserId String?
+  updatedByUserId String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([provider, environment])
+  @@index([status])
+  @@map("billing_gateway_configurations")
+}
+
+// =========================================================
+// ETAPA 58.1 - EVENTOS DE WEBHOOK DO GATEWAY
+// =========================================================
+model BillingWebhookEvent {
+  id              String                    @id @default(cuid())
+  provider        BillingGatewayProvider
+  externalEventId String
+  eventType       String
+  status          BillingWebhookEventStatus @default(RECEIVED)
+
+  payload        Json
+  normalizedData Json?
+
+  receivedAt   DateTime  @default(now())
+  processingAt DateTime?
+  processedAt  DateTime?
+  failedAt     DateTime?
+
+  errorMessage String?
+  attemptCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, externalEventId])
+  @@index([status, receivedAt])
+  @@index([provider, eventType])
+  @@map("billing_webhook_events")
 }

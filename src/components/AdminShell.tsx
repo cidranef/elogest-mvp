@@ -173,6 +173,7 @@ type AdminNavKey =
   | "relatorios"
   | "ia"
   | "documentos"
+  | "assinatura"
   | "configuracoes";
 
 interface AdminShellProps {
@@ -675,6 +676,12 @@ const adminNavGroups: AdminNavGroup[] = [
     title: "Sistema",
     items: [
       {
+        key: "assinatura",
+        label: "Minha Assinatura",
+        href: "/admin/assinatura",
+        icon: "finance",
+      },
+      {
         key: "configuracoes",
         label: "Configurações",
         href: "/admin/configuracoes",
@@ -719,6 +726,7 @@ function AdminSidebar({
   assembliesAccessAllowed,
   financialAccessAllowed,
   operationalAiAccessAllowed,
+  subscriptionSuspended,
   onNavigate,
 }: {
   current?: AdminNavKey;
@@ -727,6 +735,7 @@ function AdminSidebar({
   assembliesAccessAllowed?: boolean | null;
   financialAccessAllowed?: boolean | null;
   operationalAiAccessAllowed?: boolean | null;
+  subscriptionSuspended?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -773,12 +782,17 @@ function AdminSidebar({
                   const disabledByOperationalAiPlan =
                     item.requiresOperationalAiAccess && operationalAiAccessAllowed === false;
 
+                  const disabledBySubscription =
+                    subscriptionSuspended === true &&
+                    item.key !== "assinatura";
+
                   const disabledByPlan =
                     disabledByCouncilPlan ||
                     disabledByPollsPlan ||
                     disabledByAssembliesPlan ||
                     disabledByFinancialPlan ||
-                    disabledByOperationalAiPlan;
+                    disabledByOperationalAiPlan ||
+                    disabledBySubscription;
 
                   const itemClassName = [
                     "group relative flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold transition",
@@ -817,7 +831,7 @@ function AdminSidebar({
 
                       {disabledByPlan ? (
                         <span className="rounded-full bg-white/8 px-2 py-0.5 text-[11px] font-bold text-white/45">
-                          Plano
+                          {disabledBySubscription ? "Suspensa" : "Plano"}
                         </span>
                       ) : item.badge ? (
                         <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-bold text-white">
@@ -1136,6 +1150,10 @@ function AdminFooter({
             </Link>
           )}
 
+          <Link href="/admin/assinatura" className="font-semibold hover:text-[#256D3C]">
+            Minha Assinatura
+          </Link>
+
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
             Trocar perfil
           </Link>
@@ -1156,7 +1174,10 @@ export default function AdminShell({
   current,
   actions,
 }: AdminShellProps) {
+  const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [subscriptionSuspended, setSubscriptionSuspended] =
+    useState(false);
   const [councilMeetingAccessAllowed, setCouncilMeetingAccessAllowed] =
     useState<boolean | null>(null);
   const [pollsAccessAllowed, setPollsAccessAllowed] =
@@ -1170,6 +1191,38 @@ export default function AdminShell({
 
   useEffect(() => {
     let isMounted = true;
+
+    async function checkSubscriptionStatus() {
+      try {
+        const response = await fetch("/api/admin/assinatura", {
+          cache: "no-store",
+        });
+
+        if (!isMounted || !response.ok) {
+          return;
+        }
+
+        const data = (await response.json()) as {
+          subscription?: {
+            status?: string | null;
+          } | null;
+          administrator?: {
+            planStatus?: string | null;
+          };
+        };
+
+        const status =
+          data.subscription?.status ??
+          data.administrator?.planStatus ??
+          null;
+
+        setSubscriptionSuspended(status === "SUSPENDED");
+      } catch {
+        if (isMounted) {
+          setSubscriptionSuspended(false);
+        }
+      }
+    }
 
     async function checkCouncilMeetingAccess() {
       try {
@@ -1302,6 +1355,7 @@ export default function AdminShell({
       }
     }
 
+    void checkSubscriptionStatus();
     void checkCouncilMeetingAccess();
     void checkPollsAccess();
     void checkAssembliesAccess();
@@ -1324,6 +1378,7 @@ export default function AdminShell({
           assembliesAccessAllowed={assembliesAccessAllowed}
           financialAccessAllowed={financialAccessAllowed}
           operationalAiAccessAllowed={operationalAiAccessAllowed}
+          subscriptionSuspended={subscriptionSuspended}
         />
       </div>
 
@@ -1347,6 +1402,7 @@ export default function AdminShell({
               assembliesAccessAllowed={assembliesAccessAllowed}
               financialAccessAllowed={financialAccessAllowed}
               operationalAiAccessAllowed={operationalAiAccessAllowed}
+              subscriptionSuspended={subscriptionSuspended}
               onNavigate={() => setMobileOpen(false)}
             />
           </div>
@@ -1379,7 +1435,46 @@ export default function AdminShell({
               </div>
             )}
 
-            {children}
+            {subscriptionSuspended &&
+            !pathname.startsWith("/admin/assinatura") ? (
+              <section className="rounded-[28px] border border-amber-200 bg-white p-6 shadow-sm sm:p-8">
+                <div className="max-w-3xl">
+                  <span className="inline-flex rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-amber-800">
+                    Assinatura Suspensa
+                  </span>
+
+                  <h1 className="mt-4 text-2xl font-black text-[#17211B] sm:text-3xl">
+                    Os Módulos Operacionais Estão Temporariamente Bloqueados
+                  </h1>
+
+                  <p className="mt-3 leading-7 text-[#5C6B62]">
+                    A assinatura ultrapassou o período de tolerância.
+                    Minha Assinatura continua disponível para consulta,
+                    solicitações e regularização. Após a confirmação da
+                    quitação de todas as cobranças abertas, o acesso
+                    operacional será restabelecido.
+                  </p>
+
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <Link
+                      href="/admin/assinatura"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#256D3C] px-5 text-sm font-bold text-white transition hover:bg-[#1F5A33]"
+                    >
+                      Ir Para Minha Assinatura
+                    </Link>
+
+                    <Link
+                      href="/acessos"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-[#CAD7CE] bg-white px-5 text-sm font-bold text-[#256D3C] transition hover:border-[#256D3C]"
+                    >
+                      Trocar Perfil
+                    </Link>
+                  </div>
+                </div>
+              </section>
+            ) : (
+              children
+            )}
 
             <AdminFooter
               councilMeetingAccessAllowed={councilMeetingAccessAllowed}

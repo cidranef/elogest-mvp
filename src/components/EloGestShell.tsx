@@ -57,6 +57,8 @@ type EloGestNavKey =
   | "comercial"
   | "materiais"
   | "demo"
+  | "assinaturas"
+  | "cobranca"
   | "usuarios"
   | "planos"
   | "indicadores"
@@ -187,8 +189,9 @@ function ShellIcon({
     | "onboarding"
     | "comercial"
     | "materials"
-  | "materiais"
+    | "materiais"
     | "demo"
+    | "billing"
     | "users"
     | "plans"
     | "chart"
@@ -288,6 +291,15 @@ function ShellIcon({
           <path {...common} d="M8 11h8" />
           <path {...common} d="M8 15h5" />
           <circle {...common} cx="17" cy="15" r="1" />
+        </>
+      )}
+
+      {type === "billing" && (
+        <>
+          <rect {...common} x="4" y="5" width="16" height="14" rx="2" />
+          <path {...common} d="M4 9h16" />
+          <path {...common} d="M8 14h3" />
+          <path {...common} d="M15 14h1" />
         </>
       )}
 
@@ -414,6 +426,20 @@ const eloGestNavGroups: {
         href: "/elogest/demo",
         icon: "demo",
         description: "Status, acessos e restauração da demonstração comercial.",
+      },
+      {
+        key: "assinaturas",
+        label: "Assinaturas",
+        href: "/elogest/assinaturas",
+        icon: "billing",
+        description: "Planos contratados, cobranças, pagamentos e situação comercial.",
+      },
+      {
+        key: "cobranca",
+        label: "Configuração De Cobrança",
+        href: "/elogest/configuracoes/cobranca",
+        icon: "settings",
+        description: "Gateway, ambiente, meios de pagamento e webhooks.",
       },
     ],
   },
@@ -789,6 +815,10 @@ EloGest — Governança Condominial
 
           <Link href="/elogest/onboarding" className="font-semibold hover:text-[#256D3C]">
             Onboarding
+          </Link>
+
+          <Link href="/elogest/assinaturas" className="font-semibold hover:text-[#256D3C]">
+            Assinaturas
           </Link>
 
           <Link href="/contexto" className="font-semibold hover:text-[#256D3C]">
